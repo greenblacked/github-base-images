@@ -3,6 +3,8 @@
 # with the same name already exists but is not linked here, pushes are refused
 # with `denied: permission_denied: write_package` -- delete it (or grant this
 # repo Write under the package's "Manage Actions access") and re-run.
+#
+# Re-trigger: packages are now linked with Write; this run re-verifies publish.
 name: Build and Push to GHCR
 
 on:
