@@ -292,10 +292,14 @@ jobs:
           format: table
           exit-code: '1'
 
-      # Push by digest only -- no tags. The merge job assembles the tagged
-      # multi-arch manifest list once both architectures have passed. Cache hit
-      # from the build above, so this re-exports rather than rebuilding.
-      - name: Push by digest (${{ matrix.arch }})
+      # Push each architecture under its own tag. A tagged push is what creates
+      # the package on GHCR the first time an image is published; a digest-only
+      # push cannot create a not-yet-existing package, which is why the very
+      # first publish failed here. The merge job assembles the final tagged
+      # multi-arch manifest list from these per-arch digests once both
+      # architectures have passed. Cache hit from the build above, so this
+      # re-exports rather than rebuilding.
+      - name: Push (${{ matrix.arch }})
         id: push
         if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
         uses: docker/build-push-action@v6
@@ -305,7 +309,8 @@ jobs:
           platforms: ${{ matrix.platform }}
           build-args: |
             BASE_IMAGE=ghcr.io/${{ github.repository_owner }}/${{ env.MIRROR }}
-          outputs: type=image,name=ghcr.io/${{ github.repository_owner }}/${{ env.IMAGE }},push-by-digest=true,name-canonical=true,push=true
+          tags: ghcr.io/${{ github.repository_owner }}/${{ env.IMAGE }}:${{ env.VERSION }}-${{ matrix.arch }}
+          push: true
           cache-from: type=gha,scope=${{ env.IMAGE }}-${{ matrix.arch }}
           cache-to: type=gha,mode=max,scope=${{ env.IMAGE }}-${{ matrix.arch }}
 
@@ -530,7 +535,7 @@ jobs:
           format: table
           exit-code: '1'
 
-      - name: Push by digest (${{ matrix.arch }})
+      - name: Push (${{ matrix.arch }})
         id: push
         if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
         uses: docker/build-push-action@v6
@@ -540,7 +545,8 @@ jobs:
           platforms: ${{ matrix.platform }}
           build-args: |
             BASE_IMAGE=ghcr.io/${{ github.repository_owner }}/${{ env.MIRROR }}
-          outputs: type=image,name=ghcr.io/${{ github.repository_owner }}/${{ env.IMAGE }},push-by-digest=true,name-canonical=true,push=true
+          tags: ghcr.io/${{ github.repository_owner }}/${{ env.IMAGE }}:${{ env.VERSION }}-${{ matrix.arch }}
+          push: true
           cache-from: type=gha,scope=${{ env.IMAGE }}-${{ matrix.arch }}
           cache-to: type=gha,mode=max,scope=${{ env.IMAGE }}-${{ matrix.arch }}
 
@@ -762,7 +768,7 @@ jobs:
           format: table
           exit-code: '1'
 
-      - name: Push by digest (${{ matrix.arch }})
+      - name: Push (${{ matrix.arch }})
         id: push
         if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
         uses: docker/build-push-action@v6
@@ -772,7 +778,8 @@ jobs:
           platforms: ${{ matrix.platform }}
           build-args: |
             BASE_IMAGE=ghcr.io/${{ github.repository_owner }}/${{ env.MIRROR }}
-          outputs: type=image,name=ghcr.io/${{ github.repository_owner }}/${{ env.IMAGE }},push-by-digest=true,name-canonical=true,push=true
+          tags: ghcr.io/${{ github.repository_owner }}/${{ env.IMAGE }}:${{ env.VERSION }}-${{ matrix.arch }}
+          push: true
           cache-from: type=gha,scope=${{ env.IMAGE }}-${{ matrix.arch }}
           cache-to: type=gha,mode=max,scope=${{ env.IMAGE }}-${{ matrix.arch }}
 
@@ -994,7 +1001,7 @@ jobs:
           format: table
           exit-code: '1'
 
-      - name: Push by digest (${{ matrix.arch }})
+      - name: Push (${{ matrix.arch }})
         id: push
         if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
         uses: docker/build-push-action@v6
@@ -1004,7 +1011,8 @@ jobs:
           platforms: ${{ matrix.platform }}
           build-args: |
             BASE_IMAGE=ghcr.io/${{ github.repository_owner }}/${{ env.MIRROR }}
-          outputs: type=image,name=ghcr.io/${{ github.repository_owner }}/${{ env.IMAGE }},push-by-digest=true,name-canonical=true,push=true
+          tags: ghcr.io/${{ github.repository_owner }}/${{ env.IMAGE }}:${{ env.VERSION }}-${{ matrix.arch }}
+          push: true
           cache-from: type=gha,scope=${{ env.IMAGE }}-${{ matrix.arch }}
           cache-to: type=gha,mode=max,scope=${{ env.IMAGE }}-${{ matrix.arch }}
 
