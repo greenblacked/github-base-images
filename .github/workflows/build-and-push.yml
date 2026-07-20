@@ -53,7 +53,7 @@ jobs:
       # weekly rebuild is the update mechanism, so apt pins would go stale and
       # break builds without making anything more reproducible.
       - name: hadolint (Dockerfiles)
-        uses: hadolint/hadolint-action@v3.1.0
+        uses: hadolint/hadolint-action@v3.3.0
         with:
           recursive: true
           dockerfile: '*/Dockerfile.ci'
