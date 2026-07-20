@@ -1,0 +1,60 @@
+# Defaults to upstream so local builds work without authenticating to ghcr.io.
+# CI overrides this with our mirrored copy, so builds do not depend on Docker
+# Hub availability or rate limits.
+ARG BASE_IMAGE=node:22-bookworm-slim
+# DL3006: the default above is tagged; hadolint just can't see through the ARG.
+# hadolint ignore=DL3006
+FROM ${BASE_IMAGE}
+
+LABEL org.opencontainers.image.source=https://github.com/greenblacked/github-base-images
+LABEL org.opencontainers.image.description="Shared CI image: Node.js 22 on Debian Bookworm slim"
+
+ENV DEBIAN_FRONTEND=noninteractive \
+    CI=true \
+    NEXT_TELEMETRY_DISABLED=1
+
+# DL3008: apt pins would go stale and break the weekly rebuild, which is the
+# actual update mechanism here.
+# The upgrade picks up Debian security fixes published since the upstream base
+# was last rebuilt; the Trivy gate blocks fixable HIGH/CRITICAL vulns, so
+# waiting for upstream to rebuild would block this image too.
+# hadolint ignore=DL3008
+RUN apt-get update \
+    && apt-get upgrade --yes \
+    && apt-get install --yes --no-install-recommends \
+        bash \
+        ca-certificates \
+        curl \
+        git \
+        gzip \
+        jq \
+        openssh-client \
+        tar \
+        unzip \
+        xz-utils \
+        zstd \
+    && rm -rf /var/lib/apt/lists/*
+
+# Playwright's *system libraries* only -- no browser binaries.
+#
+# Browser binaries are version-locked to the playwright npm package, so baking
+# them here would pin every consuming repo to this image's Playwright version
+# and break the moment one bumps its lockfile. Consumers run
+# `npx playwright install chromium` instead, which fetches the browser matching
+# their own lockfile; these libs are what makes that work without root or apt.
+#
+# The library set is stable across Playwright releases, so pinning the version
+# used to resolve it only affects which list we install, not what consumers run.
+ARG PLAYWRIGHT_VERSION=1.61.1
+RUN npx --yes playwright@${PLAYWRIGHT_VERSION} install-deps chromium \
+    && rm -rf /var/lib/apt/lists/* \
+    && rm -rf /root/.npm
+
+WORKDIR /workspace
+
+RUN node --version \
+    && npm --version \
+    && git --version
+
+# GitHub Actions supplies commands dynamically.
+# Do not define ENTRYPOINT or CMD.

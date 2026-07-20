@@ -1,0 +1,84 @@
+# Defaults to upstream so local builds work without authenticating to ghcr.io.
+# CI overrides this with our mirrored copy, so builds do not depend on Docker
+# Hub availability or rate limits.
+ARG BASE_IMAGE=debian:bookworm-slim
+# DL3006: the default above is tagged; hadolint just can't see through the ARG.
+# hadolint ignore=DL3006
+FROM ${BASE_IMAGE}
+
+LABEL org.opencontainers.image.source=https://github.com/greenblacked/github-base-images
+LABEL org.opencontainers.image.description="Shared CI image: infra/deploy tooling (terraform, kubectl, aws, docker CLI) on Debian Bookworm slim"
+
+ENV DEBIAN_FRONTEND=noninteractive \
+    CI=true
+
+# DL3008: apt pins would go stale and break the weekly rebuild, which is the
+# actual update mechanism here.
+# The upgrade picks up Debian security fixes published since the upstream base
+# was last rebuilt; the Trivy gate blocks fixable HIGH/CRITICAL vulns, so
+# waiting for upstream to rebuild would block this image too.
+# hadolint ignore=DL3008
+RUN apt-get update \
+    && apt-get upgrade --yes \
+    && apt-get install --yes --no-install-recommends \
+        bash \
+        ca-certificates \
+        curl \
+        git \
+        gzip \
+        jq \
+        openssh-client \
+        tar \
+        unzip \
+        xz-utils \
+        zstd \
+    && rm -rf /var/lib/apt/lists/*
+
+# Infra tools are installed as pinned upstream release binaries, not apt --
+# Debian's repos either lag far behind or do not carry them at all. Each pin is
+# a build arg so a bump is a one-line change that the vulnerability scan and
+# smoke tests then revalidate.
+#
+# TARGETARCH is set by buildx (amd64 / arm64); each vendor spells the
+# architecture differently, hence the per-tool mapping.
+ARG TARGETARCH
+ARG TERRAFORM_VERSION=1.15.7
+ARG KUBECTL_VERSION=1.36.2
+ARG AWSCLI_VERSION=2.36.2
+ARG DOCKER_VERSION=29.6.2
+
+RUN curl -fsSLo /tmp/terraform.zip \
+        "https://releases.hashicorp.com/terraform/${TERRAFORM_VERSION}/terraform_${TERRAFORM_VERSION}_linux_${TARGETARCH}.zip" \
+    && unzip -o /tmp/terraform.zip -d /usr/local/bin terraform \
+    && rm /tmp/terraform.zip
+
+RUN curl -fsSLo /usr/local/bin/kubectl \
+        "https://dl.k8s.io/release/v${KUBECTL_VERSION}/bin/linux/${TARGETARCH}/kubectl" \
+    && chmod +x /usr/local/bin/kubectl
+
+RUN awsarch="$([ "${TARGETARCH}" = arm64 ] && echo aarch64 || echo x86_64)" \
+    && curl -fsSLo /tmp/awscli.zip \
+        "https://awscli.amazonaws.com/awscli-exe-linux-${awsarch}-${AWSCLI_VERSION}.zip" \
+    && unzip -q /tmp/awscli.zip -d /tmp \
+    && /tmp/aws/install \
+    && rm -rf /tmp/awscli.zip /tmp/aws
+
+# Docker *client* only, no daemon. In Actions it talks to the host daemon via
+# the mounted socket, or to a docker:dind service container.
+RUN dockerarch="$([ "${TARGETARCH}" = arm64 ] && echo aarch64 || echo x86_64)" \
+    && curl -fsSLo /tmp/docker.tgz \
+        "https://download.docker.com/linux/static/stable/${dockerarch}/docker-${DOCKER_VERSION}.tgz" \
+    && tar -xzf /tmp/docker.tgz -C /tmp docker/docker \
+    && mv /tmp/docker/docker /usr/local/bin/docker \
+    && rm -rf /tmp/docker.tgz /tmp/docker
+
+WORKDIR /workspace
+
+RUN terraform version \
+    && kubectl version --client \
+    && aws --version \
+    && docker --version \
+    && git --version
+
+# GitHub Actions supplies commands dynamically.
+# Do not define ENTRYPOINT or CMD.

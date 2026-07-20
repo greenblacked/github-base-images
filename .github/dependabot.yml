@@ -1,0 +1,31 @@
+version: 2
+updates:
+  # Keeps the action pins in .github/workflows current (docker/*, actions/*,
+  # aquasecurity/trivy-action, hadolint, actionlint).
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+
+  # Base image bumps arrive as PRs. Dependabot reads the default of the
+  # `ARG BASE_IMAGE` each Dockerfile builds FROM, which is why that default
+  # stays pointed at the real upstream ref rather than the mirror.
+  - package-ecosystem: docker
+    directory: /ci-node22
+    schedule:
+      interval: weekly
+
+  - package-ecosystem: docker
+    directory: /ci-python313
+    schedule:
+      interval: weekly
+
+  - package-ecosystem: docker
+    directory: /ci-go125
+    schedule:
+      interval: weekly
+
+  - package-ecosystem: docker
+    directory: /ci-tools
+    schedule:
+      interval: weekly

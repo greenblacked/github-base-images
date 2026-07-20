@@ -1,0 +1,51 @@
+# Defaults to upstream so local builds work without authenticating to ghcr.io.
+# CI overrides this with our mirrored copy, so builds do not depend on Docker
+# Hub availability or rate limits.
+ARG BASE_IMAGE=python:3.13-slim-bookworm
+# DL3006: the default above is tagged; hadolint just can't see through the ARG.
+# hadolint ignore=DL3006
+FROM ${BASE_IMAGE}
+
+LABEL org.opencontainers.image.source=https://github.com/greenblacked/github-base-images
+LABEL org.opencontainers.image.description="Shared CI image: Python 3.13 on Debian Bookworm slim"
+
+ENV DEBIAN_FRONTEND=noninteractive \
+    CI=true \
+    PIP_NO_CACHE_DIR=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1
+
+# DL3008: apt pins would go stale and break the weekly rebuild, which is the
+# actual update mechanism here.
+# The upgrade picks up Debian security fixes published since the upstream base
+# was last rebuilt; the Trivy gate blocks fixable HIGH/CRITICAL vulns, so
+# waiting for upstream to rebuild would block this image too.
+# hadolint ignore=DL3008
+RUN apt-get update \
+    && apt-get upgrade --yes \
+    && apt-get install --yes --no-install-recommends \
+        bash \
+        ca-certificates \
+        curl \
+        git \
+        gzip \
+        jq \
+        openssh-client \
+        tar \
+        unzip \
+        xz-utils \
+        zstd \
+    && rm -rf /var/lib/apt/lists/*
+
+# No compiler toolchain. Projects that build native wheels add build-essential
+# in their own workflow -- same philosophy as browsers not being baked into
+# ci-node22: project-specific build tooling stays with the project.
+
+WORKDIR /workspace
+
+RUN python --version \
+    && pip --version \
+    && git --version
+
+# GitHub Actions supplies commands dynamically.
+# Do not define ENTRYPOINT or CMD.
