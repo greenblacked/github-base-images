@@ -1,3 +1,8 @@
+# On the first publish of each image, the per-arch push creates the GHCR
+# package and GitHub auto-links it to this repo with write access. If a package
+# with the same name already exists but is not linked here, pushes are refused
+# with `denied: permission_denied: write_package` -- delete it (or grant this
+# repo Write under the package's "Manage Actions access") and re-run.
 name: Build and Push to GHCR
 
 on:
