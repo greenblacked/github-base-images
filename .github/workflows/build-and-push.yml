@@ -174,7 +174,7 @@ jobs:
       # tests and the gates below have passed. Non-publishing runs build from
       # upstream so they never depend on (or mutate) the mirror.
       - name: Build ${{ env.IMAGE }} (${{ matrix.arch }})
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: ./${{ env.IMAGE }}
           file: ./${{ env.IMAGE }}/${{ env.DOCKERFILE }}
@@ -302,7 +302,7 @@ jobs:
       - name: Push (${{ matrix.arch }})
         id: push
         if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: ./${{ env.IMAGE }}
           file: ./${{ env.IMAGE }}/${{ env.DOCKERFILE }}
@@ -436,7 +436,7 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Build ${{ env.IMAGE }} (${{ matrix.arch }})
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: ./${{ env.IMAGE }}
           file: ./${{ env.IMAGE }}/${{ env.DOCKERFILE }}
@@ -538,7 +538,7 @@ jobs:
       - name: Push (${{ matrix.arch }})
         id: push
         if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: ./${{ env.IMAGE }}
           file: ./${{ env.IMAGE }}/${{ env.DOCKERFILE }}
@@ -669,7 +669,7 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Build ${{ env.IMAGE }} (${{ matrix.arch }})
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: ./${{ env.IMAGE }}
           file: ./${{ env.IMAGE }}/${{ env.DOCKERFILE }}
@@ -771,7 +771,7 @@ jobs:
       - name: Push (${{ matrix.arch }})
         id: push
         if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: ./${{ env.IMAGE }}
           file: ./${{ env.IMAGE }}/${{ env.DOCKERFILE }}
@@ -902,7 +902,7 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Build ${{ env.IMAGE }} (${{ matrix.arch }})
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: ./${{ env.IMAGE }}
           file: ./${{ env.IMAGE }}/${{ env.DOCKERFILE }}
@@ -1004,7 +1004,7 @@ jobs:
       - name: Push (${{ matrix.arch }})
         id: push
         if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: ./${{ env.IMAGE }}
           file: ./${{ env.IMAGE }}/${{ env.DOCKERFILE }}
