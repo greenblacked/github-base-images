@@ -325,3 +325,20 @@ any single image's directory reruns every job pair, not just the changed one.
 Java/JVM, .NET, and PHP images can be added with the exact same recipe once a concrete consumer
 needs one. Until then they are deliberately not built — an image with no consumer is just scan
 noise and rebuild minutes. Rust and Ruby graduated from this list.
+
+## Contributing and reporting problems
+
+[CONTRIBUTING.md](CONTRIBUTING.md) covers the local loop and the pre-PR checks;
+[SECURITY.md](SECURITY.md) covers how to report a vulnerability in a published image, and what is
+in and out of scope.
+
+## License
+
+[MIT](LICENSE), and each image carries `org.opencontainers.image.licenses=MIT`.
+
+That covers **this repository's** contents — the Dockerfiles, test scripts, workflow, and Makefile.
+It says nothing about the software inside the published images: Debian and its packages, Node,
+Python, Go, Rust, Ruby, Terraform, kubectl, the AWS CLI, and the Docker client each ship under
+their own upstream licenses, which travel with the image. If you need to audit those, start from
+the `mirror-*` package for the base and the pinned versions in
+[ci-tools/Dockerfile.ci](ci-tools/Dockerfile.ci).

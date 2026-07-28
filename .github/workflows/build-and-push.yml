@@ -54,6 +54,7 @@ jobs:
   # spends runner minutes on multi-arch image builds.
   lint:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     permissions:
       contents: read
     steps:
@@ -87,6 +88,7 @@ jobs:
   mirror:
     if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     permissions:
       contents: read
       packages: write
@@ -156,6 +158,7 @@ jobs:
     # or was skipped, but never after a failure or cancellation.
     if: ${{ !cancelled() && needs.lint.result == 'success' && (needs.mirror.result == 'success' || needs.mirror.result == 'skipped') }}
     runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
     permissions:
       contents: read
       packages: write
@@ -359,6 +362,7 @@ jobs:
     needs: build
     if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     permissions:
       contents: read
       packages: write
@@ -421,6 +425,7 @@ jobs:
     needs: [lint, mirror]
     if: ${{ !cancelled() && needs.lint.result == 'success' && (needs.mirror.result == 'success' || needs.mirror.result == 'skipped') }}
     runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
     permissions:
       contents: read
       packages: write
@@ -591,6 +596,7 @@ jobs:
     needs: build-python
     if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     permissions:
       contents: read
       packages: write
@@ -653,6 +659,7 @@ jobs:
     needs: [lint, mirror]
     if: ${{ !cancelled() && needs.lint.result == 'success' && (needs.mirror.result == 'success' || needs.mirror.result == 'skipped') }}
     runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
     permissions:
       contents: read
       packages: write
@@ -823,6 +830,7 @@ jobs:
     needs: build-go
     if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     permissions:
       contents: read
       packages: write
@@ -885,6 +893,7 @@ jobs:
     needs: [lint, mirror]
     if: ${{ !cancelled() && needs.lint.result == 'success' && (needs.mirror.result == 'success' || needs.mirror.result == 'skipped') }}
     runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
     permissions:
       contents: read
       packages: write
@@ -1055,6 +1064,7 @@ jobs:
     needs: build-tools
     if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     permissions:
       contents: read
       packages: write
@@ -1117,6 +1127,7 @@ jobs:
     needs: [lint, mirror]
     if: ${{ !cancelled() && needs.lint.result == 'success' && (needs.mirror.result == 'success' || needs.mirror.result == 'skipped') }}
     runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
     permissions:
       contents: read
       packages: write
@@ -1287,6 +1298,7 @@ jobs:
     needs: build-rust
     if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     permissions:
       contents: read
       packages: write
@@ -1349,6 +1361,7 @@ jobs:
     needs: [lint, mirror]
     if: ${{ !cancelled() && needs.lint.result == 'success' && (needs.mirror.result == 'success' || needs.mirror.result == 'skipped') }}
     runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
     permissions:
       contents: read
       packages: write
@@ -1519,6 +1532,7 @@ jobs:
     needs: build-ruby
     if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     permissions:
       contents: read
       packages: write

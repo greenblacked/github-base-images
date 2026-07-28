@@ -1,0 +1,8 @@
+# Every change here publishes a public image that other repositories build on,
+# so everything has an owner by default.
+*                                   @greenblacked
+
+# The publish pipeline and its supply-chain surface: registry writes, gates,
+# and the action versions the whole build trusts.
+/.github/workflows/                 @greenblacked
+/.github/dependabot.yml             @greenblacked
