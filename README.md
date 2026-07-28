@@ -32,11 +32,15 @@ curl, tar, gzip, unzip, xz, zstd, jq, and the OpenSSH client. On top of that:
   `docker:dind` service). Versions are pinned via `ARG`s in
   [ci-tools/Dockerfile.ci](ci-tools/Dockerfile.ci); a bump is a one-line PR that CI revalidates.
 
-It deliberately does **not** contain `node_modules`, Next.js, Wrangler, application source,
-Cloudflare credentials, repository secrets, or project-specific build tools. Those stay
-controlled by each repository's `package-lock.json` and are installed with `npm ci`. Wrangler in
-particular is a locked devDependency, so `npm run deploy:artifact` uses the repository's exact
-version rather than one frozen into this image.
+None of them contains project dependencies, application source, credentials, repository secrets,
+or project-specific build tools. Dependencies stay controlled by each consuming repository's own
+lockfile — `package-lock.json`, `requirements.txt`, `go.sum`, `Cargo.lock`, `Gemfile.lock` — and
+are installed by that repo's own workflow. Each image's `test.sh` asserts this, so a dependency
+that creeps in fails the build.
+
+For `ci-node22` specifically that also rules out Next.js and Wrangler. Wrangler in particular is a
+locked devDependency, so `npm run deploy:artifact` uses the consuming repository's exact version
+rather than one frozen into this image.
 
 There is intentionally **no runtime image**. Purr.pet deploys to Cloudflare Workers, which runs
 V8 isolates and never pulls a container image, so a runtime base would have no consumer. If a
@@ -94,7 +98,7 @@ loop a PR does — from the upstream base, so no `ghcr.io` login — minus the r
 scans that stay CI's job:
 
 ```bash
-make list                     # ci-go125 ci-node22 ci-python313 ci-ruby34 ci-rust185 ci-tools
+make list                     # one image per line: ci-go125, ci-node22, ci-python313, ...
 make check IMAGE=ci-rust185   # build ci-rust185:test, then run ci-rust185/test.sh against it
 make check-all                # every image
 ```
@@ -209,7 +213,8 @@ exist yet.
 ## Tags and rebuilds
 
 - **`bookworm-v1`** is a rolling contract line. The weekly rebuild moves it to a fresh digest
-  carrying Node and Debian security updates. It is bumped to `v2` only when the *contents* of the
+  carrying Debian security updates, plus whatever the upstream runtime base picked up. It is
+  bumped to `v2` only when the *contents* of the
   image change — a tool added or removed. Determinism in production comes from pinning a digest,
   not from the tag.
 - **`latest`** exists for testing. Never use it in a protected deployment job.
@@ -282,8 +287,10 @@ Each architecture is built, smoke-tested, and scanned on a **native runner** (`u
 amd64, `ubuntu-24.04-arm` for arm64), then a `merge` job assembles the manifest list from the
 per-arch digests. Nothing is tagged until every architecture has passed its own gate.
 
-This is deliberately not a QEMU build. Emulating this image's 99-package apt layer would be
-extremely slow, and multi-platform builds cannot `load:` into the Docker daemon — so the arm64
+This is deliberately not a QEMU build. Emulating the larger images' apt layers would be
+extremely slow — `ci-node22`'s Playwright dependency expansion alone pulls in around 99 packages
+on top of the 11-package shared baseline — and multi-platform builds cannot `load:` into the
+Docker daemon, so the arm64
 image could not be smoke-tested or scanned before publishing. arm64 runners are free for public
 repositories, which makes the native path both faster and better tested.
 
@@ -298,11 +305,17 @@ Each image is a `build-<name>` + `merge-<name>` job pair in
 per-arch digest fan-out does not compose with a per-image matrix in one job.
 
 To add an image: create `<image-name>/Dockerfile.ci` and `<image-name>/test.sh` following the
-existing pattern, copy an existing `build`/`merge` job pair and change only its `env:` block and
+existing pattern, `chmod +x` the test script (the workflow and `make test` both execute it
+directly), copy an existing `build`/`merge` job pair and change only its `env:` block and
 job names, add the image's path to both `paths:` filters, mirror its base in the `mirror` job,
 and add a `docker` ecosystem entry for its directory in
 [.github/dependabot.yml](.github/dependabot.yml). Keep the build cache scoped per image and
 architecture (`scope: <image>-<arch>`), or the builds evict each other's layers.
+
+The [Makefile](Makefile) needs no change — it discovers images by globbing `*/Dockerfile.ci`.
+
+Note that the reference pair is named `build`/`merge` rather than `build-node`/`merge-node`; the
+other five follow the `build-<name>`/`merge-<name>` convention.
 
 Known trade-off of this copy-the-pattern shape: `paths:` is one shared list, so a push touching
 any single image's directory reruns every job pair, not just the changed one.
@@ -311,6 +324,4 @@ any single image's directory reruns every job pair, not just the changed one.
 
 Java/JVM, .NET, and PHP images can be added with the exact same recipe once a concrete consumer
 needs one. Until then they are deliberately not built — an image with no consumer is just scan
-noise and rebuild minutes. (Rust and Ruby graduated from this list; they are the two `ci-*` images
-above with no bookworm-specific caveats — both build `FROM` an official Docker Hub `-bookworm` tag,
-so they slot straight into the mirror + `ARG BASE_IMAGE` machinery.)
+noise and rebuild minutes. Rust and Ruby graduated from this list.

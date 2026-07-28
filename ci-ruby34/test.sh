@@ -49,6 +49,15 @@ check "workdir is /workspace"      '[ "$PWD" = /workspace ]'
 # not baked in here.
 check "no Gemfile baked in"        '! test -e /workspace/Gemfile'
 check "no bundled gems baked in"   '! test -e /workspace/vendor/bundle'
+
+# The global equivalent of ci-python313's "pip list is empty" and ci-go125's
+# "GOMODCACHE is empty". It targets GEM_HOME rather than `gem list` because Ruby
+# ships default gems (bundler, json, psych, ...) as part of the runtime, so
+# `gem list` can never be empty and asserting on it would fail on a stock image.
+# GEM_HOME is where *installed* gems land, so it is the assertion that actually
+# means "no project dependencies were baked in".
+check "no gems baked in"           '[ -z "$(ls -A "${GEM_HOME:-/usr/local/bundle}/gems" 2>/dev/null)" ]'
+
 check "no compiler baked in"       '! command -v gcc && ! command -v cc'
 
 if [ "$failed" -ne 0 ]; then

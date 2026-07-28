@@ -41,9 +41,15 @@ check "xz is present"              'xz --version'
 check "zstd is present"            'zstd --version'
 
 # ca-certificates is only meaningfully installed if TLS actually verifies;
-# cargo fetching crates depends on this working.
+# `cargo fetch` against crates.io depends on this working. (The build check
+# above deliberately runs --offline, so this is the only check that proves TLS.)
+#
+# Target crates.io rather than static.crates.io: the latter is the crate tarball
+# CDN and serves object paths, not a site root, so `curl -f` on `/` would fail
+# on an image whose TLS is perfectly fine. Every other image's TLS check points
+# at a host that returns 200 at `/`, for the same reason.
 check "CA bundle exists"           'test -s /etc/ssl/certs/ca-certificates.crt'
-check "TLS verification works"     'curl -sSf https://static.crates.io/ -o /dev/null'
+check "TLS verification works"     'curl -sSf https://crates.io/ -o /dev/null'
 
 check "workdir is /workspace"      '[ "$PWD" = /workspace ]'
 

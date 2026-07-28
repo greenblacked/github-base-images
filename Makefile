@@ -14,6 +14,10 @@
 # authentication needed, exactly like a PR run (which never touches the mirror).
 # Override TAG for the local tag, or PLATFORM to cross-build under emulation
 # (e.g. PLATFORM=linux/amd64 on Apple Silicon).
+#
+# Requires GNU make (:=, ?=, $(wildcard), $(if), .DEFAULT_GOAL). macOS ships
+# GNU make 3.81 as /usr/bin/make, which is new enough; BSD make will not parse
+# this file.
 
 # Every directory that ships a Dockerfile.ci is an image.
 IMAGES   := $(patsubst %/Dockerfile.ci,%,$(wildcard */Dockerfile.ci))
@@ -22,6 +26,13 @@ PLATFORM ?=
 PLATFORM_ARG := $(if $(PLATFORM),--platform $(PLATFORM),)
 
 .DEFAULT_GOAL := help
+
+# `check` depends on build *then* test, but make only guarantees prerequisite
+# ordering in serial mode -- under `make -j` (the natural way to speed up
+# check-all) test could start before build finished and run against a stale or
+# absent image. These recipes are docker builds that parallelise poorly anyway,
+# so serialising the whole file is the honest fix.
+.NOTPARALLEL:
 
 .PHONY: help list guard-image build test check build-all test-all check-all
 

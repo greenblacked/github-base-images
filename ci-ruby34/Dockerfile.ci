@@ -10,7 +10,9 @@ LABEL org.opencontainers.image.source=https://github.com/greenblacked/github-bas
 LABEL org.opencontainers.image.description="Shared CI image: Ruby 3.4 on Debian Bookworm slim"
 
 ENV DEBIAN_FRONTEND=noninteractive \
-    CI=true
+    CI=true \
+    BUNDLE_JOBS=4 \
+    BUNDLE_RETRY=3
 
 # DL3008: apt pins would go stale and break the weekly rebuild, which is the
 # actual update mechanism here.

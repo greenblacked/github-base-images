@@ -40,15 +40,24 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/*
 
 # rustfmt and clippy are what CI actually runs (`cargo fmt --check`,
-# `cargo clippy`). The upstream image installs them with the default rustup
-# profile; adding them explicitly is idempotent and keeps the promise honest if
-# upstream ever trims to the minimal profile.
+# `cargo clippy`), and they are NOT in the upstream image: it runs rustup-init
+# with `--profile minimal`, which ships only rustc, rust-std, and cargo. So this
+# is a hard requirement, not a defensive no-op -- without it the smoke tests
+# fail and the image's documented promise is false.
+#
+# Trade-off: rustup fetches the components from static.rust-lang.org, making
+# this the only build-time network dependency outside ci-tools. If that host is
+# unreachable the build fails rather than silently shipping without them.
 RUN rustup component add rustfmt clippy
 
 WORKDIR /workspace
 
+# Verify the components installed above at build time, not just in test.sh --
+# a missing component should fail the build rather than the later smoke gate.
 RUN rustc --version \
     && cargo --version \
+    && cargo fmt --version \
+    && cargo clippy --version \
     && git --version
 
 # GitHub Actions supplies commands dynamically.
