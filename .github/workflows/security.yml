@@ -43,6 +43,11 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          # Nothing here runs a git operation after checkout -- GITHUB_TOKEN is
+          # only ever used as a registry password -- so leaving credentials in
+          # .git/config is pure exposure (zizmor: artipacked).
+          persist-credentials: false
 
       - name: Trivy filesystem secret scan (SARIF)
         uses: aquasecurity/trivy-action@v0.36.0
@@ -87,13 +92,23 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          # Nothing here runs a git operation after checkout -- GITHUB_TOKEN is
+          # only ever used as a registry password -- so leaving credentials in
+          # .git/config is pure exposure (zizmor: artipacked).
+          persist-credentials: false
 
       - name: Install zizmor
         uses: astral-sh/setup-uv@v5
 
-      # Reported, not gating, on its first outing: this repo pins actions by tag
-      # rather than digest, which zizmor flags, and that is a deliberate open
-      # item rather than a regression to block on.
+      # Reported, not gating. The findings still reach the Security tab via the
+      # SARIF upload below, and the `zizmor` check run there reflects them --
+      # this step staying green only means the audit ran, not that it was clean.
+      #
+      # Policy lives in .github/zizmor.yml. Notably `unpinned-uses` is set to
+      # ref-pin rather than the default hash-pin: tag pins are the current
+      # standard here, and leaving the default would emit 136 high findings in
+      # one go and bury everything worth reading.
       - name: Run zizmor
         continue-on-error: true
         run: |
