@@ -1,0 +1,154 @@
+# Repository-level security checks, deliberately kept out of build-and-push.yml.
+#
+# That workflow scans the *images* it produces. This one scans the *repository*
+# that produces them -- the workflows, the scripts, the git history -- which is
+# the other half of the supply chain and a different threat model: an attacker
+# who can influence a workflow file controls every image this repo publishes,
+# without ever touching a Dockerfile.
+#
+# Separate file so a finding here can never block an image build, and so it
+# still runs on weeks when no image directory changed (build-and-push.yml is
+# path-filtered; this is not).
+name: Security
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    # Offset from the image rebuild so the two do not contend for runners.
+    - cron: '41 5 * * 1'
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  # Secrets committed to the repository itself, which the image scan cannot see:
+  # it only inspects what was COPYed in, and nothing here is. Scans the working
+  # tree rather than an image, so it also covers workflows, docs, and the
+  # Makefile.
+  repo-secrets:
+    name: Repository secret scan
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Trivy filesystem secret scan (SARIF)
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          scan-type: fs
+          scan-ref: .
+          scanners: secret
+          format: sarif
+          output: trivy-repo-secrets.sarif
+          exit-code: '0'
+
+      - name: Upload SARIF to code scanning
+        if: always()
+        continue-on-error: true
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: trivy-repo-secrets.sarif
+          category: repo-secrets
+
+      # Gates, like the image secret gate does. A credential committed here is
+      # always fixable from this repo, so there is no reason to ship one.
+      - name: Secret gate
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          scan-type: fs
+          scan-ref: .
+          scanners: secret
+          format: table
+          exit-code: '1'
+
+  # Static analysis of the workflows themselves: template injection via
+  # ${{ }} interpolation into run blocks, over-broad permissions, unpinned
+  # actions, cache poisoning, artifact leakage. actionlint (in build-and-push.yml)
+  # checks that a workflow is *valid*; zizmor checks that it is *safe*.
+  workflow-audit:
+    name: Workflow security audit
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install zizmor
+        uses: astral-sh/setup-uv@v5
+
+      # Reported, not gating, on its first outing: this repo pins actions by tag
+      # rather than digest, which zizmor flags, and that is a deliberate open
+      # item rather than a regression to block on.
+      - name: Run zizmor
+        continue-on-error: true
+        run: |
+          uvx zizmor --format sarif . > zizmor.sarif || true
+          uvx zizmor --format plain . || true
+
+      - name: Upload SARIF to code scanning
+        if: always()
+        continue-on-error: true
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: zizmor.sarif
+          category: workflow-audit
+
+  # OpenSSF Scorecard: branch protection, token permissions, pinned
+  # dependencies, dangerous workflow patterns, maintenance signals. Produces the
+  # score behind the README badge.
+  #
+  # Only meaningful on the default branch -- several checks inspect repository
+  # settings rather than the tree -- so it does not run on pull requests.
+  scorecard:
+    name: OpenSSF Scorecard
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      security-events: write
+      # Required for the badge and for Scorecard's own OIDC-based checks.
+      id-token: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Run Scorecard
+        uses: ossf/scorecard-action@v2.4.1
+        with:
+          results_file: scorecard.sarif
+          results_format: sarif
+          publish_results: true
+
+      - name: Upload artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: scorecard-results
+          path: scorecard.sarif
+          retention-days: 90
+
+      - name: Upload SARIF to code scanning
+        if: always()
+        continue-on-error: true
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: scorecard.sarif
+          category: scorecard

@@ -162,6 +162,8 @@ jobs:
     permissions:
       contents: read
       packages: write
+      # Required by the SARIF upload to code scanning.
+      security-events: write
     env:
       IMAGE: ci-node22
       VERSION: bookworm-v1
@@ -256,11 +258,62 @@ jobs:
           output: trivy-misconfig-${{ env.IMAGE }}-${{ matrix.arch }}.txt
           exit-code: '0'
 
+      # License inventory of every OS package and bundled library in the image.
+      # Reported, never gating: a copyleft finding in Debian's own packages is
+      # information for a consumer, not something fixable from this repo.
+      - name: License report (table)
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          image-ref: ${{ env.IMAGE }}:test
+          scanners: license
+          format: table
+          output: trivy-licenses-${{ env.IMAGE }}-${{ matrix.arch }}.txt
+          exit-code: '0'
+
+      # A CycloneDX SBOM per image and architecture. This is the artifact a
+      # consumer needs to answer "was I affected by X" months later, without
+      # rebuilding or re-scanning.
+      - name: SBOM (CycloneDX)
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          image-ref: ${{ env.IMAGE }}:test
+          scan-type: image
+          format: cyclonedx
+          output: sbom-${{ env.IMAGE }}-${{ matrix.arch }}.cdx.json
+          exit-code: '0'
+
+      # Same scope as the gate below, emitted as SARIF so findings land in the
+      # repository's Security tab instead of only inside a build log. `category`
+      # must be unique per image and architecture or each upload overwrites the
+      # previous one.
+      - name: Vulnerability report (SARIF)
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          image-ref: ${{ env.IMAGE }}:test
+          scanners: vuln
+          format: sarif
+          output: trivy-${{ env.IMAGE }}-${{ matrix.arch }}.sarif
+          exit-code: '0'
+          ignore-unfixed: true
+          severity: HIGH,CRITICAL
+          vuln-type: os
+
+      # continue-on-error: code scanning upload must never be the reason an
+      # image fails to publish.
+      - name: Upload SARIF to code scanning
+        if: always()
+        continue-on-error: true
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: trivy-${{ env.IMAGE }}-${{ matrix.arch }}.sarif
+          category: ${{ env.IMAGE }}-${{ matrix.arch }}
+
       - name: Publish reports to job summary and log
         run: |
           for report in "trivy-${{ env.IMAGE }}-${{ matrix.arch }}.txt" \
                         "trivy-secrets-${{ env.IMAGE }}-${{ matrix.arch }}.txt" \
-                        "trivy-misconfig-${{ env.IMAGE }}-${{ matrix.arch }}.txt"; do
+                        "trivy-misconfig-${{ env.IMAGE }}-${{ matrix.arch }}.txt" \
+                        "trivy-licenses-${{ env.IMAGE }}-${{ matrix.arch }}.txt"; do
             cat "$report"
             {
               echo "<details><summary>${report%.txt}</summary>"
@@ -284,6 +337,9 @@ jobs:
             trivy-${{ env.IMAGE }}-${{ matrix.arch }}.txt
             trivy-secrets-${{ env.IMAGE }}-${{ matrix.arch }}.txt
             trivy-misconfig-${{ env.IMAGE }}-${{ matrix.arch }}.txt
+            trivy-licenses-${{ env.IMAGE }}-${{ matrix.arch }}.txt
+            trivy-${{ env.IMAGE }}-${{ matrix.arch }}.sarif
+            sbom-${{ env.IMAGE }}-${{ matrix.arch }}.cdx.json
           retention-days: 90
 
       # The gate. OS packages only: library findings are the runtime's own
@@ -429,6 +485,8 @@ jobs:
     permissions:
       contents: read
       packages: write
+      # Required by the SARIF upload to code scanning.
+      security-events: write
     env:
       IMAGE: ci-python313
       VERSION: bookworm-v1
@@ -514,11 +572,62 @@ jobs:
           output: trivy-misconfig-${{ env.IMAGE }}-${{ matrix.arch }}.txt
           exit-code: '0'
 
+      # License inventory of every OS package and bundled library in the image.
+      # Reported, never gating: a copyleft finding in Debian's own packages is
+      # information for a consumer, not something fixable from this repo.
+      - name: License report (table)
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          image-ref: ${{ env.IMAGE }}:test
+          scanners: license
+          format: table
+          output: trivy-licenses-${{ env.IMAGE }}-${{ matrix.arch }}.txt
+          exit-code: '0'
+
+      # A CycloneDX SBOM per image and architecture. This is the artifact a
+      # consumer needs to answer "was I affected by X" months later, without
+      # rebuilding or re-scanning.
+      - name: SBOM (CycloneDX)
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          image-ref: ${{ env.IMAGE }}:test
+          scan-type: image
+          format: cyclonedx
+          output: sbom-${{ env.IMAGE }}-${{ matrix.arch }}.cdx.json
+          exit-code: '0'
+
+      # Same scope as the gate below, emitted as SARIF so findings land in the
+      # repository's Security tab instead of only inside a build log. `category`
+      # must be unique per image and architecture or each upload overwrites the
+      # previous one.
+      - name: Vulnerability report (SARIF)
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          image-ref: ${{ env.IMAGE }}:test
+          scanners: vuln
+          format: sarif
+          output: trivy-${{ env.IMAGE }}-${{ matrix.arch }}.sarif
+          exit-code: '0'
+          ignore-unfixed: true
+          severity: HIGH,CRITICAL
+          vuln-type: os
+
+      # continue-on-error: code scanning upload must never be the reason an
+      # image fails to publish.
+      - name: Upload SARIF to code scanning
+        if: always()
+        continue-on-error: true
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: trivy-${{ env.IMAGE }}-${{ matrix.arch }}.sarif
+          category: ${{ env.IMAGE }}-${{ matrix.arch }}
+
       - name: Publish reports to job summary and log
         run: |
           for report in "trivy-${{ env.IMAGE }}-${{ matrix.arch }}.txt" \
                         "trivy-secrets-${{ env.IMAGE }}-${{ matrix.arch }}.txt" \
-                        "trivy-misconfig-${{ env.IMAGE }}-${{ matrix.arch }}.txt"; do
+                        "trivy-misconfig-${{ env.IMAGE }}-${{ matrix.arch }}.txt" \
+                        "trivy-licenses-${{ env.IMAGE }}-${{ matrix.arch }}.txt"; do
             cat "$report"
             {
               echo "<details><summary>${report%.txt}</summary>"
@@ -540,6 +649,9 @@ jobs:
             trivy-${{ env.IMAGE }}-${{ matrix.arch }}.txt
             trivy-secrets-${{ env.IMAGE }}-${{ matrix.arch }}.txt
             trivy-misconfig-${{ env.IMAGE }}-${{ matrix.arch }}.txt
+            trivy-licenses-${{ env.IMAGE }}-${{ matrix.arch }}.txt
+            trivy-${{ env.IMAGE }}-${{ matrix.arch }}.sarif
+            sbom-${{ env.IMAGE }}-${{ matrix.arch }}.cdx.json
           retention-days: 90
 
       - name: Vulnerability gate (${{ matrix.arch }})
@@ -663,6 +775,8 @@ jobs:
     permissions:
       contents: read
       packages: write
+      # Required by the SARIF upload to code scanning.
+      security-events: write
     env:
       IMAGE: ci-go125
       VERSION: bookworm-v1
@@ -748,11 +862,62 @@ jobs:
           output: trivy-misconfig-${{ env.IMAGE }}-${{ matrix.arch }}.txt
           exit-code: '0'
 
+      # License inventory of every OS package and bundled library in the image.
+      # Reported, never gating: a copyleft finding in Debian's own packages is
+      # information for a consumer, not something fixable from this repo.
+      - name: License report (table)
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          image-ref: ${{ env.IMAGE }}:test
+          scanners: license
+          format: table
+          output: trivy-licenses-${{ env.IMAGE }}-${{ matrix.arch }}.txt
+          exit-code: '0'
+
+      # A CycloneDX SBOM per image and architecture. This is the artifact a
+      # consumer needs to answer "was I affected by X" months later, without
+      # rebuilding or re-scanning.
+      - name: SBOM (CycloneDX)
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          image-ref: ${{ env.IMAGE }}:test
+          scan-type: image
+          format: cyclonedx
+          output: sbom-${{ env.IMAGE }}-${{ matrix.arch }}.cdx.json
+          exit-code: '0'
+
+      # Same scope as the gate below, emitted as SARIF so findings land in the
+      # repository's Security tab instead of only inside a build log. `category`
+      # must be unique per image and architecture or each upload overwrites the
+      # previous one.
+      - name: Vulnerability report (SARIF)
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          image-ref: ${{ env.IMAGE }}:test
+          scanners: vuln
+          format: sarif
+          output: trivy-${{ env.IMAGE }}-${{ matrix.arch }}.sarif
+          exit-code: '0'
+          ignore-unfixed: true
+          severity: HIGH,CRITICAL
+          vuln-type: os
+
+      # continue-on-error: code scanning upload must never be the reason an
+      # image fails to publish.
+      - name: Upload SARIF to code scanning
+        if: always()
+        continue-on-error: true
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: trivy-${{ env.IMAGE }}-${{ matrix.arch }}.sarif
+          category: ${{ env.IMAGE }}-${{ matrix.arch }}
+
       - name: Publish reports to job summary and log
         run: |
           for report in "trivy-${{ env.IMAGE }}-${{ matrix.arch }}.txt" \
                         "trivy-secrets-${{ env.IMAGE }}-${{ matrix.arch }}.txt" \
-                        "trivy-misconfig-${{ env.IMAGE }}-${{ matrix.arch }}.txt"; do
+                        "trivy-misconfig-${{ env.IMAGE }}-${{ matrix.arch }}.txt" \
+                        "trivy-licenses-${{ env.IMAGE }}-${{ matrix.arch }}.txt"; do
             cat "$report"
             {
               echo "<details><summary>${report%.txt}</summary>"
@@ -774,6 +939,9 @@ jobs:
             trivy-${{ env.IMAGE }}-${{ matrix.arch }}.txt
             trivy-secrets-${{ env.IMAGE }}-${{ matrix.arch }}.txt
             trivy-misconfig-${{ env.IMAGE }}-${{ matrix.arch }}.txt
+            trivy-licenses-${{ env.IMAGE }}-${{ matrix.arch }}.txt
+            trivy-${{ env.IMAGE }}-${{ matrix.arch }}.sarif
+            sbom-${{ env.IMAGE }}-${{ matrix.arch }}.cdx.json
           retention-days: 90
 
       - name: Vulnerability gate (${{ matrix.arch }})
@@ -897,6 +1065,8 @@ jobs:
     permissions:
       contents: read
       packages: write
+      # Required by the SARIF upload to code scanning.
+      security-events: write
     env:
       IMAGE: ci-tools
       VERSION: bookworm-v1
@@ -982,11 +1152,62 @@ jobs:
           output: trivy-misconfig-${{ env.IMAGE }}-${{ matrix.arch }}.txt
           exit-code: '0'
 
+      # License inventory of every OS package and bundled library in the image.
+      # Reported, never gating: a copyleft finding in Debian's own packages is
+      # information for a consumer, not something fixable from this repo.
+      - name: License report (table)
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          image-ref: ${{ env.IMAGE }}:test
+          scanners: license
+          format: table
+          output: trivy-licenses-${{ env.IMAGE }}-${{ matrix.arch }}.txt
+          exit-code: '0'
+
+      # A CycloneDX SBOM per image and architecture. This is the artifact a
+      # consumer needs to answer "was I affected by X" months later, without
+      # rebuilding or re-scanning.
+      - name: SBOM (CycloneDX)
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          image-ref: ${{ env.IMAGE }}:test
+          scan-type: image
+          format: cyclonedx
+          output: sbom-${{ env.IMAGE }}-${{ matrix.arch }}.cdx.json
+          exit-code: '0'
+
+      # Same scope as the gate below, emitted as SARIF so findings land in the
+      # repository's Security tab instead of only inside a build log. `category`
+      # must be unique per image and architecture or each upload overwrites the
+      # previous one.
+      - name: Vulnerability report (SARIF)
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          image-ref: ${{ env.IMAGE }}:test
+          scanners: vuln
+          format: sarif
+          output: trivy-${{ env.IMAGE }}-${{ matrix.arch }}.sarif
+          exit-code: '0'
+          ignore-unfixed: true
+          severity: HIGH,CRITICAL
+          vuln-type: os
+
+      # continue-on-error: code scanning upload must never be the reason an
+      # image fails to publish.
+      - name: Upload SARIF to code scanning
+        if: always()
+        continue-on-error: true
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: trivy-${{ env.IMAGE }}-${{ matrix.arch }}.sarif
+          category: ${{ env.IMAGE }}-${{ matrix.arch }}
+
       - name: Publish reports to job summary and log
         run: |
           for report in "trivy-${{ env.IMAGE }}-${{ matrix.arch }}.txt" \
                         "trivy-secrets-${{ env.IMAGE }}-${{ matrix.arch }}.txt" \
-                        "trivy-misconfig-${{ env.IMAGE }}-${{ matrix.arch }}.txt"; do
+                        "trivy-misconfig-${{ env.IMAGE }}-${{ matrix.arch }}.txt" \
+                        "trivy-licenses-${{ env.IMAGE }}-${{ matrix.arch }}.txt"; do
             cat "$report"
             {
               echo "<details><summary>${report%.txt}</summary>"
@@ -1008,6 +1229,9 @@ jobs:
             trivy-${{ env.IMAGE }}-${{ matrix.arch }}.txt
             trivy-secrets-${{ env.IMAGE }}-${{ matrix.arch }}.txt
             trivy-misconfig-${{ env.IMAGE }}-${{ matrix.arch }}.txt
+            trivy-licenses-${{ env.IMAGE }}-${{ matrix.arch }}.txt
+            trivy-${{ env.IMAGE }}-${{ matrix.arch }}.sarif
+            sbom-${{ env.IMAGE }}-${{ matrix.arch }}.cdx.json
           retention-days: 90
 
       - name: Vulnerability gate (${{ matrix.arch }})
@@ -1131,6 +1355,8 @@ jobs:
     permissions:
       contents: read
       packages: write
+      # Required by the SARIF upload to code scanning.
+      security-events: write
     env:
       IMAGE: ci-rust185
       VERSION: bookworm-v1
@@ -1216,11 +1442,62 @@ jobs:
           output: trivy-misconfig-${{ env.IMAGE }}-${{ matrix.arch }}.txt
           exit-code: '0'
 
+      # License inventory of every OS package and bundled library in the image.
+      # Reported, never gating: a copyleft finding in Debian's own packages is
+      # information for a consumer, not something fixable from this repo.
+      - name: License report (table)
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          image-ref: ${{ env.IMAGE }}:test
+          scanners: license
+          format: table
+          output: trivy-licenses-${{ env.IMAGE }}-${{ matrix.arch }}.txt
+          exit-code: '0'
+
+      # A CycloneDX SBOM per image and architecture. This is the artifact a
+      # consumer needs to answer "was I affected by X" months later, without
+      # rebuilding or re-scanning.
+      - name: SBOM (CycloneDX)
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          image-ref: ${{ env.IMAGE }}:test
+          scan-type: image
+          format: cyclonedx
+          output: sbom-${{ env.IMAGE }}-${{ matrix.arch }}.cdx.json
+          exit-code: '0'
+
+      # Same scope as the gate below, emitted as SARIF so findings land in the
+      # repository's Security tab instead of only inside a build log. `category`
+      # must be unique per image and architecture or each upload overwrites the
+      # previous one.
+      - name: Vulnerability report (SARIF)
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          image-ref: ${{ env.IMAGE }}:test
+          scanners: vuln
+          format: sarif
+          output: trivy-${{ env.IMAGE }}-${{ matrix.arch }}.sarif
+          exit-code: '0'
+          ignore-unfixed: true
+          severity: HIGH,CRITICAL
+          vuln-type: os
+
+      # continue-on-error: code scanning upload must never be the reason an
+      # image fails to publish.
+      - name: Upload SARIF to code scanning
+        if: always()
+        continue-on-error: true
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: trivy-${{ env.IMAGE }}-${{ matrix.arch }}.sarif
+          category: ${{ env.IMAGE }}-${{ matrix.arch }}
+
       - name: Publish reports to job summary and log
         run: |
           for report in "trivy-${{ env.IMAGE }}-${{ matrix.arch }}.txt" \
                         "trivy-secrets-${{ env.IMAGE }}-${{ matrix.arch }}.txt" \
-                        "trivy-misconfig-${{ env.IMAGE }}-${{ matrix.arch }}.txt"; do
+                        "trivy-misconfig-${{ env.IMAGE }}-${{ matrix.arch }}.txt" \
+                        "trivy-licenses-${{ env.IMAGE }}-${{ matrix.arch }}.txt"; do
             cat "$report"
             {
               echo "<details><summary>${report%.txt}</summary>"
@@ -1242,6 +1519,9 @@ jobs:
             trivy-${{ env.IMAGE }}-${{ matrix.arch }}.txt
             trivy-secrets-${{ env.IMAGE }}-${{ matrix.arch }}.txt
             trivy-misconfig-${{ env.IMAGE }}-${{ matrix.arch }}.txt
+            trivy-licenses-${{ env.IMAGE }}-${{ matrix.arch }}.txt
+            trivy-${{ env.IMAGE }}-${{ matrix.arch }}.sarif
+            sbom-${{ env.IMAGE }}-${{ matrix.arch }}.cdx.json
           retention-days: 90
 
       - name: Vulnerability gate (${{ matrix.arch }})
@@ -1365,6 +1645,8 @@ jobs:
     permissions:
       contents: read
       packages: write
+      # Required by the SARIF upload to code scanning.
+      security-events: write
     env:
       IMAGE: ci-ruby34
       VERSION: bookworm-v1
@@ -1450,11 +1732,62 @@ jobs:
           output: trivy-misconfig-${{ env.IMAGE }}-${{ matrix.arch }}.txt
           exit-code: '0'
 
+      # License inventory of every OS package and bundled library in the image.
+      # Reported, never gating: a copyleft finding in Debian's own packages is
+      # information for a consumer, not something fixable from this repo.
+      - name: License report (table)
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          image-ref: ${{ env.IMAGE }}:test
+          scanners: license
+          format: table
+          output: trivy-licenses-${{ env.IMAGE }}-${{ matrix.arch }}.txt
+          exit-code: '0'
+
+      # A CycloneDX SBOM per image and architecture. This is the artifact a
+      # consumer needs to answer "was I affected by X" months later, without
+      # rebuilding or re-scanning.
+      - name: SBOM (CycloneDX)
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          image-ref: ${{ env.IMAGE }}:test
+          scan-type: image
+          format: cyclonedx
+          output: sbom-${{ env.IMAGE }}-${{ matrix.arch }}.cdx.json
+          exit-code: '0'
+
+      # Same scope as the gate below, emitted as SARIF so findings land in the
+      # repository's Security tab instead of only inside a build log. `category`
+      # must be unique per image and architecture or each upload overwrites the
+      # previous one.
+      - name: Vulnerability report (SARIF)
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          image-ref: ${{ env.IMAGE }}:test
+          scanners: vuln
+          format: sarif
+          output: trivy-${{ env.IMAGE }}-${{ matrix.arch }}.sarif
+          exit-code: '0'
+          ignore-unfixed: true
+          severity: HIGH,CRITICAL
+          vuln-type: os
+
+      # continue-on-error: code scanning upload must never be the reason an
+      # image fails to publish.
+      - name: Upload SARIF to code scanning
+        if: always()
+        continue-on-error: true
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: trivy-${{ env.IMAGE }}-${{ matrix.arch }}.sarif
+          category: ${{ env.IMAGE }}-${{ matrix.arch }}
+
       - name: Publish reports to job summary and log
         run: |
           for report in "trivy-${{ env.IMAGE }}-${{ matrix.arch }}.txt" \
                         "trivy-secrets-${{ env.IMAGE }}-${{ matrix.arch }}.txt" \
-                        "trivy-misconfig-${{ env.IMAGE }}-${{ matrix.arch }}.txt"; do
+                        "trivy-misconfig-${{ env.IMAGE }}-${{ matrix.arch }}.txt" \
+                        "trivy-licenses-${{ env.IMAGE }}-${{ matrix.arch }}.txt"; do
             cat "$report"
             {
               echo "<details><summary>${report%.txt}</summary>"
@@ -1476,6 +1809,9 @@ jobs:
             trivy-${{ env.IMAGE }}-${{ matrix.arch }}.txt
             trivy-secrets-${{ env.IMAGE }}-${{ matrix.arch }}.txt
             trivy-misconfig-${{ env.IMAGE }}-${{ matrix.arch }}.txt
+            trivy-licenses-${{ env.IMAGE }}-${{ matrix.arch }}.txt
+            trivy-${{ env.IMAGE }}-${{ matrix.arch }}.sarif
+            sbom-${{ env.IMAGE }}-${{ matrix.arch }}.cdx.json
           retention-days: 90
 
       - name: Vulnerability gate (${{ matrix.arch }})

@@ -1,6 +1,14 @@
 # base-images
 
+[![Build and Push to GHCR](https://github.com/greenblacked/github-base-images/actions/workflows/build-and-push.yml/badge.svg?branch=main)](https://github.com/greenblacked/github-base-images/actions/workflows/build-and-push.yml)
+[![Security](https://github.com/greenblacked/github-base-images/actions/workflows/security.yml/badge.svg?branch=main)](https://github.com/greenblacked/github-base-images/actions/workflows/security.yml)
+[![OpenSSF Scorecard](https://api.securityscorecards.dev/projects/github.com/greenblacked/github-base-images/badge)](https://scorecard.dev/viewer/?uri=github.com/greenblacked/github-base-images)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+
 Central repository for building and publishing shared container images to `ghcr.io`.
+
+The two workflow badges track **`main`**, not the latest run on any branch — so a red build badge
+means the published images are stale or broken, not that someone's pull request is failing.
 
 ## Images
 
@@ -238,7 +246,7 @@ Each `<image>/test.sh` asserts every tool the image promises is present
 actually works, and that nothing project-specific — dependencies, credentials, state — is baked
 in.
 
-Trivy runs three scans on every build, per architecture. All reports are printed to the log,
+Trivy runs five scans on every build, per architecture. All reports are printed to the log,
 attached to the job summary, and uploaded as a **`security-report-<image>-<arch>` artifact**
 (retained 90 days), including on failed builds:
 
@@ -256,10 +264,48 @@ attached to the job summary, and uploaded as a **`security-report-<image>-<arch>
 - **Misconfiguration scan** — lints the Dockerfile's build instructions (missing `USER`, `ADD` vs
   `COPY`, …). Best-practice guidance rather than exploitable findings, so it is **reported, not
   gating** — the gates stay reserved for real, fixable security problems.
+- **License scan** — the license of every OS package and bundled library in the image. **Reported,
+  not gating**: a copyleft finding in Debian's own packages is information a consumer may need, not
+  something fixable from here.
+- **SBOM** — a CycloneDX bill of materials per image and architecture
+  (`sbom-<image>-<arch>.cdx.json`, in the same artifact). This is what lets a consumer answer *"was
+  I affected by X"* months later without rebuilding or re-scanning the image.
+
+The vulnerability scan is also emitted as **SARIF and uploaded to the repository's Security tab**,
+under a `<image>-<arch>` category, so findings are browsable and diffable over time rather than
+buried in a build log. The upload is `continue-on-error` — code scanning must never be the reason
+an image fails to publish.
+
+### Repository security checks
+
+[security.yml](.github/workflows/security.yml) scans the **repository**, where `build-and-push.yml`
+scans the **images**. That is a different threat model: anyone who can influence a workflow file
+controls every image this repo publishes, without touching a Dockerfile. It is a separate workflow
+so a finding can never block an image build, and so it still runs on weeks when no image directory
+changed — `build-and-push.yml` is path-filtered, this is not.
+
+- **Repository secret scan** — Trivy over the working tree, covering workflows, docs, and the
+  Makefile, none of which the image scan can see (nothing is `COPY`ed in). **Gates**, on the same
+  reasoning as the image secret gate.
+- **Workflow security audit** — `zizmor` checks whether the workflows are *safe*: template
+  injection through `${{ }}` into `run:` blocks, over-broad permissions, unpinned actions, cache
+  poisoning. `actionlint` already checks they are *valid*; this is the other half. Currently
+  **reported, not gating** — it flags the tag-pinned actions, which is a known open item rather
+  than a regression.
+- **OpenSSF Scorecard** — branch protection, token permissions, pinned dependencies, dangerous
+  workflow patterns. Produces the score behind the README badge. Runs on `main` only, since several
+  checks inspect repository settings rather than the tree.
+
+All three publish SARIF to the Security tab, so *Security → Code scanning* is the single place to
+see everything: image vulnerabilities per architecture, repository secrets, workflow findings, and
+the Scorecard result.
+
+> **First run:** the Scorecard badge stays grey until the workflow has run once on `main` and
+> published its results. Both badges track `main`, so they will not reflect a pull request.
 
 ## PR validation and linting
 
-Every PR runs the full pipeline — lint, build both architectures natively, smoke test, all three
+Every PR runs the full pipeline — lint, build both architectures natively, smoke test, all five
 scans, both gates — with every registry write skipped. Publishing (mirror push, digest push,
 manifest tagging) happens only on `main`. A manually dispatched run from another branch follows
 the same upstream-only, no-write validation path.
