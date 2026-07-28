@@ -29,3 +29,13 @@ updates:
     directory: /ci-tools
     schedule:
       interval: weekly
+
+  - package-ecosystem: docker
+    directory: /ci-rust185
+    schedule:
+      interval: weekly
+
+  - package-ecosystem: docker
+    directory: /ci-ruby34
+    schedule:
+      interval: weekly

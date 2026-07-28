@@ -9,6 +9,8 @@ Central repository for building and publishing shared container images to `ghcr.
 | `ghcr.io/greenblacked/ci-node22` | `node:22-bookworm-slim` | `bookworm-v1` | `linux/amd64`, `linux/arm64` |
 | `ghcr.io/greenblacked/ci-python313` | `python:3.13-slim-bookworm` | `bookworm-v1` | `linux/amd64`, `linux/arm64` |
 | `ghcr.io/greenblacked/ci-go125` | `golang:1.25-bookworm` | `bookworm-v1` | `linux/amd64`, `linux/arm64` |
+| `ghcr.io/greenblacked/ci-rust185` | `rust:1.85-bookworm` | `bookworm-v1` | `linux/amd64`, `linux/arm64` |
+| `ghcr.io/greenblacked/ci-ruby34` | `ruby:3.4-slim-bookworm` | `bookworm-v1` | `linux/amd64`, `linux/arm64` |
 | `ghcr.io/greenblacked/ci-tools` | `debian:bookworm-slim` | `bookworm-v1` | `linux/amd64`, `linux/arm64` |
 
 These are **CI images**, used as GitHub Actions container jobs — not as `FROM` bases for
@@ -21,6 +23,10 @@ curl, tar, gzip, unzip, xz, zstd, jq, and the OpenSSH client. On top of that:
   wheels add `build-essential` in their own workflow, for the same reason browsers are not baked
   into `ci-node22`.
 - **`ci-go125`** — the Go 1.25 toolchain (non-slim upstream, so cgo's C toolchain is included).
+- **`ci-rust185`** — the Rust 1.85 toolchain, plus the `rustfmt` and `clippy` components CI lints
+  with (non-slim upstream, so the C toolchain the linker needs is included).
+- **`ci-ruby34`** — Ruby 3.4, RubyGems, and Bundler. No compiler toolchain: projects with gems
+  that build native extensions add `build-essential` in their own workflow, same as `ci-python313`.
 - **`ci-tools`** — infra/deploy tooling as pinned upstream release binaries: Terraform, kubectl,
   the AWS CLI v2, and the Docker *client* (no daemon — it talks to the host's socket or a
   `docker:dind` service). Versions are pinned via `ARG`s in
@@ -81,6 +87,23 @@ Useful for reproducing a CI failure with the exact toolchain the runner used. Bo
 architectures are tested natively; to reproduce an amd64-specific failure from an Apple Silicon
 machine, use `--platform linux/amd64`, which is emulated and slower.
 
+### Building and testing an image locally
+
+Editing a `Dockerfile.ci` or a `test.sh`? The [Makefile](Makefile) runs the same build-then-smoke-test
+loop a PR does — from the upstream base, so no `ghcr.io` login — minus the registry writes and Trivy
+scans that stay CI's job:
+
+```bash
+make list                     # ci-go125 ci-node22 ci-python313 ci-ruby34 ci-rust185 ci-tools
+make check IMAGE=ci-rust185   # build ci-rust185:test, then run ci-rust185/test.sh against it
+make check-all                # every image
+```
+
+`build` and `test` are separate targets (`make build IMAGE=…`, `make test IMAGE=…`); `PLATFORM=linux/amd64`
+cross-builds under emulation, and `TAG=` overrides the local `:test` tag. CI remains the source of
+truth — it builds both architectures natively and enforces the vulnerability and secret gates the
+Makefile does not.
+
 ## Running Playwright tests
 
 The image ships Playwright's **system libraries but no browser binaries**. Browsers are
@@ -136,7 +159,8 @@ for every consuming repository, forever.
 > **One-time manual step:** GHCR packages are created **private**, and visibility cannot be
 > changed by the workflow — `GITHUB_TOKEN` lacks the permission. After the first successful push:
 > package page → *Package settings* → *Change visibility* → **Public**. Do this for every `ci-*`
-> image (`ci-node22`, `ci-python313`, `ci-go125`, `ci-tools`) and every `mirror-*` package.
+> image (`ci-node22`, `ci-python313`, `ci-go125`, `ci-rust185`, `ci-ruby34`, `ci-tools`) and every
+> `mirror-*` package.
 > Until then, pulls from other repositories fail with `denied`.
 
 Publishing still authenticates, and always will: writing to any registry requires a bearer token
@@ -165,6 +189,8 @@ The workflow copies the upstream base into `ghcr.io` before building:
 | `ghcr.io/greenblacked/mirror-node:22-bookworm-slim` | `node:22-bookworm-slim` (Docker Hub) |
 | `ghcr.io/greenblacked/mirror-python:3.13-slim-bookworm` | `python:3.13-slim-bookworm` (Docker Hub) |
 | `ghcr.io/greenblacked/mirror-golang:1.25-bookworm` | `golang:1.25-bookworm` (Docker Hub) |
+| `ghcr.io/greenblacked/mirror-rust:1.85-bookworm` | `rust:1.85-bookworm` (Docker Hub) |
+| `ghcr.io/greenblacked/mirror-ruby:3.4-slim-bookworm` | `ruby:3.4-slim-bookworm` (Docker Hub) |
 | `ghcr.io/greenblacked/mirror-debian:bookworm-slim` | `debian:bookworm-slim` (Docker Hub) |
 
 Builds then use the mirror, so they do not depend on Docker Hub availability or rate limits. The
@@ -283,6 +309,8 @@ any single image's directory reruns every job pair, not just the changed one.
 
 ### Future candidates
 
-Rust, Java/JVM, .NET, Ruby, and PHP images can be added with the exact same recipe once a
-concrete consumer needs one. Until then they are deliberately not built — an image with no
-consumer is just scan noise and rebuild minutes.
+Java/JVM, .NET, and PHP images can be added with the exact same recipe once a concrete consumer
+needs one. Until then they are deliberately not built — an image with no consumer is just scan
+noise and rebuild minutes. (Rust and Ruby graduated from this list; they are the two `ci-*` images
+above with no bookworm-specific caveats — both build `FROM` an official Docker Hub `-bookworm` tag,
+so they slot straight into the mirror + `ARG BASE_IMAGE` machinery.)
