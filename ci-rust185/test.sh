@@ -41,15 +41,18 @@ check "xz is present"              'xz --version'
 check "zstd is present"            'zstd --version'
 
 # ca-certificates is only meaningfully installed if TLS actually verifies;
-# `cargo fetch` against crates.io depends on this working. (The build check
-# above deliberately runs --offline, so this is the only check that proves TLS.)
+# `cargo fetch` depends on this working. (The build check above deliberately
+# runs --offline, so this is the only check that proves TLS.)
 #
-# Target crates.io rather than static.crates.io: the latter is the crate tarball
-# CDN and serves object paths, not a site root, so `curl -f` on `/` would fail
-# on an image whose TLS is perfectly fine. Every other image's TLS check points
-# at a host that returns 200 at `/`, for the same reason.
+# Fetch the sparse index's config.json rather than a site root. Rust is the one
+# ecosystem here with no root that answers a plain curl: both https://crates.io/
+# and https://static.crates.io/ return 403 -- the former to unrecognised
+# user agents, the latter because it is the crate tarball CDN and has no index
+# at /. Either would fail on an image whose TLS is perfectly fine. config.json
+# is the first thing cargo reads when resolving dependencies, so this checks
+# the path that actually matters and returns 200.
 check "CA bundle exists"           'test -s /etc/ssl/certs/ca-certificates.crt'
-check "TLS verification works"     'curl -sSf https://crates.io/ -o /dev/null'
+check "TLS verification works"     'curl -sSf https://index.crates.io/config.json -o /dev/null'
 
 check "workdir is /workspace"      '[ "$PWD" = /workspace ]'
 
