@@ -1,0 +1,74 @@
+# Defaults to upstream so local builds work without authenticating to ghcr.io.
+# CI overrides this with our mirrored copy, so builds do not depend on Docker
+# Hub availability or rate limits.
+ARG BASE_IMAGE=php:8.4-cli-bookworm
+# DL3006: the default above is tagged; hadolint just can't see through the ARG.
+# hadolint ignore=DL3006
+FROM ${BASE_IMAGE}
+
+LABEL org.opencontainers.image.source=https://github.com/greenblacked/github-base-images
+LABEL org.opencontainers.image.description="Shared CI image: PHP 8.4 CLI on Debian Bookworm"
+LABEL org.opencontainers.image.licenses=MIT
+
+ENV DEBIAN_FRONTEND=noninteractive \
+    CI=true \
+    COMPOSER_NO_INTERACTION=1 \
+    COMPOSER_ALLOW_SUPERUSER=1
+
+# DL3008: apt pins would go stale and break the weekly rebuild, which is the
+# actual update mechanism here.
+# The upgrade picks up Debian security fixes published since the upstream base
+# was last rebuilt; the Trivy gate blocks fixable HIGH/CRITICAL vulns, so
+# waiting for upstream to rebuild would block this image too.
+# hadolint ignore=DL3008
+RUN apt-get update \
+    && apt-get upgrade --yes \
+    && apt-get install --yes --no-install-recommends \
+        bash \
+        ca-certificates \
+        curl \
+        git \
+        gzip \
+        jq \
+        openssh-client \
+        tar \
+        unzip \
+        xz-utils \
+        zstd \
+    && rm -rf /var/lib/apt/lists/*
+
+# Composer, pinned and checksum-verified.
+#
+# Unlike npm, pip, bundler and cargo, PHP's package manager is NOT part of the
+# upstream runtime image -- so shipping it here is what gives ci-php84 parity
+# with the other language images rather than an extra.
+#
+# Fetched from the GitHub release rather than getcomposer.org: the installer
+# endpoint is not reliably reachable from every build network, and a release
+# asset is a stable, verifiable artifact. The SHA-256 is checked before the
+# binary is installed, so a tampered or truncated download fails the build
+# instead of silently shipping.
+ARG COMPOSER_VERSION=2.8.12
+ARG COMPOSER_SHA256=f446ea719708bb85fcbf4ef18def5d0515f1f9b4d703f6d820c9c1656e10a2f2
+# The checksum file is written rather than piped into sha256sum: a pipe in RUN
+# trips hadolint DL4006, and the lint job fails on warnings.
+RUN curl -fsSLo /tmp/composer.phar \
+        "https://github.com/composer/composer/releases/download/${COMPOSER_VERSION}/composer.phar" \
+    && echo "${COMPOSER_SHA256}  /tmp/composer.phar" > /tmp/composer.sum \
+    && sha256sum --check --strict /tmp/composer.sum \
+    && rm /tmp/composer.sum \
+    && mv /tmp/composer.phar /usr/local/bin/composer \
+    && chmod +x /usr/local/bin/composer
+
+# No PECL extensions and no build toolchain beyond what upstream ships.
+# Projects needing a native extension add $PHPIZE_DEPS in their own workflow --
+# same philosophy as browsers not being baked into ci-node22.
+
+WORKDIR /workspace
+
+RUN php --version \
+    && composer --version \
+    && git --version
+
+# GitHub Actions supplies commands dynamically.
+# Do not define ENTRYPOINT or CMD.

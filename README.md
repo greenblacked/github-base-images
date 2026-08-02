@@ -19,6 +19,9 @@ means the published images are stale or broken, not that someone's pull request 
 | `ghcr.io/greenblacked/ci-go125` | `golang:1.25-bookworm` | `bookworm-v1` | `linux/amd64`, `linux/arm64` |
 | `ghcr.io/greenblacked/ci-rust185` | `rust:1.85-bookworm` | `bookworm-v1` | `linux/amd64`, `linux/arm64` |
 | `ghcr.io/greenblacked/ci-ruby34` | `ruby:3.4-slim-bookworm` | `bookworm-v1` | `linux/amd64`, `linux/arm64` |
+| `ghcr.io/greenblacked/ci-java21` | `eclipse-temurin:21-jdk-noble` | `noble-v1` | `linux/amd64`, `linux/arm64` |
+| `ghcr.io/greenblacked/ci-php84` | `php:8.4-cli-bookworm` | `bookworm-v1` | `linux/amd64`, `linux/arm64` |
+| `ghcr.io/greenblacked/ci-dotnet9` | `mcr.microsoft.com/dotnet/sdk:9.0-bookworm-slim` | `bookworm-v1` | `linux/amd64`, `linux/arm64` |
 | `ghcr.io/greenblacked/ci-tools` | `debian:bookworm-slim` | `bookworm-v1` | `linux/amd64`, `linux/arm64` |
 
 These are **CI images**, used as GitHub Actions container jobs — not as `FROM` bases for
@@ -35,10 +38,29 @@ curl, tar, gzip, unzip, xz, zstd, jq, and the OpenSSH client. On top of that:
   with (non-slim upstream, so the C toolchain the linker needs is included).
 - **`ci-ruby34`** — Ruby 3.4, RubyGems, and Bundler. No compiler toolchain: projects with gems
   that build native extensions add `build-essential` in their own workflow, same as `ci-python313`.
+- **`ci-java21`** — the Temurin JDK 21. No Maven and no Gradle: both ship a wrapper (`mvnw`,
+  `gradlew`) that projects commit and that pins the exact build version, so a second copy here
+  would be ignored or fight the wrapper.
+- **`ci-php84`** — PHP 8.4 CLI plus Composer. Composer is the one package manager not shipped by
+  its upstream runtime image, so it is installed here — pinned by version *and* SHA-256, and
+  fetched from the GitHub release rather than `getcomposer.org`, which is not reachable from every
+  build network.
+- **`ci-dotnet9`** — the .NET SDK 9.0. No global tools: those are pinned per project in
+  `.config/dotnet-tools.json` and restored by the project's own workflow.
+
 - **`ci-tools`** — infra/deploy tooling as pinned upstream release binaries: Terraform, kubectl,
   the AWS CLI v2, and the Docker *client* (no daemon — it talks to the host's socket or a
   `docker:dind` service). Versions are pinned via `ARG`s in
   [ci-tools/Dockerfile.ci](ci-tools/Dockerfile.ci); a bump is a one-line PR that CI revalidates.
+
+Two of these break a pattern worth naming explicitly:
+
+- **`ci-java21` is not Bookworm.** Temurin publishes no Debian Bookworm tag — only Ubuntu and
+  Alpine — and installing a JDK onto `debian:bookworm-slim` would pin us to whatever Debian ships
+  (17, not 21). It is built on Noble and carries its own **`noble-v1`** version line. The version
+  tag is per image, so this costs nothing structurally.
+- **`ci-dotnet9` does not come from Docker Hub.** Microsoft publishes .NET only to
+  `mcr.microsoft.com`. It is still mirrored, so builds depend on one registry rather than two.
 
 None of them contains project dependencies, application source, credentials, repository secrets,
 or project-specific build tools. Dependencies stay controlled by each consuming repository's own
@@ -171,7 +193,8 @@ for every consuming repository, forever.
 > **One-time manual step:** GHCR packages are created **private**, and visibility cannot be
 > changed by the workflow — `GITHUB_TOKEN` lacks the permission. After the first successful push:
 > package page → *Package settings* → *Change visibility* → **Public**. Do this for every `ci-*`
-> image (`ci-node22`, `ci-python313`, `ci-go125`, `ci-rust185`, `ci-ruby34`, `ci-tools`) and every
+> image (`ci-node22`, `ci-python313`, `ci-go125`, `ci-rust185`, `ci-ruby34`, `ci-java21`,
+> `ci-php84`, `ci-dotnet9`, `ci-tools`) and every
 > `mirror-*` package.
 > Until then, pulls from other repositories fail with `denied`.
 
@@ -204,6 +227,9 @@ The workflow copies the upstream base into `ghcr.io` before building:
 | `ghcr.io/greenblacked/mirror-rust:1.85-bookworm` | `rust:1.85-bookworm` (Docker Hub) |
 | `ghcr.io/greenblacked/mirror-ruby:3.4-slim-bookworm` | `ruby:3.4-slim-bookworm` (Docker Hub) |
 | `ghcr.io/greenblacked/mirror-debian:bookworm-slim` | `debian:bookworm-slim` (Docker Hub) |
+| `ghcr.io/greenblacked/mirror-temurin:21-jdk-noble` | `eclipse-temurin:21-jdk-noble` (Docker Hub) |
+| `ghcr.io/greenblacked/mirror-php:8.4-cli-bookworm` | `php:8.4-cli-bookworm` (Docker Hub) |
+| `ghcr.io/greenblacked/mirror-dotnet:9.0-bookworm-slim` | `mcr.microsoft.com/dotnet/sdk:9.0-bookworm-slim` (MCR) |
 
 Builds then use the mirror, so they do not depend on Docker Hub availability or rate limits. The
 Dockerfile takes a `BASE_IMAGE` build arg that defaults to upstream, so local builds still work
@@ -276,6 +302,19 @@ under a `<image>-<arch>` category, so findings are browsable and diffable over t
 buried in a build log. The upload is `continue-on-error` — code scanning must never be the reason
 an image fails to publish.
 
+### Attestations
+
+Published images carry an **SBOM and provenance attestation** attached to the artifact itself, not
+just to a build artifact that expires after 90 days. These are the `unknown/unknown` entries in:
+
+```bash
+docker buildx imagetools inspect ghcr.io/greenblacked/ci-ruby34:bookworm-v1
+```
+
+`sbom: true` and `provenance: mode=max` are set on the push step only — the test build uses the
+docker exporter via `load:`, which cannot carry attestations. `imagetools create` preserves them
+into the final multi-arch index.
+
 ### Repository security checks
 
 [security.yml](.github/workflows/security.yml) scans the **repository**, where `build-and-push.yml`
@@ -292,6 +331,16 @@ changed — `build-and-push.yml` is path-filtered, this is not.
   poisoning. `actionlint` already checks they are *valid*; this is the other half. Currently
   **reported, not gating** — it flags the tag-pinned actions, which is a known open item rather
   than a regression.
+- **CodeQL (`actions`)** — overlaps `zizmor` on purpose. `zizmor` is a rules engine over the YAML;
+  CodeQL does dataflow, following an untrusted value from a trigger through expressions into a
+  sink, which catches injection paths a pattern matcher reads as safe. `actions` is the only
+  language worth analysing here — the repo is shell, YAML and Dockerfiles, none of which CodeQL
+  supports.
+- **Git history secret scan** — `gitleaks` over the full history, which the working-tree scan
+  cannot see. A credential committed and removed in a later commit is still fetchable by anyone
+  who clones. **Reported, not gating**, and deliberately so: a history finding cannot be fixed by
+  a commit — it needs a history rewrite *plus* rotation — so failing the build would block every
+  unrelated change until that happened. Treat a hit as an incident, not a broken build.
 - **OpenSSF Scorecard** — branch protection, token permissions, pinned dependencies, dangerous
   workflow patterns. Produces the score behind the README badge. Runs on `main` only, since several
   checks inspect repository settings rather than the tree.
@@ -368,9 +417,11 @@ any single image's directory reruns every job pair, not just the changed one.
 
 ### Future candidates
 
-Java/JVM, .NET, and PHP images can be added with the exact same recipe once a concrete consumer
-needs one. Until then they are deliberately not built — an image with no consumer is just scan
-noise and rebuild minutes. Rust and Ruby graduated from this list.
+Java/JVM, .NET and PHP have now graduated from this list, alongside Rust and Ruby.
+
+Nothing is queued behind them. The bar for the next one is unchanged: a concrete consumer. An
+image with no consumer is scan noise and rebuild minutes, and it is now also ~230 lines of copied
+workflow — see the trade-off note above, which is getting harder to justify with every addition.
 
 ## Contributing and reporting problems
 

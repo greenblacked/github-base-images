@@ -17,6 +17,9 @@ on:
       - 'ci-tools/**'
       - 'ci-rust185/**'
       - 'ci-ruby34/**'
+      - 'ci-java21/**'
+      - 'ci-php84/**'
+      - 'ci-dotnet9/**'
       - '.github/workflows/build-and-push.yml'
   # PRs run the full lint -> build -> smoke test -> scan pipeline, but every
   # step that writes to the registry is skipped: PR builds use the upstream
@@ -31,6 +34,9 @@ on:
       - 'ci-tools/**'
       - 'ci-rust185/**'
       - 'ci-ruby34/**'
+      - 'ci-java21/**'
+      - 'ci-php84/**'
+      - 'ci-dotnet9/**'
       - '.github/workflows/build-and-push.yml'
   schedule:
     # Weekly rebuild: re-mirrors the upstream bases, picks up security updates,
@@ -143,6 +149,24 @@ jobs:
           docker buildx imagetools create \
             --tag ghcr.io/${{ github.repository_owner }}/mirror-ruby:3.4-slim-bookworm \
             ruby:3.4-slim-bookworm
+
+      - name: Mirror eclipse-temurin:21-jdk-noble
+        run: |
+          docker buildx imagetools create \
+            --tag ghcr.io/${{ github.repository_owner }}/mirror-temurin:21-jdk-noble \
+            eclipse-temurin:21-jdk-noble
+
+      - name: Mirror php:8.4-cli-bookworm
+        run: |
+          docker buildx imagetools create \
+            --tag ghcr.io/${{ github.repository_owner }}/mirror-php:8.4-cli-bookworm \
+            php:8.4-cli-bookworm
+
+      - name: Mirror mcr.microsoft.com/dotnet/sdk:9.0-bookworm-slim
+        run: |
+          docker buildx imagetools create \
+            --tag ghcr.io/${{ github.repository_owner }}/mirror-dotnet:9.0-bookworm-slim \
+            mcr.microsoft.com/dotnet/sdk:9.0-bookworm-slim
 
   # ------------------------------------------------------------------------
   # ci-node22
@@ -402,6 +426,13 @@ jobs:
             BASE_IMAGE=ghcr.io/${{ github.repository_owner }}/${{ env.MIRROR }}
           tags: ghcr.io/${{ github.repository_owner }}/${{ env.IMAGE }}:${{ env.VERSION }}-${{ matrix.arch }}
           push: true
+          # Attach the SBOM and provenance to the pushed artifact, not just to a
+          # build artifact that expires. `imagetools create` carries these into
+          # the final index -- they are the `unknown/unknown` entries you see in
+          # `imagetools inspect`. Only set on the push: the test build above uses
+          # the docker exporter via `load:`, which cannot carry attestations.
+          sbom: true
+          provenance: mode=max
           cache-from: type=gha,scope=${{ env.IMAGE }}-${{ matrix.arch }}
           cache-to: type=gha,mode=max,scope=${{ env.IMAGE }}-${{ matrix.arch }}
 
@@ -700,6 +731,13 @@ jobs:
             BASE_IMAGE=ghcr.io/${{ github.repository_owner }}/${{ env.MIRROR }}
           tags: ghcr.io/${{ github.repository_owner }}/${{ env.IMAGE }}:${{ env.VERSION }}-${{ matrix.arch }}
           push: true
+          # Attach the SBOM and provenance to the pushed artifact, not just to a
+          # build artifact that expires. `imagetools create` carries these into
+          # the final index -- they are the `unknown/unknown` entries you see in
+          # `imagetools inspect`. Only set on the push: the test build above uses
+          # the docker exporter via `load:`, which cannot carry attestations.
+          sbom: true
+          provenance: mode=max
           cache-from: type=gha,scope=${{ env.IMAGE }}-${{ matrix.arch }}
           cache-to: type=gha,mode=max,scope=${{ env.IMAGE }}-${{ matrix.arch }}
 
@@ -995,6 +1033,13 @@ jobs:
             BASE_IMAGE=ghcr.io/${{ github.repository_owner }}/${{ env.MIRROR }}
           tags: ghcr.io/${{ github.repository_owner }}/${{ env.IMAGE }}:${{ env.VERSION }}-${{ matrix.arch }}
           push: true
+          # Attach the SBOM and provenance to the pushed artifact, not just to a
+          # build artifact that expires. `imagetools create` carries these into
+          # the final index -- they are the `unknown/unknown` entries you see in
+          # `imagetools inspect`. Only set on the push: the test build above uses
+          # the docker exporter via `load:`, which cannot carry attestations.
+          sbom: true
+          provenance: mode=max
           cache-from: type=gha,scope=${{ env.IMAGE }}-${{ matrix.arch }}
           cache-to: type=gha,mode=max,scope=${{ env.IMAGE }}-${{ matrix.arch }}
 
@@ -1290,6 +1335,13 @@ jobs:
             BASE_IMAGE=ghcr.io/${{ github.repository_owner }}/${{ env.MIRROR }}
           tags: ghcr.io/${{ github.repository_owner }}/${{ env.IMAGE }}:${{ env.VERSION }}-${{ matrix.arch }}
           push: true
+          # Attach the SBOM and provenance to the pushed artifact, not just to a
+          # build artifact that expires. `imagetools create` carries these into
+          # the final index -- they are the `unknown/unknown` entries you see in
+          # `imagetools inspect`. Only set on the push: the test build above uses
+          # the docker exporter via `load:`, which cannot carry attestations.
+          sbom: true
+          provenance: mode=max
           cache-from: type=gha,scope=${{ env.IMAGE }}-${{ matrix.arch }}
           cache-to: type=gha,mode=max,scope=${{ env.IMAGE }}-${{ matrix.arch }}
 
@@ -1585,6 +1637,13 @@ jobs:
             BASE_IMAGE=ghcr.io/${{ github.repository_owner }}/${{ env.MIRROR }}
           tags: ghcr.io/${{ github.repository_owner }}/${{ env.IMAGE }}:${{ env.VERSION }}-${{ matrix.arch }}
           push: true
+          # Attach the SBOM and provenance to the pushed artifact, not just to a
+          # build artifact that expires. `imagetools create` carries these into
+          # the final index -- they are the `unknown/unknown` entries you see in
+          # `imagetools inspect`. Only set on the push: the test build above uses
+          # the docker exporter via `load:`, which cannot carry attestations.
+          sbom: true
+          provenance: mode=max
           cache-from: type=gha,scope=${{ env.IMAGE }}-${{ matrix.arch }}
           cache-to: type=gha,mode=max,scope=${{ env.IMAGE }}-${{ matrix.arch }}
 
@@ -1880,6 +1939,13 @@ jobs:
             BASE_IMAGE=ghcr.io/${{ github.repository_owner }}/${{ env.MIRROR }}
           tags: ghcr.io/${{ github.repository_owner }}/${{ env.IMAGE }}:${{ env.VERSION }}-${{ matrix.arch }}
           push: true
+          # Attach the SBOM and provenance to the pushed artifact, not just to a
+          # build artifact that expires. `imagetools create` carries these into
+          # the final index -- they are the `unknown/unknown` entries you see in
+          # `imagetools inspect`. Only set on the push: the test build above uses
+          # the docker exporter via `load:`, which cannot carry attestations.
+          sbom: true
+          provenance: mode=max
           cache-from: type=gha,scope=${{ env.IMAGE }}-${{ matrix.arch }}
           cache-to: type=gha,mode=max,scope=${{ env.IMAGE }}-${{ matrix.arch }}
 
@@ -1909,6 +1975,912 @@ jobs:
       packages: write
     env:
       IMAGE: ci-ruby34
+      VERSION: bookworm-v1
+
+    steps:
+      - name: Download digests
+        uses: actions/download-artifact@v4
+        with:
+          path: /tmp/digests
+          pattern: digest-${{ env.IMAGE }}-*
+          merge-multiple: true
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Create manifest list
+        working-directory: /tmp/digests
+        run: |
+          # shellcheck disable=SC2035,SC2046 # the digest filenames must word-split
+          docker buildx imagetools create \
+            --tag ghcr.io/${{ github.repository_owner }}/${{ env.IMAGE }}:${{ env.VERSION }} \
+            --tag ghcr.io/${{ github.repository_owner }}/${{ env.IMAGE }}:latest \
+            --tag ghcr.io/${{ github.repository_owner }}/${{ env.IMAGE }}:${{ github.sha }} \
+            $(printf 'ghcr.io/${{ github.repository_owner }}/${{ env.IMAGE }}@sha256:%s ' *)
+
+      - name: Report digest and platforms
+        run: |
+          inspect=$(docker buildx imagetools inspect \
+            ghcr.io/${{ github.repository_owner }}/${{ env.IMAGE }}:${{ env.VERSION }})
+          echo "$inspect"
+          digest=$(echo "$inspect" | awk '/^Digest:/ {print $2; exit}')
+          {
+            echo "### ${{ env.IMAGE }}:${{ env.VERSION }}"
+            echo
+            echo "Tested and scanned on every architecture. Pin this digest in production:"
+            echo
+            echo '```yaml'
+            echo "image: ghcr.io/${{ github.repository_owner }}/${{ env.IMAGE }}@${digest}"
+            echo '```'
+            echo
+            echo '```'
+            echo "$inspect"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  # ------------------------------------------------------------------------
+  # ci-java21 -- same structure as ci-node22 above; see the comments there.
+  # ------------------------------------------------------------------------
+  build-java:
+    needs: [lint, mirror]
+    if: ${{ !cancelled() && needs.lint.result == 'success' && (needs.mirror.result == 'success' || needs.mirror.result == 'skipped') }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
+    permissions:
+      contents: read
+      packages: write
+      # Required by the SARIF upload to code scanning.
+      security-events: write
+    env:
+      IMAGE: ci-java21
+      VERSION: noble-v1
+      MIRROR: mirror-temurin:21-jdk-noble
+      UPSTREAM: eclipse-temurin:21-jdk-noble
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-latest
+            platform: linux/amd64
+            arch: amd64
+          - runner: ubuntu-24.04-arm
+            platform: linux/arm64
+            arch: arm64
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          # Nothing here runs a git operation after checkout -- GITHUB_TOKEN is
+          # only ever used as a registry password -- so leaving credentials in
+          # .git/config is pure exposure (zizmor: artipacked).
+          persist-credentials: false
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to GitHub Container Registry
+        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build ${{ env.IMAGE }} (${{ matrix.arch }})
+        uses: docker/build-push-action@v6
+        with:
+          context: ./${{ env.IMAGE }}
+          file: ./${{ env.IMAGE }}/${{ env.DOCKERFILE }}
+          platforms: ${{ matrix.platform }}
+          build-args: |
+            BASE_IMAGE=${{ (github.event_name == 'pull_request' || github.ref != 'refs/heads/main') && env.UPSTREAM || format('ghcr.io/{0}/{1}', github.repository_owner, env.MIRROR) }}
+          load: true
+          push: false
+          tags: ${{ env.IMAGE }}:test
+          cache-from: type=gha,scope=${{ env.IMAGE }}-${{ matrix.arch }}
+          cache-to: type=gha,mode=max,scope=${{ env.IMAGE }}-${{ matrix.arch }}
+
+      - name: Smoke test (${{ matrix.arch }})
+        run: ./${{ env.IMAGE }}/test.sh ${{ env.IMAGE }}:test
+
+      - name: Security report (JSON)
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          image-ref: ${{ env.IMAGE }}:test
+          scanners: vuln
+          format: json
+          output: trivy-${{ env.IMAGE }}-${{ matrix.arch }}.json
+          exit-code: '0'
+
+      - name: Security report (table)
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          image-ref: ${{ env.IMAGE }}:test
+          scanners: vuln
+          format: table
+          output: trivy-${{ env.IMAGE }}-${{ matrix.arch }}.txt
+          exit-code: '0'
+
+      - name: Secret report (table)
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          image-ref: ${{ env.IMAGE }}:test
+          scanners: secret
+          format: table
+          output: trivy-secrets-${{ env.IMAGE }}-${{ matrix.arch }}.txt
+          exit-code: '0'
+
+      - name: Misconfiguration report (table)
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          scan-type: config
+          scan-ref: ./${{ env.IMAGE }}
+          format: table
+          output: trivy-misconfig-${{ env.IMAGE }}-${{ matrix.arch }}.txt
+          exit-code: '0'
+
+      # License inventory of every OS package and bundled library in the image.
+      # Reported, never gating: a copyleft finding in Debian's own packages is
+      # information for a consumer, not something fixable from this repo.
+      - name: License report (table)
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          image-ref: ${{ env.IMAGE }}:test
+          scanners: license
+          format: table
+          output: trivy-licenses-${{ env.IMAGE }}-${{ matrix.arch }}.txt
+          exit-code: '0'
+
+      # A CycloneDX SBOM per image and architecture. This is the artifact a
+      # consumer needs to answer "was I affected by X" months later, without
+      # rebuilding or re-scanning.
+      - name: SBOM (CycloneDX)
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          image-ref: ${{ env.IMAGE }}:test
+          scan-type: image
+          format: cyclonedx
+          output: sbom-${{ env.IMAGE }}-${{ matrix.arch }}.cdx.json
+          exit-code: '0'
+
+      # Same scope as the gate below, emitted as SARIF so findings land in the
+      # repository's Security tab instead of only inside a build log. `category`
+      # must be unique per image and architecture or each upload overwrites the
+      # previous one.
+      - name: Vulnerability report (SARIF)
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          image-ref: ${{ env.IMAGE }}:test
+          scanners: vuln
+          format: sarif
+          output: trivy-${{ env.IMAGE }}-${{ matrix.arch }}.sarif
+          exit-code: '0'
+          ignore-unfixed: true
+          severity: HIGH,CRITICAL
+          vuln-type: os
+
+      # continue-on-error: code scanning upload must never be the reason an
+      # image fails to publish.
+      - name: Upload SARIF to code scanning
+        if: always()
+        continue-on-error: true
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: trivy-${{ env.IMAGE }}-${{ matrix.arch }}.sarif
+          category: ${{ env.IMAGE }}-${{ matrix.arch }}
+
+      - name: Publish reports to job summary and log
+        run: |
+          for report in "trivy-${{ env.IMAGE }}-${{ matrix.arch }}.txt" \
+                        "trivy-secrets-${{ env.IMAGE }}-${{ matrix.arch }}.txt" \
+                        "trivy-misconfig-${{ env.IMAGE }}-${{ matrix.arch }}.txt" \
+                        "trivy-licenses-${{ env.IMAGE }}-${{ matrix.arch }}.txt"; do
+            cat "$report"
+            {
+              echo "<details><summary>${report%.txt}</summary>"
+              echo
+              echo '```'
+              cat "$report"
+              echo '```'
+              echo "</details>"
+            } >> "$GITHUB_STEP_SUMMARY"
+          done
+
+      - name: Upload security reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: security-report-${{ env.IMAGE }}-${{ matrix.arch }}
+          path: |
+            trivy-${{ env.IMAGE }}-${{ matrix.arch }}.json
+            trivy-${{ env.IMAGE }}-${{ matrix.arch }}.txt
+            trivy-secrets-${{ env.IMAGE }}-${{ matrix.arch }}.txt
+            trivy-misconfig-${{ env.IMAGE }}-${{ matrix.arch }}.txt
+            trivy-licenses-${{ env.IMAGE }}-${{ matrix.arch }}.txt
+            trivy-${{ env.IMAGE }}-${{ matrix.arch }}.sarif
+            sbom-${{ env.IMAGE }}-${{ matrix.arch }}.cdx.json
+          retention-days: 90
+
+      - name: Vulnerability gate (${{ matrix.arch }})
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          image-ref: ${{ env.IMAGE }}:test
+          scanners: vuln
+          format: table
+          exit-code: '1'
+          ignore-unfixed: true
+          severity: HIGH,CRITICAL
+          vuln-type: os
+
+      - name: Secret gate (${{ matrix.arch }})
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          image-ref: ${{ env.IMAGE }}:test
+          scanners: secret
+          format: table
+          exit-code: '1'
+
+      - name: Push (${{ matrix.arch }})
+        id: push
+        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+        uses: docker/build-push-action@v6
+        with:
+          context: ./${{ env.IMAGE }}
+          file: ./${{ env.IMAGE }}/${{ env.DOCKERFILE }}
+          platforms: ${{ matrix.platform }}
+          build-args: |
+            BASE_IMAGE=ghcr.io/${{ github.repository_owner }}/${{ env.MIRROR }}
+          tags: ghcr.io/${{ github.repository_owner }}/${{ env.IMAGE }}:${{ env.VERSION }}-${{ matrix.arch }}
+          push: true
+          # Attach the SBOM and provenance to the pushed artifact, not just to a
+          # build artifact that expires. `imagetools create` carries these into
+          # the final index -- they are the `unknown/unknown` entries you see in
+          # `imagetools inspect`. Only set on the push: the test build above uses
+          # the docker exporter via `load:`, which cannot carry attestations.
+          sbom: true
+          provenance: mode=max
+          cache-from: type=gha,scope=${{ env.IMAGE }}-${{ matrix.arch }}
+          cache-to: type=gha,mode=max,scope=${{ env.IMAGE }}-${{ matrix.arch }}
+
+      - name: Export digest
+        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+        run: |
+          mkdir -p /tmp/digests
+          digest="${{ steps.push.outputs.digest }}"
+          touch "/tmp/digests/${digest#sha256:}"
+
+      - name: Upload digest
+        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+        uses: actions/upload-artifact@v4
+        with:
+          name: digest-${{ env.IMAGE }}-${{ matrix.arch }}
+          path: /tmp/digests/*
+          if-no-files-found: error
+          retention-days: 1
+
+  merge-java:
+    needs: build-java
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      packages: write
+    env:
+      IMAGE: ci-java21
+      VERSION: noble-v1
+
+    steps:
+      - name: Download digests
+        uses: actions/download-artifact@v4
+        with:
+          path: /tmp/digests
+          pattern: digest-${{ env.IMAGE }}-*
+          merge-multiple: true
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Create manifest list
+        working-directory: /tmp/digests
+        run: |
+          # shellcheck disable=SC2035,SC2046 # the digest filenames must word-split
+          docker buildx imagetools create \
+            --tag ghcr.io/${{ github.repository_owner }}/${{ env.IMAGE }}:${{ env.VERSION }} \
+            --tag ghcr.io/${{ github.repository_owner }}/${{ env.IMAGE }}:latest \
+            --tag ghcr.io/${{ github.repository_owner }}/${{ env.IMAGE }}:${{ github.sha }} \
+            $(printf 'ghcr.io/${{ github.repository_owner }}/${{ env.IMAGE }}@sha256:%s ' *)
+
+      - name: Report digest and platforms
+        run: |
+          inspect=$(docker buildx imagetools inspect \
+            ghcr.io/${{ github.repository_owner }}/${{ env.IMAGE }}:${{ env.VERSION }})
+          echo "$inspect"
+          digest=$(echo "$inspect" | awk '/^Digest:/ {print $2; exit}')
+          {
+            echo "### ${{ env.IMAGE }}:${{ env.VERSION }}"
+            echo
+            echo "Tested and scanned on every architecture. Pin this digest in production:"
+            echo
+            echo '```yaml'
+            echo "image: ghcr.io/${{ github.repository_owner }}/${{ env.IMAGE }}@${digest}"
+            echo '```'
+            echo
+            echo '```'
+            echo "$inspect"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  # ------------------------------------------------------------------------
+  # ci-php84 -- same structure as ci-node22 above; see the comments there.
+  # ------------------------------------------------------------------------
+  build-php:
+    needs: [lint, mirror]
+    if: ${{ !cancelled() && needs.lint.result == 'success' && (needs.mirror.result == 'success' || needs.mirror.result == 'skipped') }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
+    permissions:
+      contents: read
+      packages: write
+      # Required by the SARIF upload to code scanning.
+      security-events: write
+    env:
+      IMAGE: ci-php84
+      VERSION: bookworm-v1
+      MIRROR: mirror-php:8.4-cli-bookworm
+      UPSTREAM: php:8.4-cli-bookworm
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-latest
+            platform: linux/amd64
+            arch: amd64
+          - runner: ubuntu-24.04-arm
+            platform: linux/arm64
+            arch: arm64
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          # Nothing here runs a git operation after checkout -- GITHUB_TOKEN is
+          # only ever used as a registry password -- so leaving credentials in
+          # .git/config is pure exposure (zizmor: artipacked).
+          persist-credentials: false
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to GitHub Container Registry
+        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build ${{ env.IMAGE }} (${{ matrix.arch }})
+        uses: docker/build-push-action@v6
+        with:
+          context: ./${{ env.IMAGE }}
+          file: ./${{ env.IMAGE }}/${{ env.DOCKERFILE }}
+          platforms: ${{ matrix.platform }}
+          build-args: |
+            BASE_IMAGE=${{ (github.event_name == 'pull_request' || github.ref != 'refs/heads/main') && env.UPSTREAM || format('ghcr.io/{0}/{1}', github.repository_owner, env.MIRROR) }}
+          load: true
+          push: false
+          tags: ${{ env.IMAGE }}:test
+          cache-from: type=gha,scope=${{ env.IMAGE }}-${{ matrix.arch }}
+          cache-to: type=gha,mode=max,scope=${{ env.IMAGE }}-${{ matrix.arch }}
+
+      - name: Smoke test (${{ matrix.arch }})
+        run: ./${{ env.IMAGE }}/test.sh ${{ env.IMAGE }}:test
+
+      - name: Security report (JSON)
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          image-ref: ${{ env.IMAGE }}:test
+          scanners: vuln
+          format: json
+          output: trivy-${{ env.IMAGE }}-${{ matrix.arch }}.json
+          exit-code: '0'
+
+      - name: Security report (table)
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          image-ref: ${{ env.IMAGE }}:test
+          scanners: vuln
+          format: table
+          output: trivy-${{ env.IMAGE }}-${{ matrix.arch }}.txt
+          exit-code: '0'
+
+      - name: Secret report (table)
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          image-ref: ${{ env.IMAGE }}:test
+          scanners: secret
+          format: table
+          output: trivy-secrets-${{ env.IMAGE }}-${{ matrix.arch }}.txt
+          exit-code: '0'
+
+      - name: Misconfiguration report (table)
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          scan-type: config
+          scan-ref: ./${{ env.IMAGE }}
+          format: table
+          output: trivy-misconfig-${{ env.IMAGE }}-${{ matrix.arch }}.txt
+          exit-code: '0'
+
+      # License inventory of every OS package and bundled library in the image.
+      # Reported, never gating: a copyleft finding in Debian's own packages is
+      # information for a consumer, not something fixable from this repo.
+      - name: License report (table)
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          image-ref: ${{ env.IMAGE }}:test
+          scanners: license
+          format: table
+          output: trivy-licenses-${{ env.IMAGE }}-${{ matrix.arch }}.txt
+          exit-code: '0'
+
+      # A CycloneDX SBOM per image and architecture. This is the artifact a
+      # consumer needs to answer "was I affected by X" months later, without
+      # rebuilding or re-scanning.
+      - name: SBOM (CycloneDX)
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          image-ref: ${{ env.IMAGE }}:test
+          scan-type: image
+          format: cyclonedx
+          output: sbom-${{ env.IMAGE }}-${{ matrix.arch }}.cdx.json
+          exit-code: '0'
+
+      # Same scope as the gate below, emitted as SARIF so findings land in the
+      # repository's Security tab instead of only inside a build log. `category`
+      # must be unique per image and architecture or each upload overwrites the
+      # previous one.
+      - name: Vulnerability report (SARIF)
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          image-ref: ${{ env.IMAGE }}:test
+          scanners: vuln
+          format: sarif
+          output: trivy-${{ env.IMAGE }}-${{ matrix.arch }}.sarif
+          exit-code: '0'
+          ignore-unfixed: true
+          severity: HIGH,CRITICAL
+          vuln-type: os
+
+      # continue-on-error: code scanning upload must never be the reason an
+      # image fails to publish.
+      - name: Upload SARIF to code scanning
+        if: always()
+        continue-on-error: true
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: trivy-${{ env.IMAGE }}-${{ matrix.arch }}.sarif
+          category: ${{ env.IMAGE }}-${{ matrix.arch }}
+
+      - name: Publish reports to job summary and log
+        run: |
+          for report in "trivy-${{ env.IMAGE }}-${{ matrix.arch }}.txt" \
+                        "trivy-secrets-${{ env.IMAGE }}-${{ matrix.arch }}.txt" \
+                        "trivy-misconfig-${{ env.IMAGE }}-${{ matrix.arch }}.txt" \
+                        "trivy-licenses-${{ env.IMAGE }}-${{ matrix.arch }}.txt"; do
+            cat "$report"
+            {
+              echo "<details><summary>${report%.txt}</summary>"
+              echo
+              echo '```'
+              cat "$report"
+              echo '```'
+              echo "</details>"
+            } >> "$GITHUB_STEP_SUMMARY"
+          done
+
+      - name: Upload security reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: security-report-${{ env.IMAGE }}-${{ matrix.arch }}
+          path: |
+            trivy-${{ env.IMAGE }}-${{ matrix.arch }}.json
+            trivy-${{ env.IMAGE }}-${{ matrix.arch }}.txt
+            trivy-secrets-${{ env.IMAGE }}-${{ matrix.arch }}.txt
+            trivy-misconfig-${{ env.IMAGE }}-${{ matrix.arch }}.txt
+            trivy-licenses-${{ env.IMAGE }}-${{ matrix.arch }}.txt
+            trivy-${{ env.IMAGE }}-${{ matrix.arch }}.sarif
+            sbom-${{ env.IMAGE }}-${{ matrix.arch }}.cdx.json
+          retention-days: 90
+
+      - name: Vulnerability gate (${{ matrix.arch }})
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          image-ref: ${{ env.IMAGE }}:test
+          scanners: vuln
+          format: table
+          exit-code: '1'
+          ignore-unfixed: true
+          severity: HIGH,CRITICAL
+          vuln-type: os
+
+      - name: Secret gate (${{ matrix.arch }})
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          image-ref: ${{ env.IMAGE }}:test
+          scanners: secret
+          format: table
+          exit-code: '1'
+
+      - name: Push (${{ matrix.arch }})
+        id: push
+        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+        uses: docker/build-push-action@v6
+        with:
+          context: ./${{ env.IMAGE }}
+          file: ./${{ env.IMAGE }}/${{ env.DOCKERFILE }}
+          platforms: ${{ matrix.platform }}
+          build-args: |
+            BASE_IMAGE=ghcr.io/${{ github.repository_owner }}/${{ env.MIRROR }}
+          tags: ghcr.io/${{ github.repository_owner }}/${{ env.IMAGE }}:${{ env.VERSION }}-${{ matrix.arch }}
+          push: true
+          # Attach the SBOM and provenance to the pushed artifact, not just to a
+          # build artifact that expires. `imagetools create` carries these into
+          # the final index -- they are the `unknown/unknown` entries you see in
+          # `imagetools inspect`. Only set on the push: the test build above uses
+          # the docker exporter via `load:`, which cannot carry attestations.
+          sbom: true
+          provenance: mode=max
+          cache-from: type=gha,scope=${{ env.IMAGE }}-${{ matrix.arch }}
+          cache-to: type=gha,mode=max,scope=${{ env.IMAGE }}-${{ matrix.arch }}
+
+      - name: Export digest
+        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+        run: |
+          mkdir -p /tmp/digests
+          digest="${{ steps.push.outputs.digest }}"
+          touch "/tmp/digests/${digest#sha256:}"
+
+      - name: Upload digest
+        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+        uses: actions/upload-artifact@v4
+        with:
+          name: digest-${{ env.IMAGE }}-${{ matrix.arch }}
+          path: /tmp/digests/*
+          if-no-files-found: error
+          retention-days: 1
+
+  merge-php:
+    needs: build-php
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      packages: write
+    env:
+      IMAGE: ci-php84
+      VERSION: bookworm-v1
+
+    steps:
+      - name: Download digests
+        uses: actions/download-artifact@v4
+        with:
+          path: /tmp/digests
+          pattern: digest-${{ env.IMAGE }}-*
+          merge-multiple: true
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Create manifest list
+        working-directory: /tmp/digests
+        run: |
+          # shellcheck disable=SC2035,SC2046 # the digest filenames must word-split
+          docker buildx imagetools create \
+            --tag ghcr.io/${{ github.repository_owner }}/${{ env.IMAGE }}:${{ env.VERSION }} \
+            --tag ghcr.io/${{ github.repository_owner }}/${{ env.IMAGE }}:latest \
+            --tag ghcr.io/${{ github.repository_owner }}/${{ env.IMAGE }}:${{ github.sha }} \
+            $(printf 'ghcr.io/${{ github.repository_owner }}/${{ env.IMAGE }}@sha256:%s ' *)
+
+      - name: Report digest and platforms
+        run: |
+          inspect=$(docker buildx imagetools inspect \
+            ghcr.io/${{ github.repository_owner }}/${{ env.IMAGE }}:${{ env.VERSION }})
+          echo "$inspect"
+          digest=$(echo "$inspect" | awk '/^Digest:/ {print $2; exit}')
+          {
+            echo "### ${{ env.IMAGE }}:${{ env.VERSION }}"
+            echo
+            echo "Tested and scanned on every architecture. Pin this digest in production:"
+            echo
+            echo '```yaml'
+            echo "image: ghcr.io/${{ github.repository_owner }}/${{ env.IMAGE }}@${digest}"
+            echo '```'
+            echo
+            echo '```'
+            echo "$inspect"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  # ------------------------------------------------------------------------
+  # ci-dotnet9 -- same structure as ci-node22 above; see the comments there.
+  # ------------------------------------------------------------------------
+  build-dotnet:
+    needs: [lint, mirror]
+    if: ${{ !cancelled() && needs.lint.result == 'success' && (needs.mirror.result == 'success' || needs.mirror.result == 'skipped') }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
+    permissions:
+      contents: read
+      packages: write
+      # Required by the SARIF upload to code scanning.
+      security-events: write
+    env:
+      IMAGE: ci-dotnet9
+      VERSION: bookworm-v1
+      MIRROR: mirror-dotnet:9.0-bookworm-slim
+      UPSTREAM: mcr.microsoft.com/dotnet/sdk:9.0-bookworm-slim
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-latest
+            platform: linux/amd64
+            arch: amd64
+          - runner: ubuntu-24.04-arm
+            platform: linux/arm64
+            arch: arm64
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          # Nothing here runs a git operation after checkout -- GITHUB_TOKEN is
+          # only ever used as a registry password -- so leaving credentials in
+          # .git/config is pure exposure (zizmor: artipacked).
+          persist-credentials: false
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to GitHub Container Registry
+        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build ${{ env.IMAGE }} (${{ matrix.arch }})
+        uses: docker/build-push-action@v6
+        with:
+          context: ./${{ env.IMAGE }}
+          file: ./${{ env.IMAGE }}/${{ env.DOCKERFILE }}
+          platforms: ${{ matrix.platform }}
+          build-args: |
+            BASE_IMAGE=${{ (github.event_name == 'pull_request' || github.ref != 'refs/heads/main') && env.UPSTREAM || format('ghcr.io/{0}/{1}', github.repository_owner, env.MIRROR) }}
+          load: true
+          push: false
+          tags: ${{ env.IMAGE }}:test
+          cache-from: type=gha,scope=${{ env.IMAGE }}-${{ matrix.arch }}
+          cache-to: type=gha,mode=max,scope=${{ env.IMAGE }}-${{ matrix.arch }}
+
+      - name: Smoke test (${{ matrix.arch }})
+        run: ./${{ env.IMAGE }}/test.sh ${{ env.IMAGE }}:test
+
+      - name: Security report (JSON)
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          image-ref: ${{ env.IMAGE }}:test
+          scanners: vuln
+          format: json
+          output: trivy-${{ env.IMAGE }}-${{ matrix.arch }}.json
+          exit-code: '0'
+
+      - name: Security report (table)
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          image-ref: ${{ env.IMAGE }}:test
+          scanners: vuln
+          format: table
+          output: trivy-${{ env.IMAGE }}-${{ matrix.arch }}.txt
+          exit-code: '0'
+
+      - name: Secret report (table)
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          image-ref: ${{ env.IMAGE }}:test
+          scanners: secret
+          format: table
+          output: trivy-secrets-${{ env.IMAGE }}-${{ matrix.arch }}.txt
+          exit-code: '0'
+
+      - name: Misconfiguration report (table)
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          scan-type: config
+          scan-ref: ./${{ env.IMAGE }}
+          format: table
+          output: trivy-misconfig-${{ env.IMAGE }}-${{ matrix.arch }}.txt
+          exit-code: '0'
+
+      # License inventory of every OS package and bundled library in the image.
+      # Reported, never gating: a copyleft finding in Debian's own packages is
+      # information for a consumer, not something fixable from this repo.
+      - name: License report (table)
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          image-ref: ${{ env.IMAGE }}:test
+          scanners: license
+          format: table
+          output: trivy-licenses-${{ env.IMAGE }}-${{ matrix.arch }}.txt
+          exit-code: '0'
+
+      # A CycloneDX SBOM per image and architecture. This is the artifact a
+      # consumer needs to answer "was I affected by X" months later, without
+      # rebuilding or re-scanning.
+      - name: SBOM (CycloneDX)
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          image-ref: ${{ env.IMAGE }}:test
+          scan-type: image
+          format: cyclonedx
+          output: sbom-${{ env.IMAGE }}-${{ matrix.arch }}.cdx.json
+          exit-code: '0'
+
+      # Same scope as the gate below, emitted as SARIF so findings land in the
+      # repository's Security tab instead of only inside a build log. `category`
+      # must be unique per image and architecture or each upload overwrites the
+      # previous one.
+      - name: Vulnerability report (SARIF)
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          image-ref: ${{ env.IMAGE }}:test
+          scanners: vuln
+          format: sarif
+          output: trivy-${{ env.IMAGE }}-${{ matrix.arch }}.sarif
+          exit-code: '0'
+          ignore-unfixed: true
+          severity: HIGH,CRITICAL
+          vuln-type: os
+
+      # continue-on-error: code scanning upload must never be the reason an
+      # image fails to publish.
+      - name: Upload SARIF to code scanning
+        if: always()
+        continue-on-error: true
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: trivy-${{ env.IMAGE }}-${{ matrix.arch }}.sarif
+          category: ${{ env.IMAGE }}-${{ matrix.arch }}
+
+      - name: Publish reports to job summary and log
+        run: |
+          for report in "trivy-${{ env.IMAGE }}-${{ matrix.arch }}.txt" \
+                        "trivy-secrets-${{ env.IMAGE }}-${{ matrix.arch }}.txt" \
+                        "trivy-misconfig-${{ env.IMAGE }}-${{ matrix.arch }}.txt" \
+                        "trivy-licenses-${{ env.IMAGE }}-${{ matrix.arch }}.txt"; do
+            cat "$report"
+            {
+              echo "<details><summary>${report%.txt}</summary>"
+              echo
+              echo '```'
+              cat "$report"
+              echo '```'
+              echo "</details>"
+            } >> "$GITHUB_STEP_SUMMARY"
+          done
+
+      - name: Upload security reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: security-report-${{ env.IMAGE }}-${{ matrix.arch }}
+          path: |
+            trivy-${{ env.IMAGE }}-${{ matrix.arch }}.json
+            trivy-${{ env.IMAGE }}-${{ matrix.arch }}.txt
+            trivy-secrets-${{ env.IMAGE }}-${{ matrix.arch }}.txt
+            trivy-misconfig-${{ env.IMAGE }}-${{ matrix.arch }}.txt
+            trivy-licenses-${{ env.IMAGE }}-${{ matrix.arch }}.txt
+            trivy-${{ env.IMAGE }}-${{ matrix.arch }}.sarif
+            sbom-${{ env.IMAGE }}-${{ matrix.arch }}.cdx.json
+          retention-days: 90
+
+      - name: Vulnerability gate (${{ matrix.arch }})
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          image-ref: ${{ env.IMAGE }}:test
+          scanners: vuln
+          format: table
+          exit-code: '1'
+          ignore-unfixed: true
+          severity: HIGH,CRITICAL
+          vuln-type: os
+
+      - name: Secret gate (${{ matrix.arch }})
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          image-ref: ${{ env.IMAGE }}:test
+          scanners: secret
+          format: table
+          exit-code: '1'
+
+      - name: Push (${{ matrix.arch }})
+        id: push
+        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+        uses: docker/build-push-action@v6
+        with:
+          context: ./${{ env.IMAGE }}
+          file: ./${{ env.IMAGE }}/${{ env.DOCKERFILE }}
+          platforms: ${{ matrix.platform }}
+          build-args: |
+            BASE_IMAGE=ghcr.io/${{ github.repository_owner }}/${{ env.MIRROR }}
+          tags: ghcr.io/${{ github.repository_owner }}/${{ env.IMAGE }}:${{ env.VERSION }}-${{ matrix.arch }}
+          push: true
+          # Attach the SBOM and provenance to the pushed artifact, not just to a
+          # build artifact that expires. `imagetools create` carries these into
+          # the final index -- they are the `unknown/unknown` entries you see in
+          # `imagetools inspect`. Only set on the push: the test build above uses
+          # the docker exporter via `load:`, which cannot carry attestations.
+          sbom: true
+          provenance: mode=max
+          cache-from: type=gha,scope=${{ env.IMAGE }}-${{ matrix.arch }}
+          cache-to: type=gha,mode=max,scope=${{ env.IMAGE }}-${{ matrix.arch }}
+
+      - name: Export digest
+        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+        run: |
+          mkdir -p /tmp/digests
+          digest="${{ steps.push.outputs.digest }}"
+          touch "/tmp/digests/${digest#sha256:}"
+
+      - name: Upload digest
+        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+        uses: actions/upload-artifact@v4
+        with:
+          name: digest-${{ env.IMAGE }}-${{ matrix.arch }}
+          path: /tmp/digests/*
+          if-no-files-found: error
+          retention-days: 1
+
+  merge-dotnet:
+    needs: build-dotnet
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      packages: write
+    env:
+      IMAGE: ci-dotnet9
       VERSION: bookworm-v1
 
     steps:
