@@ -176,6 +176,11 @@ jobs:
   #
   # `actions` is the only language here worth analysing: the repo is shell,
   # YAML and Dockerfiles, none of which CodeQL supports.
+  #
+  # Known conflict: if the repository ever enables CodeQL "default setup" in
+  # Settings -> Code security, GitHub rejects SARIF from advanced-setup
+  # workflows like this one and the analyze step fails. The fix is one click
+  # (disable default setup), not a workflow change.
   codeql-actions:
     name: CodeQL (workflows)
     runs-on: ubuntu-latest
@@ -222,16 +227,31 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
-      # Reported, not gating, on its first outing. A history finding cannot be
-      # fixed by a commit -- it needs a rewrite plus rotation -- so failing the
-      # build would block every unrelated change until that happens. Read the
-      # log; treat a hit as an incident rather than a broken build.
+      # Pinned release binary, checksum-verified -- the same pattern as the
+      # ci-tools binaries and Composer. Not `docker run gitleaks:latest`: a
+      # mutable tag adopts a release the second it is published (the exact
+      # window the Dependabot cooldown exists to avoid), the pull would hit
+      # Docker Hub's anonymous rate limits from shared runners, and git inside
+      # a container trips the dubious-ownership check against the runner's
+      # checkout. A bump is a two-line PR (version + checksum) that CI
+      # revalidates.
+      #
+      # Reported, not gating. A history finding cannot be fixed by a commit --
+      # it needs a rewrite plus rotation -- so failing the build would block
+      # every unrelated change until that happens. Read the log; treat a hit
+      # as an incident rather than a broken build.
       - name: Gitleaks
         continue-on-error: true
+        env:
+          GITLEAKS_VERSION: 8.30.0
+          GITLEAKS_SHA256: 79a3ab579b53f71efd634f3aaf7e04a0fa0cf206b7ed434638d1547a2470a66e
         run: |
-          docker run --rm -v "$PWD:/repo" -w /repo \
-            zricethezav/gitleaks:latest detect \
-              --source=/repo --redact --verbose --exit-code 0 \
+          curl -fsSLo gitleaks.tgz \
+            "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+          echo "${GITLEAKS_SHA256}  gitleaks.tgz" > gitleaks.sum
+          sha256sum --check --strict gitleaks.sum
+          tar -xzf gitleaks.tgz gitleaks
+          ./gitleaks detect --source . --redact --verbose --exit-code 0 \
             | tee gitleaks.log
 
       - name: Summarize

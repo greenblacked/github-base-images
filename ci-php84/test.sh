@@ -47,10 +47,13 @@ check "TLS verification works"     'curl -sSf https://repo.packagist.org/package
 check "workdir is /workspace"      '[ "$PWD" = /workspace ]'
 
 # The image is shared across projects: packages belong in each repo's
-# composer.lock, not baked in here.
+# composer.lock, not baked in here. Composer 2 without COMPOSER_HOME set uses
+# the XDG cache path, so both the legacy and XDG locations are asserted --
+# checking only ~/.composer would pass vacuously while the real cache filled
+# up elsewhere.
 check "no project baked in"        '! test -e /workspace/composer.json'
 check "no vendor dir baked in"     '! test -e /workspace/vendor'
-check "no composer cache baked in" '[ -z "$(ls -A "${COMPOSER_HOME:-${HOME:-/root}/.composer}/cache" 2>/dev/null)" ]'
+check "no composer cache baked in" '[ -z "$(ls -A "${HOME:-/root}/.composer/cache" 2>/dev/null)" ] && [ -z "$(ls -A "${XDG_CACHE_HOME:-${HOME:-/root}/.cache}/composer" 2>/dev/null)" ]'
 
 if [ "$failed" -ne 0 ]; then
   echo "FAIL: one or more checks failed for $IMAGE" >&2
