@@ -167,3 +167,89 @@ jobs:
         with:
           sarif_file: scorecard.sarif
           category: scorecard
+
+  # CodeQL's `actions` analysis. Overlaps zizmor deliberately: zizmor is a
+  # rules engine over the YAML, CodeQL does dataflow -- it follows an untrusted
+  # value from a trigger through expressions into a sink, which catches
+  # injection paths a pattern matcher reads as safe. Findings land in the same
+  # Security tab, so the overlap costs nothing but the runner minutes.
+  #
+  # `actions` is the only language here worth analysing: the repo is shell,
+  # YAML and Dockerfiles, none of which CodeQL supports.
+  codeql-actions:
+    name: CodeQL (workflows)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          # Nothing here runs a git operation after checkout -- GITHUB_TOKEN is
+          # only ever used as a registry password -- so leaving credentials in
+          # .git/config is pure exposure (zizmor: artipacked).
+          persist-credentials: false
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v3
+        with:
+          languages: actions
+
+      - name: Analyze
+        uses: github/codeql-action/analyze@v3
+        with:
+          category: codeql-actions
+
+  # Secrets in git *history*, which the working-tree scan cannot see. A
+  # credential committed and removed in a later commit is still fetchable by
+  # anyone who clones -- and rotating it is the only real fix, so finding it
+  # late is much worse than finding it now.
+  #
+  # fetch-depth: 0 because a shallow clone has no history to scan; without it
+  # this job would pass while checking almost nothing.
+  git-history-secrets:
+    name: Git history secret scan
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      # Reported, not gating, on its first outing. A history finding cannot be
+      # fixed by a commit -- it needs a rewrite plus rotation -- so failing the
+      # build would block every unrelated change until that happens. Read the
+      # log; treat a hit as an incident rather than a broken build.
+      - name: Gitleaks
+        continue-on-error: true
+        run: |
+          docker run --rm -v "$PWD:/repo" -w /repo \
+            zricethezav/gitleaks:latest detect \
+              --source=/repo --redact --verbose --exit-code 0 \
+            | tee gitleaks.log
+
+      - name: Summarize
+        if: always()
+        run: |
+          {
+            echo "### Git history secret scan"
+            echo
+            echo '```'
+            tail -40 gitleaks.log 2>/dev/null || echo "(no output)"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: gitleaks-log
+          path: gitleaks.log
+          retention-days: 90
+          if-no-files-found: warn
