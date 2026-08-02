@@ -47,7 +47,6 @@ curl, tar, gzip, unzip, xz, zstd, jq, and the OpenSSH client. On top of that:
   build network.
 - **`ci-dotnet9`** — the .NET SDK 9.0. No global tools: those are pinned per project in
   `.config/dotnet-tools.json` and restored by the project's own workflow.
-
 - **`ci-tools`** — infra/deploy tooling as pinned upstream release binaries: Terraform, kubectl,
   the AWS CLI v2, and the Docker *client* (no daemon — it talks to the host's socket or a
   `docker:dind` service). Versions are pinned via `ARG`s in
@@ -328,9 +327,10 @@ changed — `build-and-push.yml` is path-filtered, this is not.
   reasoning as the image secret gate.
 - **Workflow security audit** — `zizmor` checks whether the workflows are *safe*: template
   injection through `${{ }}` into `run:` blocks, over-broad permissions, unpinned actions, cache
-  poisoning. `actionlint` already checks they are *valid*; this is the other half. Currently
-  **reported, not gating** — it flags the tag-pinned actions, which is a known open item rather
-  than a regression.
+  poisoning. `actionlint` already checks they are *valid*; this is the other half. **Reported,
+  not gating**, and it runs on zizmor's default policy — including `hash-pin`, which every
+  action in this repo now satisfies: all `uses:` are pinned by commit SHA with the version in a
+  trailing comment, a form Dependabot understands and maintains.
 - **CodeQL (`actions`)** — overlaps `zizmor` on purpose. `zizmor` is a rules engine over the YAML;
   CodeQL does dataflow, following an untrusted value from a trigger through expressions into a
   sink, which catches injection paths a pattern matcher reads as safe. `actions` is the only
@@ -354,10 +354,11 @@ the Scorecard result.
 
 ## PR validation and linting
 
-Every PR runs the full pipeline — lint, build both architectures natively, smoke test, all five
-scans, both gates — with every registry write skipped. Publishing (mirror push, digest push,
-manifest tagging) happens only on `main`. A manually dispatched run from another branch follows
-the same upstream-only, no-write validation path.
+A PR runs the full per-image pipeline — build both architectures natively, smoke test, all five
+scans, both gates — for **every image the `plan` job selects** (the changed ones, or all of them
+when the pipeline itself changed), with every registry write skipped. Publishing (mirror push,
+digest push, manifest tagging) happens only on `main`. A manually dispatched run from another
+branch builds everything, upstream-only, with no registry writes.
 
 A `lint` job runs first and cheaply, so a typo never spends runner minutes on multi-arch builds:
 **hadolint** on every `*/Dockerfile.ci` (DL3008 is ignored inline — apt pins would go stale and
@@ -394,34 +395,47 @@ stays correct on both architectures.
 
 ## Adding another image
 
-Each image is a `build-<name>` + `merge-<name>` job pair in
-[the workflow](.github/workflows/build-and-push.yml), configured via a job-level `env:` block
-(`IMAGE`, `VERSION`, `MIRROR`, `UPSTREAM`), with the matrix reserved for architectures — the
-per-arch digest fan-out does not compose with a per-image matrix in one job.
+The image list lives in one place: [.github/images.json](.github/images.json), an array of
+`{image, version, mirror, upstream}` entries. [build-and-push.yml](.github/workflows/build-and-push.yml)
+reads it and calls the reusable per-image pipeline in
+[build-image.yml](.github/workflows/build-image.yml) once per entry — there are no per-image
+jobs to copy any more.
 
-To add an image: create `<image-name>/Dockerfile.ci` and `<image-name>/test.sh` following the
-existing pattern, `chmod +x` the test script (the workflow and `make test` both execute it
-directly), copy an existing `build`/`merge` job pair and change only its `env:` block and
-job names, add the image's path to both `paths:` filters, mirror its base in the `mirror` job,
-and add a `docker` ecosystem entry for its directory in
-[.github/dependabot.yml](.github/dependabot.yml). Keep the build cache scoped per image and
-architecture (`scope: <image>-<arch>`), or the builds evict each other's layers.
+To add an image:
 
-The [Makefile](Makefile) needs no change — it discovers images by globbing `*/Dockerfile.ci`.
+1. Create `<image-name>/Dockerfile.ci` and `<image-name>/test.sh` following the existing pattern,
+   and `chmod +x` the test script (the workflow and `make test` both execute it directly).
+2. Add one entry to [.github/images.json](.github/images.json).
+3. Add a `docker` ecosystem entry for the directory in
+   [.github/dependabot.yml](.github/dependabot.yml).
 
-Note that the reference pair is named `build`/`merge` rather than `build-node`/`merge-node`; the
-other five follow the `build-<name>`/`merge-<name>` convention.
+Everything else is automatic: the `paths:` filter is the glob `ci-*/**`, the mirror job and the
+build matrix are driven by `images.json`, the lint job cross-checks that every entry has a
+directory and every `ci-*` directory has an entry, and the [Makefile](Makefile) discovers images
+by globbing `*/Dockerfile.ci`. The `version` field is per image, which is how `ci-java21` carries
+`noble-v1` while everything else is `bookworm-v1`.
 
-Known trade-off of this copy-the-pattern shape: `paths:` is one shared list, so a push touching
-any single image's directory reruns every job pair, not just the changed one.
+### Which images a run builds
+
+A push or pull request builds **only the images whose directories changed** — a one-line fix to
+`ci-ruby34` no longer rebuilds nine images and moves `latest` on all of them. Changing the
+pipeline itself (either workflow file, or `images.json`) rebuilds everything, and the weekly
+schedule and `workflow_dispatch` always rebuild everything — the rebuild is the security-update
+mechanism and is never narrowed. Every ambiguous case (force-push, missing diff base) falls back
+to the full list: over-building costs minutes, under-building leaves a stale published image
+nobody notices. The chosen set is printed in the `plan` job's summary.
+
+Each published index is also asserted to contain **both** platforms before the merge job goes
+green — a one-architecture manifest is exactly the failure nobody notices until an Apple Silicon
+machine pulls it.
 
 ### Future candidates
 
 Java/JVM, .NET and PHP have now graduated from this list, alongside Rust and Ruby.
 
 Nothing is queued behind them. The bar for the next one is unchanged: a concrete consumer. An
-image with no consumer is scan noise and rebuild minutes, and it is now also ~230 lines of copied
-workflow — see the trade-off note above, which is getting harder to justify with every addition.
+image with no consumer is scan noise and rebuild minutes — though the marginal cost of one is now
+a directory, a JSON entry, and a Dependabot entry rather than 230 lines of copied workflow.
 
 ## Contributing and reporting problems
 
