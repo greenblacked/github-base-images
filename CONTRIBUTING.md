@@ -37,15 +37,16 @@ actionlint                    # workflows
 ## Adding an image
 
 The README's [Adding another image](README.md#adding-another-image) section is the authoritative
-checklist. In short: a `Dockerfile.ci` and an **executable** `test.sh`, a copied `build`/`merge`
-job pair with only its `env:` block changed, both `paths:` filters, a mirror step, and a Dockerfile
-entry in `.github/dependabot.yml`.
+checklist. In short: a `Dockerfile.ci` and an **executable** `test.sh`, one entry in
+`.github/images.json`, and a `docker` ecosystem entry in `.github/dependabot.yml`. There is no
+workflow to edit — the pipeline reads `images.json`.
 
 Two rules that are easy to miss:
 
-- **`chmod +x` the test script.** Both CI and `make test` execute it directly.
-- **Scope the build cache per image and architecture** (`scope: <image>-<arch>`), or builds evict
-  each other's layers.
+- **`chmod +x` the test script.** Both CI and `make test` execute it directly — and the lint job
+  fails if it is missing or not executable.
+- **Match the directory name and the `image` field** in `images.json`; the lint job cross-checks
+  both directions.
 
 ## What does not belong in an image
 

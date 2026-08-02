@@ -42,7 +42,7 @@ jobs:
       security-events: write
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           # Nothing here runs a git operation after checkout -- GITHUB_TOKEN is
           # only ever used as a registry password -- so leaving credentials in
@@ -50,7 +50,7 @@ jobs:
           persist-credentials: false
 
       - name: Trivy filesystem secret scan (SARIF)
-        uses: aquasecurity/trivy-action@v0.36.0
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
           scan-type: fs
           scan-ref: .
@@ -62,7 +62,7 @@ jobs:
       - name: Upload SARIF to code scanning
         if: always()
         continue-on-error: true
-        uses: github/codeql-action/upload-sarif@v3
+        uses: github/codeql-action/upload-sarif@f205ea1c3313d32999d8d6a48b4f6530d4437b38 # v4.37.4
         with:
           sarif_file: trivy-repo-secrets.sarif
           category: repo-secrets
@@ -70,7 +70,7 @@ jobs:
       # Gates, like the image secret gate does. A credential committed here is
       # always fixable from this repo, so there is no reason to ship one.
       - name: Secret gate
-        uses: aquasecurity/trivy-action@v0.36.0
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
           scan-type: fs
           scan-ref: .
@@ -91,7 +91,7 @@ jobs:
       security-events: write
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           # Nothing here runs a git operation after checkout -- GITHUB_TOKEN is
           # only ever used as a registry password -- so leaving credentials in
@@ -99,16 +99,16 @@ jobs:
           persist-credentials: false
 
       - name: Install zizmor
-        uses: astral-sh/setup-uv@v5
+        uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86 # v5.4.2
 
       # Reported, not gating. The findings still reach the Security tab via the
       # SARIF upload below, and the `zizmor` check run there reflects them --
       # this step staying green only means the audit ran, not that it was clean.
       #
-      # Policy lives in .github/zizmor.yml. Notably `unpinned-uses` is set to
-      # ref-pin rather than the default hash-pin: tag pins are the current
-      # standard here, and leaving the default would emit 136 high findings in
-      # one go and bury everything worth reading.
+      # Runs on zizmor's DEFAULT policy, including hash-pin for `uses:` -- every
+      # action in this repo is pinned by commit SHA, so there is no carve-out
+      # any more. If this starts flagging unpinned-uses again, someone added a
+      # tag-pinned action; pin it rather than relaxing the policy.
       - name: Run zizmor
         continue-on-error: true
         run: |
@@ -118,7 +118,7 @@ jobs:
       - name: Upload SARIF to code scanning
         if: always()
         continue-on-error: true
-        uses: github/codeql-action/upload-sarif@v3
+        uses: github/codeql-action/upload-sarif@f205ea1c3313d32999d8d6a48b4f6530d4437b38 # v4.37.4
         with:
           sarif_file: zizmor.sarif
           category: workflow-audit
@@ -141,12 +141,12 @@ jobs:
       id-token: write
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
       - name: Run Scorecard
-        uses: ossf/scorecard-action@v2.4.1
+        uses: ossf/scorecard-action@2d1146689b8cda280b9bc96326124645441f03bc # v2.4.4
         with:
           results_file: scorecard.sarif
           results_format: sarif
@@ -154,7 +154,7 @@ jobs:
 
       - name: Upload artifact
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: scorecard-results
           path: scorecard.sarif
@@ -163,7 +163,7 @@ jobs:
       - name: Upload SARIF to code scanning
         if: always()
         continue-on-error: true
-        uses: github/codeql-action/upload-sarif@v3
+        uses: github/codeql-action/upload-sarif@f205ea1c3313d32999d8d6a48b4f6530d4437b38 # v4.37.4
         with:
           sarif_file: scorecard.sarif
           category: scorecard
@@ -190,7 +190,7 @@ jobs:
       security-events: write
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           # Nothing here runs a git operation after checkout -- GITHUB_TOKEN is
           # only ever used as a registry password -- so leaving credentials in
@@ -198,12 +198,12 @@ jobs:
           persist-credentials: false
 
       - name: Initialize CodeQL
-        uses: github/codeql-action/init@v3
+        uses: github/codeql-action/init@f205ea1c3313d32999d8d6a48b4f6530d4437b38 # v4.37.4
         with:
           languages: actions
 
       - name: Analyze
-        uses: github/codeql-action/analyze@v3
+        uses: github/codeql-action/analyze@f205ea1c3313d32999d8d6a48b4f6530d4437b38 # v4.37.4
         with:
           category: codeql-actions
 
@@ -222,7 +222,7 @@ jobs:
       contents: read
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
           persist-credentials: false
@@ -267,7 +267,7 @@ jobs:
 
       - name: Upload log
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: gitleaks-log
           path: gitleaks.log
