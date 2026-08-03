@@ -235,6 +235,9 @@ jobs:
       contents: read
       packages: write
       security-events: write
+      # For the merge job's keyless cosign signing -- the called workflow's
+      # permissions are intersected with this grant.
+      id-token: write
     uses: ./.github/workflows/build-image.yml
     with:
       image: ${{ matrix.image }}

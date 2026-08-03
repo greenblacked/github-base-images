@@ -319,6 +319,11 @@ jobs:
     permissions:
       contents: read
       packages: write
+      # Keyless cosign signing: the OIDC token is what proves to Fulcio that
+      # this signature came from this workflow on this ref. The caller's
+      # `image` job must grant the same -- called-workflow permissions are the
+      # intersection of both declarations.
+      id-token: write
 
     steps:
       - name: Download digests
@@ -353,6 +358,24 @@ jobs:
             --tag "$REPO:latest" \
             --tag "$REPO:$SHA_TAG" \
             "${refs[@]}"
+
+      # Keyless signature over the final index digest -- the digest consumers
+      # pin, not the per-arch digests. Fulcio binds the signature to this
+      # workflow's OIDC identity (the REUSABLE workflow's ref, not the
+      # caller's), Rekor logs it publicly, and the signature is pushed as an
+      # OCI artifact into the same GHCR package. Verification recipe lives in
+      # the README.
+      - name: Install cosign
+        uses: sigstore/cosign-installer@7e8b541eb2e61bf99390e1afd4be13a184e9ebc5 # v3.10.1
+
+      - name: Sign manifest list
+        env:
+          REPO: ghcr.io/${{ github.repository_owner }}/${{ inputs.image }}
+          VERSION: ${{ inputs.version }}
+        run: |
+          digest=$(docker buildx imagetools inspect "$REPO:$VERSION" \
+            | awk '/^Digest:/ {print $2; exit}')
+          cosign sign --yes "$REPO@$digest"
 
       - name: Report digest and platforms
         env:
