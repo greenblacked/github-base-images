@@ -359,6 +359,21 @@ jobs:
             --tag "$REPO:$SHA_TAG" \
             "${refs[@]}"
 
+      # One authoritative resolution of the published index digest; the sign,
+      # report and manifest-export steps below all consume this output rather
+      # than each re-deriving it -- three copies of the same awk is how they
+      # drift apart.
+      - name: Resolve published digest
+        id: resolve
+        env:
+          REPO: ghcr.io/${{ github.repository_owner }}/${{ inputs.image }}
+          VERSION: ${{ inputs.version }}
+        run: |
+          digest=$(docker buildx imagetools inspect "$REPO:$VERSION" \
+            | awk '/^Digest:/ {print $2; exit}')
+          test -n "$digest"
+          echo "digest=$digest" >> "$GITHUB_OUTPUT"
+
       # Keyless signature over the final index digest -- the digest consumers
       # pin, not the per-arch digests. Fulcio binds the signature to this
       # workflow's OIDC identity (the REUSABLE workflow's ref, not the
@@ -371,20 +386,39 @@ jobs:
       - name: Sign manifest list
         env:
           REPO: ghcr.io/${{ github.repository_owner }}/${{ inputs.image }}
-          VERSION: ${{ inputs.version }}
+          DIGEST: ${{ steps.resolve.outputs.digest }}
         run: |
-          digest=$(docker buildx imagetools inspect "$REPO:$VERSION" \
-            | awk '/^Digest:/ {print $2; exit}')
-          cosign sign --yes "$REPO@$digest"
+          cosign sign --yes "$REPO@$DIGEST"
+
+      # One {image, version, digest} object per image, aggregated by the
+      # caller's `digests` job into a machine-readable digests.json -- the
+      # automatable form of the "pin this digest" advice below.
+      - name: Export digest manifest
+        env:
+          IMAGE: ${{ inputs.image }}
+          VERSION: ${{ inputs.version }}
+          DIGEST: ${{ steps.resolve.outputs.digest }}
+        run: |
+          jq -n --arg image "$IMAGE" --arg version "$VERSION" --arg digest "$DIGEST" \
+            '{image: $image, version: $version, digest: $digest}' \
+            > "digest-manifest-$IMAGE.json"
+
+      - name: Upload digest manifest
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: digest-manifest-${{ inputs.image }}
+          path: digest-manifest-*.json
+          if-no-files-found: error
+          retention-days: 90
 
       - name: Report digest and platforms
         env:
           REPO: ghcr.io/${{ github.repository_owner }}/${{ inputs.image }}
           VERSION: ${{ inputs.version }}
+          DIGEST: ${{ steps.resolve.outputs.digest }}
         run: |
           inspect=$(docker buildx imagetools inspect "$REPO:$VERSION")
           echo "$inspect"
-          digest=$(echo "$inspect" | awk '/^Digest:/ {print $2; exit}')
           # Both platforms must be present in the published index -- a green
           # merge with a one-arch manifest is exactly the failure nobody
           # notices until an Apple Silicon machine pulls it.
@@ -400,7 +434,7 @@ jobs:
             echo "Tested and scanned on every architecture. Pin this digest in production:"
             echo
             echo '```yaml'
-            echo "image: $REPO@$digest"
+            echo "image: $REPO@$DIGEST"
             echo '```'
             echo
             echo '```'
