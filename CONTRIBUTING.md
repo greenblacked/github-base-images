@@ -29,10 +29,14 @@ Requires GNU make and a working Docker daemon. `PLATFORM=linux/amd64` cross-buil
 The `lint` job runs these first, so running them locally saves a round trip:
 
 ```bash
-shellcheck ./*/test.sh
-hadolint */Dockerfile.ci      # DL3008 and DL3006 are ignored inline, deliberately
-actionlint                    # workflows
+make lint
 ```
+
+That runs the CI lint job's exact battery -- shellcheck, hadolint pinned to the
+same version `hadolint-action` bundles in CI (DL3008 and DL3006 are ignored
+inline in the Dockerfiles, deliberately), actionlint, the `images.json`
+cross-check, and a best-effort zizmor workflow audit. Engines are downloaded
+once into the git-ignored `.lint-cache/` as checksum-verified release binaries.
 
 ## Adding an image
 

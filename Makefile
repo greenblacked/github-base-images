@@ -34,13 +34,14 @@ PLATFORM_ARG := $(if $(PLATFORM),--platform $(PLATFORM),)
 # so serialising the whole file is the honest fix.
 .NOTPARALLEL:
 
-.PHONY: help list guard-image build test check build-all test-all check-all
+.PHONY: help list guard-image lint build test check build-all test-all check-all
 
 help:
 	@echo "Images: $(IMAGES)"
 	@echo
 	@echo "Targets:"
 	@echo "  make list                    list the images this repo builds"
+	@echo "  make lint                    run the CI lint battery locally (pinned engines)"
 	@echo "  make build IMAGE=<name>      build <name> locally as <name>:$(TAG) (from upstream)"
 	@echo "  make test  IMAGE=<name>      run <name>/test.sh against <name>:$(TAG)"
 	@echo "  make check IMAGE=<name>      build then test <name>"
@@ -50,6 +51,12 @@ help:
 
 list:
 	@printf '%s\n' $(IMAGES)
+
+# The CI lint job's exact battery -- pinned hadolint/actionlint (downloaded to
+# .lint-cache/ on first run, checksum-verified), shellcheck, the images.json
+# cross-check, and a best-effort zizmor audit. See scripts/lint.sh.
+lint:
+	./scripts/lint.sh
 
 # IMAGE must name a real image directory before build/test run.
 guard-image:
