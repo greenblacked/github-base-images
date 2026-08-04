@@ -105,7 +105,19 @@ In protected deployment jobs, pin by digest instead of by tag:
       image: ghcr.io/greenblacked/ci-node22@sha256:...
 ```
 
-Each build prints the digest to pin, in its run summary under the Actions tab.
+Each build prints the digest to pin, in its run summary under the Actions tab — and every publish
+run also uploads a machine-readable **`digests` artifact** (`digests.json`, an array of
+`{image, version, digest}`), so pinning can be automated instead of copied by hand:
+
+```bash
+run=$(gh api 'repos/greenblacked/github-base-images/actions/workflows/build-and-push.yml/runs?branch=main&status=success&per_page=1' \
+  --jq '.workflow_runs[0].id')
+gh run download "$run" -R greenblacked/github-base-images -n digests
+jq -r '.[] | select(.image == "ci-node22") | .digest' digests.json
+```
+
+A change-detection run's `digests.json` covers only the images that run rebuilt; a weekly or
+manually dispatched run always covers all of them.
 
 ### Locally
 
