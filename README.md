@@ -170,7 +170,7 @@ loop a PR does — from the upstream base, so no `ghcr.io` login — minus the r
 scans that stay CI's job:
 
 ```bash
-make list                     # one image per line: ci-go125, ci-node22, ci-python313, ...
+make list                     # one image per line: ci-cloud, ci-db, ci-dotnet8, ...
 make check IMAGE=ci-rust185   # build ci-rust185:test, then run ci-rust185/test.sh against it
 make check-all                # every image
 ```
@@ -179,6 +179,11 @@ make check-all                # every image
 cross-builds under emulation, and `TAG=` overrides the local `:test` tag. CI remains the source of
 truth — it builds both architectures natively and enforces the vulnerability and secret gates the
 Makefile does not.
+
+`make lint` runs the CI lint job's exact battery — shellcheck, hadolint and actionlint on the same
+pinned versions CI uses, the `images.json` cross-check, and a zizmor workflow audit. Engines are
+downloaded once as checksum-verified release binaries into a git-ignored `.lint-cache/`. Running it
+before opening a PR saves a round trip, because the `lint` job is the first thing that fails.
 
 ## Running Playwright tests
 
@@ -217,6 +222,48 @@ reaching for `--with-deps` in CI, which requires root.
 
 Headless Chromium is verified to launch on **both** architectures. Headed mode is untested; `xvfb`
 is present, but GTK is not, so assume headless.
+
+## Using the tool images
+
+`ci-cloud`, `ci-security` and `ci-db` are not language runtimes, so they are used a little
+differently.
+
+`ci-security` carries the same scanners this repository's own pipeline runs, which makes it useful
+when you want them inside a container job rather than as marketplace actions:
+
+```yaml
+    container: ghcr.io/greenblacked/ci-security:bookworm-v1
+    steps:
+      - uses: actions/checkout@v5
+      - run: trivy fs --exit-code 1 --severity HIGH,CRITICAL .
+      - run: syft . -o cyclonedx-json=sbom.json
+      - run: gitleaks detect --source . --redact
+```
+
+Note it ships **no** vulnerability database: `trivy` and `grype` each fetch and cache their own on
+first run, so a baked-in snapshot cannot silently go stale. Budget for that download, or cache
+`~/.cache/trivy` between runs.
+
+`ci-db` carries clients only. Pair it with a `services:` container, which Actions health-checks and
+tears down for you:
+
+```yaml
+    container: ghcr.io/greenblacked/ci-db:bookworm-v1
+    services:
+      postgres:
+        image: postgres:17
+        env: { POSTGRES_PASSWORD: postgres }
+        options: >-
+          --health-cmd pg_isready --health-interval 10s --health-retries 5
+    steps:
+      - uses: actions/checkout@v5
+      - run: migrate -path ./migrations -database "$DATABASE_URL" up
+        env:
+          DATABASE_URL: postgres://postgres:postgres@postgres:5432/postgres?sslmode=disable
+```
+
+`ci-cloud` is the GCP/Azure counterpart to `ci-tools`. Authenticate with the relevant OIDC login
+action first — the image deliberately contains no credentials, and its smoke test asserts that.
 
 ## Visibility and authentication
 
@@ -466,7 +513,7 @@ by globbing `*/Dockerfile.ci`. The `version` field is per image, which is how `c
 ### Which images a run builds
 
 A push or pull request builds **only the images whose directories changed** — a one-line fix to
-`ci-ruby34` no longer rebuilds nine images and moves `latest` on all of them. Changing the
+`ci-ruby34` does not rebuild the other fifteen images or move `latest` on them. Changing the
 pipeline itself (either workflow file, or `images.json`) rebuilds everything, and the weekly
 schedule and `workflow_dispatch` always rebuild everything — the rebuild is the security-update
 mechanism and is never narrowed. Every ambiguous case (force-push, missing diff base) falls back
@@ -479,11 +526,19 @@ machine pulls it.
 
 ### Future candidates
 
-Java/JVM, .NET and PHP have now graduated from this list, alongside Rust and Ruby.
+Java/JVM, .NET and PHP graduated from this list, alongside Rust and Ruby; `ci-cloud`,
+`ci-security` and `ci-db` followed, along with second runtime versions for Node, Python, Java
+and .NET.
 
-Nothing is queued behind them. The bar for the next one is unchanged: a concrete consumer. An
-image with no consumer is scan noise and rebuild minutes — though the marginal cost of one is now
-a directory, a JSON entry, and a Dependabot entry rather than 230 lines of copied workflow.
+Nothing is queued behind them, and the bar for the next one is **raised**, not unchanged: a
+concrete consumer. That bar was applied loosely when the set grew to sixteen — the second runtime
+versions in particular were added for matrix coverage that nobody had asked for yet. An image with
+no consumer is not free: it is two build jobs, nine Trivy scans per architecture on every full
+rebuild, another base to keep current, and another set of pinned tools nothing tracks. The
+marginal cost of *writing* one is a directory and two config entries; the marginal cost of
+*owning* one is considerably higher, and that is the number that matters.
+
+If an image here has no consumer, deleting it is a legitimate and expected change.
 
 ## Contributing and reporting problems
 
@@ -491,13 +546,18 @@ a directory, a JSON entry, and a Dependabot entry rather than 230 lines of copie
 [SECURITY.md](SECURITY.md) covers how to report a vulnerability in a published image, and what is
 in and out of scope.
 
+For *why* it is built this way — why upstream bases are mirrored, why library vulnerabilities are
+reported but do not gate, why builds are native rather than emulated, and why every action is
+SHA-pinned — see the [architecture decision records](docs/adr/README.md).
+
 ## License
 
 [MIT](LICENSE), and each image carries `org.opencontainers.image.licenses=MIT`.
 
 That covers **this repository's** contents — the Dockerfiles, test scripts, workflow, and Makefile.
 It says nothing about the software inside the published images: Debian and its packages, Node,
-Python, Go, Rust, Ruby, Terraform, kubectl, the AWS CLI, and the Docker client each ship under
-their own upstream licenses, which travel with the image. If you need to audit those, start from
-the `mirror-*` package for the base and the pinned versions in
-[ci-tools/Dockerfile.ci](ci-tools/Dockerfile.ci).
+Python, Go, Rust, Ruby, PHP, .NET, Java, Terraform, kubectl, the AWS CLI, the Docker client, the
+gcloud and Azure CLIs, the database clients, and the scanning tools in `ci-security` each ship
+under their own upstream licenses, which travel with the image. If you need to audit those, start
+from the `mirror-*` package for the base, the pinned versions in the relevant `Dockerfile.ci`, and
+the CycloneDX SBOM published as a build artifact for every image and architecture.
