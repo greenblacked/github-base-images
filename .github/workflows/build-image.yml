@@ -351,8 +351,26 @@ jobs:
           SHA_TAG: ${{ github.sha }}
         run: |
           # Each downloaded digest file's NAME is a per-arch digest.
+          #
+          # nullglob so an empty directory yields no refs at all rather than the
+          # literal "*", which would otherwise reach imagetools as the nonsense
+          # ref "$REPO@sha256:*" and fail with an unhelpful registry error.
+          shopt -s nullglob
           refs=()
           for f in *; do refs+=("$REPO@sha256:$f"); done
+
+          # Assert the count BEFORE creating the manifest list, not after.
+          # `imagetools create` moves :latest, :$VERSION and :$SHA_TAG in one
+          # shot, so a short digest set published here leaves those tags
+          # pointing at a single-architecture index -- the both-platforms
+          # assertion further down would catch it, but only after consumers
+          # could already pull it. Failing first leaves the previous, good
+          # tags in place.
+          if [ "${#refs[@]}" -ne 2 ]; then
+            echo "::error::expected 2 per-arch digests for $REPO:$VERSION, got ${#refs[@]}"
+            exit 1
+          fi
+
           docker buildx imagetools create \
             --tag "$REPO:$VERSION" \
             --tag "$REPO:latest" \
