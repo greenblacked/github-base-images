@@ -77,6 +77,17 @@ RUN curl -fsSL --retry 3 --retry-all-errors --max-time 120 \
 # it is left out and labelled rather than faked. CONTRIBUTING.md records this.
 #
 # Google spells arm64 "arm" in its filenames, unlike every other vendor here.
+#
+# The final `rm -rf` deletes urllib3's test server. gsutil vendors urllib3
+# including its test suite, and that suite ships two RSA private keys for its
+# dummy HTTPS server. They are published test fixtures rather than live
+# credentials -- but they are real private keys, and the secret gate blocks on
+# any finding at any severity. That gate is right to fire: one that has to be
+# told which private keys are acceptable stops being a gate. So the fixtures
+# are removed rather than added to a scanner exception list, which also means
+# the published image genuinely contains no private key. Nothing in a CI image
+# needs urllib3's test server. If a future SDK bundles more fixtures the gate
+# will say so, and they get deleted here too.
 ARG TARGETARCH
 ARG GCLOUD_VERSION=579.0.0
 RUN case "${TARGETARCH}" in \
@@ -93,7 +104,8 @@ RUN case "${TARGETARCH}" in \
         --usage-reporting=false \
         --path-update=false \
         --command-completion=false \
-    && rm -rf /opt/google-cloud-sdk/.install/.backup
+    && rm -rf /opt/google-cloud-sdk/.install/.backup \
+    && rm -rf /opt/google-cloud-sdk/platform/gsutil/third_party/urllib3/dummyserver
 
 # kubectl is shared with ci-tools and pinned to the same version and checksums,
 # so a cluster deploy behaves identically whichever of the two images runs it.
