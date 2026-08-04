@@ -210,7 +210,12 @@ jobs:
           IMAGES_JSON: ${{ needs.plan.outputs.images }}
           OWNER: ${{ github.repository_owner }}
         run: |
+          # sort -u because several images share one base: ci-tools, ci-cloud,
+          # ci-security and ci-db all build FROM debian:bookworm-slim, and
+          # without this the identical mirror would be re-copied once per
+          # image on every publish run.
           jq -r '.[] | .upstream + " " + .mirror' <<<"$IMAGES_JSON" \
+          | sort -u \
           | while read -r upstream mirror; do
               echo "::group::mirror $upstream -> $mirror"
               docker buildx imagetools create \

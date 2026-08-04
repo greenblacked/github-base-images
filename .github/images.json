@@ -1,15 +1,27 @@
 [
   {
-    "image": "ci-node22",
+    "image": "ci-cloud",
     "version": "bookworm-v1",
-    "mirror": "mirror-node:22-bookworm-slim",
-    "upstream": "node:22-bookworm-slim"
+    "mirror": "mirror-debian:bookworm-slim",
+    "upstream": "debian:bookworm-slim"
   },
   {
-    "image": "ci-python313",
+    "image": "ci-db",
     "version": "bookworm-v1",
-    "mirror": "mirror-python:3.13-slim-bookworm",
-    "upstream": "python:3.13-slim-bookworm"
+    "mirror": "mirror-debian:bookworm-slim",
+    "upstream": "debian:bookworm-slim"
+  },
+  {
+    "image": "ci-dotnet8",
+    "version": "bookworm-v1",
+    "mirror": "mirror-dotnet:8.0-bookworm-slim",
+    "upstream": "mcr.microsoft.com/dotnet/sdk:8.0-bookworm-slim"
+  },
+  {
+    "image": "ci-dotnet9",
+    "version": "bookworm-v1",
+    "mirror": "mirror-dotnet:9.0-bookworm-slim",
+    "upstream": "mcr.microsoft.com/dotnet/sdk:9.0-bookworm-slim"
   },
   {
     "image": "ci-go125",
@@ -18,16 +30,10 @@
     "upstream": "golang:1.25-bookworm"
   },
   {
-    "image": "ci-rust185",
-    "version": "bookworm-v1",
-    "mirror": "mirror-rust:1.85-bookworm",
-    "upstream": "rust:1.85-bookworm"
-  },
-  {
-    "image": "ci-ruby34",
-    "version": "bookworm-v1",
-    "mirror": "mirror-ruby:3.4-slim-bookworm",
-    "upstream": "ruby:3.4-slim-bookworm"
+    "image": "ci-java17",
+    "version": "noble-v1",
+    "mirror": "mirror-temurin:17-jdk-noble",
+    "upstream": "eclipse-temurin:17-jdk-noble"
   },
   {
     "image": "ci-java21",
@@ -36,16 +42,52 @@
     "upstream": "eclipse-temurin:21-jdk-noble"
   },
   {
+    "image": "ci-node22",
+    "version": "bookworm-v1",
+    "mirror": "mirror-node:22-bookworm-slim",
+    "upstream": "node:22-bookworm-slim"
+  },
+  {
+    "image": "ci-node24",
+    "version": "bookworm-v1",
+    "mirror": "mirror-node:24-bookworm-slim",
+    "upstream": "node:24-bookworm-slim"
+  },
+  {
     "image": "ci-php84",
     "version": "bookworm-v1",
     "mirror": "mirror-php:8.4-cli-bookworm",
     "upstream": "php:8.4-cli-bookworm"
   },
   {
-    "image": "ci-dotnet9",
+    "image": "ci-python312",
     "version": "bookworm-v1",
-    "mirror": "mirror-dotnet:9.0-bookworm-slim",
-    "upstream": "mcr.microsoft.com/dotnet/sdk:9.0-bookworm-slim"
+    "mirror": "mirror-python:3.12-slim-bookworm",
+    "upstream": "python:3.12-slim-bookworm"
+  },
+  {
+    "image": "ci-python313",
+    "version": "bookworm-v1",
+    "mirror": "mirror-python:3.13-slim-bookworm",
+    "upstream": "python:3.13-slim-bookworm"
+  },
+  {
+    "image": "ci-ruby34",
+    "version": "bookworm-v1",
+    "mirror": "mirror-ruby:3.4-slim-bookworm",
+    "upstream": "ruby:3.4-slim-bookworm"
+  },
+  {
+    "image": "ci-rust185",
+    "version": "bookworm-v1",
+    "mirror": "mirror-rust:1.85-bookworm",
+    "upstream": "rust:1.85-bookworm"
+  },
+  {
+    "image": "ci-security",
+    "version": "bookworm-v1",
+    "mirror": "mirror-debian:bookworm-slim",
+    "upstream": "debian:bookworm-slim"
   },
   {
     "image": "ci-tools",

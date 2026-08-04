@@ -15,14 +15,21 @@ means the published images are stale or broken, not that someone's pull request 
 | Image | Base | Tag | Platforms |
 |---|---|---|---|
 | `ghcr.io/greenblacked/ci-node22` | `node:22-bookworm-slim` | `bookworm-v1` | `linux/amd64`, `linux/arm64` |
+| `ghcr.io/greenblacked/ci-node24` | `node:24-bookworm-slim` | `bookworm-v1` | `linux/amd64`, `linux/arm64` |
 | `ghcr.io/greenblacked/ci-python313` | `python:3.13-slim-bookworm` | `bookworm-v1` | `linux/amd64`, `linux/arm64` |
+| `ghcr.io/greenblacked/ci-python312` | `python:3.12-slim-bookworm` | `bookworm-v1` | `linux/amd64`, `linux/arm64` |
 | `ghcr.io/greenblacked/ci-go125` | `golang:1.25-bookworm` | `bookworm-v1` | `linux/amd64`, `linux/arm64` |
 | `ghcr.io/greenblacked/ci-rust185` | `rust:1.85-bookworm` | `bookworm-v1` | `linux/amd64`, `linux/arm64` |
 | `ghcr.io/greenblacked/ci-ruby34` | `ruby:3.4-slim-bookworm` | `bookworm-v1` | `linux/amd64`, `linux/arm64` |
 | `ghcr.io/greenblacked/ci-java21` | `eclipse-temurin:21-jdk-noble` | `noble-v1` | `linux/amd64`, `linux/arm64` |
+| `ghcr.io/greenblacked/ci-java17` | `eclipse-temurin:17-jdk-noble` | `noble-v1` | `linux/amd64`, `linux/arm64` |
 | `ghcr.io/greenblacked/ci-php84` | `php:8.4-cli-bookworm` | `bookworm-v1` | `linux/amd64`, `linux/arm64` |
 | `ghcr.io/greenblacked/ci-dotnet9` | `mcr.microsoft.com/dotnet/sdk:9.0-bookworm-slim` | `bookworm-v1` | `linux/amd64`, `linux/arm64` |
+| `ghcr.io/greenblacked/ci-dotnet8` | `mcr.microsoft.com/dotnet/sdk:8.0-bookworm-slim` | `bookworm-v1` | `linux/amd64`, `linux/arm64` |
 | `ghcr.io/greenblacked/ci-tools` | `debian:bookworm-slim` | `bookworm-v1` | `linux/amd64`, `linux/arm64` |
+| `ghcr.io/greenblacked/ci-cloud` | `debian:bookworm-slim` | `bookworm-v1` | `linux/amd64`, `linux/arm64` |
+| `ghcr.io/greenblacked/ci-security` | `debian:bookworm-slim` | `bookworm-v1` | `linux/amd64`, `linux/arm64` |
+| `ghcr.io/greenblacked/ci-db` | `debian:bookworm-slim` | `bookworm-v1` | `linux/amd64`, `linux/arm64` |
 
 These are **CI images**, used as GitHub Actions container jobs — not as `FROM` bases for
 application Dockerfiles. Every image ships the same shared baseline: bash, git, CA certificates,
@@ -30,9 +37,13 @@ curl, tar, gzip, unzip, xz, zstd, jq, and the OpenSSH client. On top of that:
 
 - **`ci-node22`** — Node.js 22, npm, and Playwright's system libraries (Chromium only, no browser
   binaries; see below).
+- **`ci-node24`** — the same image on Node.js 24, for repositories that have moved to the newer
+  LTS line or that test against both in a matrix.
 - **`ci-python313`** — Python 3.13 and pip. No compiler toolchain: projects that build native
   wheels add `build-essential` in their own workflow, for the same reason browsers are not baked
   into `ci-node22`.
+- **`ci-python312`** — the same image on Python 3.12, for the still-common case of a library that
+  supports both and tests each in a matrix.
 - **`ci-go125`** — the Go 1.25 toolchain (non-slim upstream, so cgo's C toolchain is included).
 - **`ci-rust185`** — the Rust 1.85 toolchain, plus the `rustfmt` and `clippy` components CI lints
   with (non-slim upstream, so the C toolchain the linker needs is included).
@@ -41,16 +52,36 @@ curl, tar, gzip, unzip, xz, zstd, jq, and the OpenSSH client. On top of that:
 - **`ci-java21`** — the Temurin JDK 21. No Maven and no Gradle: both ship a wrapper (`mvnw`,
   `gradlew`) that projects commit and that pins the exact build version, so a second copy here
   would be ignored or fight the wrapper.
+- **`ci-java17`** — the Temurin JDK 17, the previous LTS, which a large amount of production Java
+  is still built on. Same no-Maven, no-Gradle reasoning as `ci-java21`.
 - **`ci-php84`** — PHP 8.4 CLI plus Composer. Composer is the one package manager not shipped by
   its upstream runtime image, so it is installed here — pinned by version *and* SHA-256, and
   fetched from the GitHub release rather than `getcomposer.org`, which is not reachable from every
   build network.
 - **`ci-dotnet9`** — the .NET SDK 9.0. No global tools: those are pinned per project in
   `.config/dotnet-tools.json` and restored by the project's own workflow.
+- **`ci-dotnet8`** — the .NET SDK 8.0, which is the LTS release; 9.0 is an STS one, so most
+  services in production track this image rather than `ci-dotnet9`.
 - **`ci-tools`** — infra/deploy tooling as pinned upstream release binaries: Terraform, kubectl,
   the AWS CLI v2, and the Docker *client* (no daemon — it talks to the host's socket or a
   `docker:dind` service). Versions are pinned via `ARG`s in
   [ci-tools/Dockerfile.ci](ci-tools/Dockerfile.ci); a bump is a one-line PR that CI revalidates.
+- **`ci-cloud`** — the GCP and Azure counterpart to `ci-tools`: the `gcloud` CLI, the Azure CLI,
+  and the same pinned `kubectl`. Split by cloud rather than bundled into one image because most
+  repositories deploy to exactly one, and these SDKs are large enough that carrying two unused
+  ones is a real cost on every job. The Azure CLI comes from Microsoft's GPG-signed apt
+  repository; `gcloud` is a pinned tarball that Google publishes no checksum for, which is
+  labelled as such in [ci-cloud/Dockerfile.ci](ci-cloud/Dockerfile.ci).
+- **`ci-security`** — the supply-chain toolbox this repository's own pipeline uses: `trivy`,
+  `syft`, `grype`, `cosign`, and `gitleaks`, so a consumer can reproduce the scans that gate here.
+  Every binary is pinned *and* checksum-verified — all five projects publish sums, so unlike
+  `ci-tools` there is no unverified download in it. No vulnerability database is baked in: `trivy`
+  and `grype` fetch and cache their own, and a baked snapshot would be stale on publish in a way
+  nobody downstream could see.
+- **`ci-db`** — database clients and migration tooling for integration jobs: `psql`, `mysql`,
+  `redis-cli`, and pinned `golang-migrate`. Clients only — a job needing a live database declares
+  it as a `services:` container, which Actions health-checks and tears down; a server baked in here
+  would be a second, unsupervised copy.
 
 Two of these break a pattern worth naming explicitly:
 
@@ -139,7 +170,7 @@ loop a PR does — from the upstream base, so no `ghcr.io` login — minus the r
 scans that stay CI's job:
 
 ```bash
-make list                     # one image per line: ci-go125, ci-node22, ci-python313, ...
+make list                     # one image per line: ci-cloud, ci-db, ci-dotnet8, ...
 make check IMAGE=ci-rust185   # build ci-rust185:test, then run ci-rust185/test.sh against it
 make check-all                # every image
 ```
@@ -148,6 +179,11 @@ make check-all                # every image
 cross-builds under emulation, and `TAG=` overrides the local `:test` tag. CI remains the source of
 truth — it builds both architectures natively and enforces the vulnerability and secret gates the
 Makefile does not.
+
+`make lint` runs the CI lint job's exact battery — shellcheck, hadolint and actionlint on the same
+pinned versions CI uses, the `images.json` cross-check, and a zizmor workflow audit. Engines are
+downloaded once as checksum-verified release binaries into a git-ignored `.lint-cache/`. Running it
+before opening a PR saves a round trip, because the `lint` job is the first thing that fails.
 
 ## Running Playwright tests
 
@@ -187,6 +223,48 @@ reaching for `--with-deps` in CI, which requires root.
 Headless Chromium is verified to launch on **both** architectures. Headed mode is untested; `xvfb`
 is present, but GTK is not, so assume headless.
 
+## Using the tool images
+
+`ci-cloud`, `ci-security` and `ci-db` are not language runtimes, so they are used a little
+differently.
+
+`ci-security` carries the same scanners this repository's own pipeline runs, which makes it useful
+when you want them inside a container job rather than as marketplace actions:
+
+```yaml
+    container: ghcr.io/greenblacked/ci-security:bookworm-v1
+    steps:
+      - uses: actions/checkout@v5
+      - run: trivy fs --exit-code 1 --severity HIGH,CRITICAL .
+      - run: syft . -o cyclonedx-json=sbom.json
+      - run: gitleaks detect --source . --redact
+```
+
+Note it ships **no** vulnerability database: `trivy` and `grype` each fetch and cache their own on
+first run, so a baked-in snapshot cannot silently go stale. Budget for that download, or cache
+`~/.cache/trivy` between runs.
+
+`ci-db` carries clients only. Pair it with a `services:` container, which Actions health-checks and
+tears down for you:
+
+```yaml
+    container: ghcr.io/greenblacked/ci-db:bookworm-v1
+    services:
+      postgres:
+        image: postgres:17
+        env: { POSTGRES_PASSWORD: postgres }
+        options: >-
+          --health-cmd pg_isready --health-interval 10s --health-retries 5
+    steps:
+      - uses: actions/checkout@v5
+      - run: migrate -path ./migrations -database "$DATABASE_URL" up
+        env:
+          DATABASE_URL: postgres://postgres:postgres@postgres:5432/postgres?sslmode=disable
+```
+
+`ci-cloud` is the GCP/Azure counterpart to `ci-tools`. Authenticate with the relevant OIDC login
+action first — the image deliberately contains no credentials, and its smoke test asserts that.
+
 ## Visibility and authentication
 
 **The package is public.** Consuming repositories need no `credentials:`, no `packages: read`
@@ -204,8 +282,9 @@ for every consuming repository, forever.
 > **One-time manual step:** GHCR packages are created **private**, and visibility cannot be
 > changed by the workflow — `GITHUB_TOKEN` lacks the permission. After the first successful push:
 > package page → *Package settings* → *Change visibility* → **Public**. Do this for every `ci-*`
-> image (`ci-node22`, `ci-python313`, `ci-go125`, `ci-rust185`, `ci-ruby34`, `ci-java21`,
-> `ci-php84`, `ci-dotnet9`, `ci-tools`) and every
+> image (`ci-node22`, `ci-node24`, `ci-python313`, `ci-python312`, `ci-go125`, `ci-rust185`,
+> `ci-ruby34`, `ci-java21`, `ci-java17`, `ci-php84`, `ci-dotnet9`, `ci-dotnet8`, `ci-tools`,
+> `ci-cloud`, `ci-security`, `ci-db`) and every
 > `mirror-*` package.
 > Until then, pulls from other repositories fail with `denied`.
 
@@ -233,14 +312,18 @@ The workflow copies the upstream base into `ghcr.io` before building:
 | Mirror | Upstream |
 |---|---|
 | `ghcr.io/greenblacked/mirror-node:22-bookworm-slim` | `node:22-bookworm-slim` (Docker Hub) |
+| `ghcr.io/greenblacked/mirror-node:24-bookworm-slim` | `node:24-bookworm-slim` (Docker Hub) |
 | `ghcr.io/greenblacked/mirror-python:3.13-slim-bookworm` | `python:3.13-slim-bookworm` (Docker Hub) |
+| `ghcr.io/greenblacked/mirror-python:3.12-slim-bookworm` | `python:3.12-slim-bookworm` (Docker Hub) |
 | `ghcr.io/greenblacked/mirror-golang:1.25-bookworm` | `golang:1.25-bookworm` (Docker Hub) |
 | `ghcr.io/greenblacked/mirror-rust:1.85-bookworm` | `rust:1.85-bookworm` (Docker Hub) |
 | `ghcr.io/greenblacked/mirror-ruby:3.4-slim-bookworm` | `ruby:3.4-slim-bookworm` (Docker Hub) |
 | `ghcr.io/greenblacked/mirror-debian:bookworm-slim` | `debian:bookworm-slim` (Docker Hub) |
 | `ghcr.io/greenblacked/mirror-temurin:21-jdk-noble` | `eclipse-temurin:21-jdk-noble` (Docker Hub) |
+| `ghcr.io/greenblacked/mirror-temurin:17-jdk-noble` | `eclipse-temurin:17-jdk-noble` (Docker Hub) |
 | `ghcr.io/greenblacked/mirror-php:8.4-cli-bookworm` | `php:8.4-cli-bookworm` (Docker Hub) |
 | `ghcr.io/greenblacked/mirror-dotnet:9.0-bookworm-slim` | `mcr.microsoft.com/dotnet/sdk:9.0-bookworm-slim` (MCR) |
+| `ghcr.io/greenblacked/mirror-dotnet:8.0-bookworm-slim` | `mcr.microsoft.com/dotnet/sdk:8.0-bookworm-slim` (MCR) |
 
 Builds then use the mirror, so they do not depend on Docker Hub availability or rate limits. The
 Dockerfile takes a `BASE_IMAGE` build arg that defaults to upstream, so local builds still work
@@ -430,7 +513,7 @@ by globbing `*/Dockerfile.ci`. The `version` field is per image, which is how `c
 ### Which images a run builds
 
 A push or pull request builds **only the images whose directories changed** — a one-line fix to
-`ci-ruby34` no longer rebuilds nine images and moves `latest` on all of them. Changing the
+`ci-ruby34` does not rebuild the other fifteen images or move `latest` on them. Changing the
 pipeline itself (either workflow file, or `images.json`) rebuilds everything, and the weekly
 schedule and `workflow_dispatch` always rebuild everything — the rebuild is the security-update
 mechanism and is never narrowed. Every ambiguous case (force-push, missing diff base) falls back
@@ -443,11 +526,19 @@ machine pulls it.
 
 ### Future candidates
 
-Java/JVM, .NET and PHP have now graduated from this list, alongside Rust and Ruby.
+Java/JVM, .NET and PHP graduated from this list, alongside Rust and Ruby; `ci-cloud`,
+`ci-security` and `ci-db` followed, along with second runtime versions for Node, Python, Java
+and .NET.
 
-Nothing is queued behind them. The bar for the next one is unchanged: a concrete consumer. An
-image with no consumer is scan noise and rebuild minutes — though the marginal cost of one is now
-a directory, a JSON entry, and a Dependabot entry rather than 230 lines of copied workflow.
+Nothing is queued behind them, and the bar for the next one is **raised**, not unchanged: a
+concrete consumer. That bar was applied loosely when the set grew to sixteen — the second runtime
+versions in particular were added for matrix coverage that nobody had asked for yet. An image with
+no consumer is not free: it is two build jobs, nine Trivy scans per architecture on every full
+rebuild, another base to keep current, and another set of pinned tools nothing tracks. The
+marginal cost of *writing* one is a directory and two config entries; the marginal cost of
+*owning* one is considerably higher, and that is the number that matters.
+
+If an image here has no consumer, deleting it is a legitimate and expected change.
 
 ## Contributing and reporting problems
 
@@ -455,13 +546,18 @@ a directory, a JSON entry, and a Dependabot entry rather than 230 lines of copie
 [SECURITY.md](SECURITY.md) covers how to report a vulnerability in a published image, and what is
 in and out of scope.
 
+For *why* it is built this way — why upstream bases are mirrored, why library vulnerabilities are
+reported but do not gate, why builds are native rather than emulated, and why every action is
+SHA-pinned — see the [architecture decision records](docs/adr/README.md).
+
 ## License
 
 [MIT](LICENSE), and each image carries `org.opencontainers.image.licenses=MIT`.
 
 That covers **this repository's** contents — the Dockerfiles, test scripts, workflow, and Makefile.
 It says nothing about the software inside the published images: Debian and its packages, Node,
-Python, Go, Rust, Ruby, Terraform, kubectl, the AWS CLI, and the Docker client each ship under
-their own upstream licenses, which travel with the image. If you need to audit those, start from
-the `mirror-*` package for the base and the pinned versions in
-[ci-tools/Dockerfile.ci](ci-tools/Dockerfile.ci).
+Python, Go, Rust, Ruby, PHP, .NET, Java, Terraform, kubectl, the AWS CLI, the Docker client, the
+gcloud and Azure CLIs, the database clients, and the scanning tools in `ci-security` each ship
+under their own upstream licenses, which travel with the image. If you need to audit those, start
+from the `mirror-*` package for the base, the pinned versions in the relevant `Dockerfile.ci`, and
+the CycloneDX SBOM published as a build artifact for every image and architecture.

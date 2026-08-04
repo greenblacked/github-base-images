@@ -1,0 +1,79 @@
+# Defaults to upstream so local builds work without authenticating to ghcr.io.
+# CI overrides this with our mirrored copy, so builds do not depend on Docker
+# Hub availability or rate limits.
+ARG BASE_IMAGE=debian:bookworm-slim
+# DL3006: the default above is tagged; hadolint just can't see through the ARG.
+# hadolint ignore=DL3006
+FROM ${BASE_IMAGE}
+
+LABEL org.opencontainers.image.source=https://github.com/greenblacked/github-base-images
+LABEL org.opencontainers.image.description="Shared CI image: database clients and migration tooling (psql, mysql, redis-cli, migrate) on Debian Bookworm slim"
+LABEL org.opencontainers.image.licenses=MIT
+
+ENV DEBIAN_FRONTEND=noninteractive \
+    CI=true
+
+# Clients only -- no database servers. A job that needs a live Postgres or
+# Redis declares it as a `services:` container, which Actions health-checks and
+# tears down for you. Baking a server in would give every job a second,
+# unmanaged copy that nothing supervises, and would make the image several
+# hundred megabytes larger for the majority of jobs that only need to connect.
+#
+# DL3008: apt pins would go stale and break the weekly rebuild, which is the
+# actual update mechanism here.
+# The upgrade picks up Debian security fixes published since the upstream base
+# was last rebuilt; the Trivy gate blocks fixable HIGH/CRITICAL vulns, so
+# waiting for upstream to rebuild would block this image too.
+# hadolint ignore=DL3008
+RUN apt-get update \
+    && apt-get upgrade --yes \
+    && apt-get install --yes --no-install-recommends \
+        bash \
+        ca-certificates \
+        curl \
+        default-mysql-client \
+        git \
+        gzip \
+        jq \
+        openssh-client \
+        postgresql-client \
+        redis-tools \
+        tar \
+        unzip \
+        xz-utils \
+        zstd \
+    && rm -rf /var/lib/apt/lists/*
+
+# golang-migrate is not in Debian, so it is a pinned release binary verified
+# against the SHA-256 the project publishes in its sha256sum.txt -- the same
+# pattern as Composer in ci-php84 and the security tools in ci-security.
+# Checksums are per-architecture, so a bump is a three-line change that CI
+# revalidates. --retry and --max-time so a hung CDN names itself rather than
+# running out the job clock.
+ARG TARGETARCH
+ARG MIGRATE_VERSION=4.19.0
+ARG MIGRATE_SHA256_AMD64=2dc421d7c24c1ca47799cd7cc0e137ff92d24adc76fda475acf19d1bd9685524
+ARG MIGRATE_SHA256_ARM64=4d9993b487d650e121b657edfdeeecc562becb0f90a7a3d338946b7cad50f844
+RUN case "${TARGETARCH}" in \
+        amd64) sum="${MIGRATE_SHA256_AMD64}" ;; \
+        arm64) sum="${MIGRATE_SHA256_ARM64}" ;; \
+        *) echo "unsupported TARGETARCH: ${TARGETARCH}" >&2; exit 1 ;; \
+    esac \
+    && curl -fsSL --retry 3 --retry-all-errors --max-time 180 -o /tmp/migrate.tgz \
+        "https://github.com/golang-migrate/migrate/releases/download/v${MIGRATE_VERSION}/migrate.linux-${TARGETARCH}.tar.gz" \
+    && echo "${sum}  /tmp/migrate.tgz" > /tmp/migrate.sum \
+    && sha256sum --check --strict /tmp/migrate.sum \
+    && tar -xzf /tmp/migrate.tgz -C /usr/local/bin migrate \
+    && rm /tmp/migrate.tgz /tmp/migrate.sum \
+    && chmod +x /usr/local/bin/migrate
+
+WORKDIR /workspace
+
+RUN psql --version \
+    && mysql --version \
+    && redis-cli --version \
+    && migrate -version \
+    && git --version
+
+# GitHub Actions supplies commands dynamically.
+# Do not define ENTRYPOINT or CMD.
