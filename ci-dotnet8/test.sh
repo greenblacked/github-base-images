@@ -37,8 +37,8 @@ echo "Testing $IMAGE"
 # Every tool the image promises to ship. --no-install-recommends is exactly how
 # one of these silently goes missing, so assert each one individually.
 check "dotnet is present"          'dotnet --version'
-check "dotnet sdk is 9"            'dotnet --version | grep -q "^9\."'
-check "dotnet lists an sdk"        'dotnet --list-sdks | grep -q "^9\."'
+check "dotnet sdk is 8"            'dotnet --version | grep -q "^8\."'
+check "dotnet lists an sdk"        'dotnet --list-sdks | grep -q "^8\."'
 # `dotnet new` uses templates shipped in the SDK, so this needs no NuGet access
 # and proves the SDK is functional rather than merely present.
 check "dotnet scaffolds a project" 'd="$(mktemp -d)" && dotnet new console -o "$d/app" >/dev/null && test -f "$d/app/Program.cs"'

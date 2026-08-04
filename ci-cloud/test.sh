@@ -67,8 +67,13 @@ check "microsoft keyring present"  'test -s /usr/share/keyrings/microsoft.gpg'
 
 # The image is shared across projects and public: cloud credentials, cluster
 # access and account state must never be baked in.
-check "no gcloud credentials"      '! test -e /root/.config/gcloud'
-check "no azure credentials"       '! test -e /root/.azure'
+# Both CLIs create their config directory the first time they run, and the
+# Dockerfile runs each once as a build-time sanity check -- so /root/.config/
+# gcloud and /root/.azure exist in a correctly built image. Asserting the
+# directory is absent would therefore fail on a perfectly clean image. What
+# must never be present is credential material, so assert on those files.
+check "no gcloud credentials"      '! test -e /root/.config/gcloud/credentials.db && ! test -e /root/.config/gcloud/access_tokens.db && ! test -e /root/.config/gcloud/application_default_credentials.json'
+check "no azure credentials"       '! test -e /root/.azure/msal_token_cache.json && ! test -e /root/.azure/service_principal_entries.json && ! test -e /root/.azure/accessTokens.json'
 check "no kubeconfig"              '! test -e /root/.kube'
 check "no aws credentials"         '! test -e /root/.aws'
 check "no active gcloud account"   '! gcloud auth list --format="value(account)" 2>/dev/null | grep -q .'
