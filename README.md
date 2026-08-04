@@ -15,14 +15,21 @@ means the published images are stale or broken, not that someone's pull request 
 | Image | Base | Tag | Platforms |
 |---|---|---|---|
 | `ghcr.io/greenblacked/ci-node22` | `node:22-bookworm-slim` | `bookworm-v1` | `linux/amd64`, `linux/arm64` |
+| `ghcr.io/greenblacked/ci-node24` | `node:24-bookworm-slim` | `bookworm-v1` | `linux/amd64`, `linux/arm64` |
 | `ghcr.io/greenblacked/ci-python313` | `python:3.13-slim-bookworm` | `bookworm-v1` | `linux/amd64`, `linux/arm64` |
+| `ghcr.io/greenblacked/ci-python312` | `python:3.12-slim-bookworm` | `bookworm-v1` | `linux/amd64`, `linux/arm64` |
 | `ghcr.io/greenblacked/ci-go125` | `golang:1.25-bookworm` | `bookworm-v1` | `linux/amd64`, `linux/arm64` |
 | `ghcr.io/greenblacked/ci-rust185` | `rust:1.85-bookworm` | `bookworm-v1` | `linux/amd64`, `linux/arm64` |
 | `ghcr.io/greenblacked/ci-ruby34` | `ruby:3.4-slim-bookworm` | `bookworm-v1` | `linux/amd64`, `linux/arm64` |
 | `ghcr.io/greenblacked/ci-java21` | `eclipse-temurin:21-jdk-noble` | `noble-v1` | `linux/amd64`, `linux/arm64` |
+| `ghcr.io/greenblacked/ci-java17` | `eclipse-temurin:17-jdk-noble` | `noble-v1` | `linux/amd64`, `linux/arm64` |
 | `ghcr.io/greenblacked/ci-php84` | `php:8.4-cli-bookworm` | `bookworm-v1` | `linux/amd64`, `linux/arm64` |
 | `ghcr.io/greenblacked/ci-dotnet9` | `mcr.microsoft.com/dotnet/sdk:9.0-bookworm-slim` | `bookworm-v1` | `linux/amd64`, `linux/arm64` |
+| `ghcr.io/greenblacked/ci-dotnet8` | `mcr.microsoft.com/dotnet/sdk:8.0-bookworm-slim` | `bookworm-v1` | `linux/amd64`, `linux/arm64` |
 | `ghcr.io/greenblacked/ci-tools` | `debian:bookworm-slim` | `bookworm-v1` | `linux/amd64`, `linux/arm64` |
+| `ghcr.io/greenblacked/ci-cloud` | `debian:bookworm-slim` | `bookworm-v1` | `linux/amd64`, `linux/arm64` |
+| `ghcr.io/greenblacked/ci-security` | `debian:bookworm-slim` | `bookworm-v1` | `linux/amd64`, `linux/arm64` |
+| `ghcr.io/greenblacked/ci-db` | `debian:bookworm-slim` | `bookworm-v1` | `linux/amd64`, `linux/arm64` |
 
 These are **CI images**, used as GitHub Actions container jobs — not as `FROM` bases for
 application Dockerfiles. Every image ships the same shared baseline: bash, git, CA certificates,
@@ -30,9 +37,13 @@ curl, tar, gzip, unzip, xz, zstd, jq, and the OpenSSH client. On top of that:
 
 - **`ci-node22`** — Node.js 22, npm, and Playwright's system libraries (Chromium only, no browser
   binaries; see below).
+- **`ci-node24`** — the same image on Node.js 24, for repositories that have moved to the newer
+  LTS line or that test against both in a matrix.
 - **`ci-python313`** — Python 3.13 and pip. No compiler toolchain: projects that build native
   wheels add `build-essential` in their own workflow, for the same reason browsers are not baked
   into `ci-node22`.
+- **`ci-python312`** — the same image on Python 3.12, for the still-common case of a library that
+  supports both and tests each in a matrix.
 - **`ci-go125`** — the Go 1.25 toolchain (non-slim upstream, so cgo's C toolchain is included).
 - **`ci-rust185`** — the Rust 1.85 toolchain, plus the `rustfmt` and `clippy` components CI lints
   with (non-slim upstream, so the C toolchain the linker needs is included).
@@ -41,16 +52,36 @@ curl, tar, gzip, unzip, xz, zstd, jq, and the OpenSSH client. On top of that:
 - **`ci-java21`** — the Temurin JDK 21. No Maven and no Gradle: both ship a wrapper (`mvnw`,
   `gradlew`) that projects commit and that pins the exact build version, so a second copy here
   would be ignored or fight the wrapper.
+- **`ci-java17`** — the Temurin JDK 17, the previous LTS, which a large amount of production Java
+  is still built on. Same no-Maven, no-Gradle reasoning as `ci-java21`.
 - **`ci-php84`** — PHP 8.4 CLI plus Composer. Composer is the one package manager not shipped by
   its upstream runtime image, so it is installed here — pinned by version *and* SHA-256, and
   fetched from the GitHub release rather than `getcomposer.org`, which is not reachable from every
   build network.
 - **`ci-dotnet9`** — the .NET SDK 9.0. No global tools: those are pinned per project in
   `.config/dotnet-tools.json` and restored by the project's own workflow.
+- **`ci-dotnet8`** — the .NET SDK 8.0, which is the LTS release; 9.0 is an STS one, so most
+  services in production track this image rather than `ci-dotnet9`.
 - **`ci-tools`** — infra/deploy tooling as pinned upstream release binaries: Terraform, kubectl,
   the AWS CLI v2, and the Docker *client* (no daemon — it talks to the host's socket or a
   `docker:dind` service). Versions are pinned via `ARG`s in
   [ci-tools/Dockerfile.ci](ci-tools/Dockerfile.ci); a bump is a one-line PR that CI revalidates.
+- **`ci-cloud`** — the GCP and Azure counterpart to `ci-tools`: the `gcloud` CLI, the Azure CLI,
+  and the same pinned `kubectl`. Split by cloud rather than bundled into one image because most
+  repositories deploy to exactly one, and these SDKs are large enough that carrying two unused
+  ones is a real cost on every job. The Azure CLI comes from Microsoft's GPG-signed apt
+  repository; `gcloud` is a pinned tarball that Google publishes no checksum for, which is
+  labelled as such in [ci-cloud/Dockerfile.ci](ci-cloud/Dockerfile.ci).
+- **`ci-security`** — the supply-chain toolbox this repository's own pipeline uses: `trivy`,
+  `syft`, `grype`, `cosign`, and `gitleaks`, so a consumer can reproduce the scans that gate here.
+  Every binary is pinned *and* checksum-verified — all five projects publish sums, so unlike
+  `ci-tools` there is no unverified download in it. No vulnerability database is baked in: `trivy`
+  and `grype` fetch and cache their own, and a baked snapshot would be stale on publish in a way
+  nobody downstream could see.
+- **`ci-db`** — database clients and migration tooling for integration jobs: `psql`, `mysql`,
+  `redis-cli`, and pinned `golang-migrate`. Clients only — a job needing a live database declares
+  it as a `services:` container, which Actions health-checks and tears down; a server baked in here
+  would be a second, unsupervised copy.
 
 Two of these break a pattern worth naming explicitly:
 
@@ -204,8 +235,9 @@ for every consuming repository, forever.
 > **One-time manual step:** GHCR packages are created **private**, and visibility cannot be
 > changed by the workflow — `GITHUB_TOKEN` lacks the permission. After the first successful push:
 > package page → *Package settings* → *Change visibility* → **Public**. Do this for every `ci-*`
-> image (`ci-node22`, `ci-python313`, `ci-go125`, `ci-rust185`, `ci-ruby34`, `ci-java21`,
-> `ci-php84`, `ci-dotnet9`, `ci-tools`) and every
+> image (`ci-node22`, `ci-node24`, `ci-python313`, `ci-python312`, `ci-go125`, `ci-rust185`,
+> `ci-ruby34`, `ci-java21`, `ci-java17`, `ci-php84`, `ci-dotnet9`, `ci-dotnet8`, `ci-tools`,
+> `ci-cloud`, `ci-security`, `ci-db`) and every
 > `mirror-*` package.
 > Until then, pulls from other repositories fail with `denied`.
 
@@ -233,14 +265,18 @@ The workflow copies the upstream base into `ghcr.io` before building:
 | Mirror | Upstream |
 |---|---|
 | `ghcr.io/greenblacked/mirror-node:22-bookworm-slim` | `node:22-bookworm-slim` (Docker Hub) |
+| `ghcr.io/greenblacked/mirror-node:24-bookworm-slim` | `node:24-bookworm-slim` (Docker Hub) |
 | `ghcr.io/greenblacked/mirror-python:3.13-slim-bookworm` | `python:3.13-slim-bookworm` (Docker Hub) |
+| `ghcr.io/greenblacked/mirror-python:3.12-slim-bookworm` | `python:3.12-slim-bookworm` (Docker Hub) |
 | `ghcr.io/greenblacked/mirror-golang:1.25-bookworm` | `golang:1.25-bookworm` (Docker Hub) |
 | `ghcr.io/greenblacked/mirror-rust:1.85-bookworm` | `rust:1.85-bookworm` (Docker Hub) |
 | `ghcr.io/greenblacked/mirror-ruby:3.4-slim-bookworm` | `ruby:3.4-slim-bookworm` (Docker Hub) |
 | `ghcr.io/greenblacked/mirror-debian:bookworm-slim` | `debian:bookworm-slim` (Docker Hub) |
 | `ghcr.io/greenblacked/mirror-temurin:21-jdk-noble` | `eclipse-temurin:21-jdk-noble` (Docker Hub) |
+| `ghcr.io/greenblacked/mirror-temurin:17-jdk-noble` | `eclipse-temurin:17-jdk-noble` (Docker Hub) |
 | `ghcr.io/greenblacked/mirror-php:8.4-cli-bookworm` | `php:8.4-cli-bookworm` (Docker Hub) |
 | `ghcr.io/greenblacked/mirror-dotnet:9.0-bookworm-slim` | `mcr.microsoft.com/dotnet/sdk:9.0-bookworm-slim` (MCR) |
+| `ghcr.io/greenblacked/mirror-dotnet:8.0-bookworm-slim` | `mcr.microsoft.com/dotnet/sdk:8.0-bookworm-slim` (MCR) |
 
 Builds then use the mirror, so they do not depend on Docker Hub availability or rate limits. The
 Dockerfile takes a `BASE_IMAGE` build arg that defaults to upstream, so local builds still work

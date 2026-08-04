@@ -1,0 +1,145 @@
+# Defaults to upstream so local builds work without authenticating to ghcr.io.
+# CI overrides this with our mirrored copy, so builds do not depend on Docker
+# Hub availability or rate limits.
+ARG BASE_IMAGE=debian:bookworm-slim
+# DL3006: the default above is tagged; hadolint just can't see through the ARG.
+# hadolint ignore=DL3006
+FROM ${BASE_IMAGE}
+
+LABEL org.opencontainers.image.source=https://github.com/greenblacked/github-base-images
+LABEL org.opencontainers.image.description="Shared CI image: supply-chain scanning toolbox (trivy, syft, grype, cosign, gitleaks) on Debian Bookworm slim"
+LABEL org.opencontainers.image.licenses=MIT
+
+ENV DEBIAN_FRONTEND=noninteractive \
+    CI=true
+
+# DL3008: apt pins would go stale and break the weekly rebuild, which is the
+# actual update mechanism here.
+# The upgrade picks up Debian security fixes published since the upstream base
+# was last rebuilt; the Trivy gate blocks fixable HIGH/CRITICAL vulns, so
+# waiting for upstream to rebuild would block this image too.
+# hadolint ignore=DL3008
+RUN apt-get update \
+    && apt-get upgrade --yes \
+    && apt-get install --yes --no-install-recommends \
+        bash \
+        ca-certificates \
+        curl \
+        git \
+        gzip \
+        jq \
+        openssh-client \
+        tar \
+        unzip \
+        xz-utils \
+        zstd \
+    && rm -rf /var/lib/apt/lists/*
+
+# Every tool here is a pinned release binary verified against the SHA-256 its
+# vendor publishes -- all five projects ship a checksums file with their
+# releases, so unlike ci-tools there is no unverified download in this image.
+# That matters more here than anywhere else: an image whose whole purpose is
+# telling you what is trustworthy has no business installing binaries it did
+# not check.
+#
+# Checksums are per-architecture, so a bump is a three-line change (version
+# plus both sums) which CI revalidates. Every download carries --retry and
+# --max-time so a hung CDN names itself instead of running out the job clock.
+#
+# Deliberately NOT included: a vulnerability database. trivy and grype both
+# fetch theirs at first run and cache it; baking a DB in would ship a snapshot
+# that is stale the moment the image is published, and the staleness would be
+# invisible to the consumer.
+ARG TARGETARCH
+
+ARG TRIVY_VERSION=0.73.0
+ARG TRIVY_SHA256_AMD64=2edd39da482bb4e9831962487b68f68e3928ec3137794757f54d00383d79547b
+ARG TRIVY_SHA256_ARM64=13833d97e8a1a5367471c372a173180157f593bece570e20d5d925fef552f5dd
+RUN case "${TARGETARCH}" in \
+        amd64) sum="${TRIVY_SHA256_AMD64}"; asset="Linux-64bit" ;; \
+        arm64) sum="${TRIVY_SHA256_ARM64}"; asset="Linux-ARM64" ;; \
+        *) echo "unsupported TARGETARCH: ${TARGETARCH}" >&2; exit 1 ;; \
+    esac \
+    && curl -fsSL --retry 3 --retry-all-errors --max-time 180 -o /tmp/trivy.tgz \
+        "https://github.com/aquasecurity/trivy/releases/download/v${TRIVY_VERSION}/trivy_${TRIVY_VERSION}_${asset}.tar.gz" \
+    && echo "${sum}  /tmp/trivy.tgz" > /tmp/trivy.sum \
+    && sha256sum --check --strict /tmp/trivy.sum \
+    && tar -xzf /tmp/trivy.tgz -C /usr/local/bin trivy \
+    && rm /tmp/trivy.tgz /tmp/trivy.sum
+
+ARG SYFT_VERSION=1.33.0
+ARG SYFT_SHA256_AMD64=adc1b944a827ed3432bcd9f1dbdbc8fa3c0dca7d3d449e7084c90248c2c6cb50
+ARG SYFT_SHA256_ARM64=6688be30048149df88e5959a756dbab086022a04d0f7497790cd298a9669f49d
+RUN case "${TARGETARCH}" in \
+        amd64) sum="${SYFT_SHA256_AMD64}" ;; \
+        arm64) sum="${SYFT_SHA256_ARM64}" ;; \
+        *) echo "unsupported TARGETARCH: ${TARGETARCH}" >&2; exit 1 ;; \
+    esac \
+    && curl -fsSL --retry 3 --retry-all-errors --max-time 180 -o /tmp/syft.tgz \
+        "https://github.com/anchore/syft/releases/download/v${SYFT_VERSION}/syft_${SYFT_VERSION}_linux_${TARGETARCH}.tar.gz" \
+    && echo "${sum}  /tmp/syft.tgz" > /tmp/syft.sum \
+    && sha256sum --check --strict /tmp/syft.sum \
+    && tar -xzf /tmp/syft.tgz -C /usr/local/bin syft \
+    && rm /tmp/syft.tgz /tmp/syft.sum
+
+ARG GRYPE_VERSION=0.110.0
+ARG GRYPE_SHA256_AMD64=aaa98d27d2d7efd9317c6a1ad6d9b15f3e65bab320e7d03bde41e251387bb71c
+ARG GRYPE_SHA256_ARM64=804041ee69f119022e3e866741a558eae6f2df372a5dc1a5376d456d16f8c931
+RUN case "${TARGETARCH}" in \
+        amd64) sum="${GRYPE_SHA256_AMD64}" ;; \
+        arm64) sum="${GRYPE_SHA256_ARM64}" ;; \
+        *) echo "unsupported TARGETARCH: ${TARGETARCH}" >&2; exit 1 ;; \
+    esac \
+    && curl -fsSL --retry 3 --retry-all-errors --max-time 180 -o /tmp/grype.tgz \
+        "https://github.com/anchore/grype/releases/download/v${GRYPE_VERSION}/grype_${GRYPE_VERSION}_linux_${TARGETARCH}.tar.gz" \
+    && echo "${sum}  /tmp/grype.tgz" > /tmp/grype.sum \
+    && sha256sum --check --strict /tmp/grype.sum \
+    && tar -xzf /tmp/grype.tgz -C /usr/local/bin grype \
+    && rm /tmp/grype.tgz /tmp/grype.sum
+
+# cosign ships a bare binary rather than a tarball, so the checksum is taken
+# over the installed file directly.
+ARG COSIGN_VERSION=2.6.0
+ARG COSIGN_SHA256_AMD64=ea5c65f99425d6cfbb5c4b5de5dac035f14d09131c1a0ea7c7fc32eab39364f9
+ARG COSIGN_SHA256_ARM64=e09684650882fd721ed22b716ffc399ee11426cd4d1c9b4fec539cba8bf46b86
+RUN case "${TARGETARCH}" in \
+        amd64) sum="${COSIGN_SHA256_AMD64}" ;; \
+        arm64) sum="${COSIGN_SHA256_ARM64}" ;; \
+        *) echo "unsupported TARGETARCH: ${TARGETARCH}" >&2; exit 1 ;; \
+    esac \
+    && curl -fsSL --retry 3 --retry-all-errors --max-time 180 -o /usr/local/bin/cosign \
+        "https://github.com/sigstore/cosign/releases/download/v${COSIGN_VERSION}/cosign-linux-${TARGETARCH}" \
+    && echo "${sum}  /usr/local/bin/cosign" > /tmp/cosign.sum \
+    && sha256sum --check --strict /tmp/cosign.sum \
+    && rm /tmp/cosign.sum \
+    && chmod +x /usr/local/bin/cosign
+
+# Kept at the same version security.yml pins for the repository's own history
+# scan, so the tool a consumer runs locally matches the one that gates here.
+# gitleaks spells x86_64 "x64", unlike the other four.
+ARG GITLEAKS_VERSION=8.30.0
+ARG GITLEAKS_SHA256_AMD64=79a3ab579b53f71efd634f3aaf7e04a0fa0cf206b7ed434638d1547a2470a66e
+ARG GITLEAKS_SHA256_ARM64=b4cbbb6ddf7d1b2a603088cd03a4e3f7ce48ee7fd449b51f7de6ee2906f5fa2f
+RUN case "${TARGETARCH}" in \
+        amd64) sum="${GITLEAKS_SHA256_AMD64}"; asset="x64" ;; \
+        arm64) sum="${GITLEAKS_SHA256_ARM64}"; asset="arm64" ;; \
+        *) echo "unsupported TARGETARCH: ${TARGETARCH}" >&2; exit 1 ;; \
+    esac \
+    && curl -fsSL --retry 3 --retry-all-errors --max-time 180 -o /tmp/gitleaks.tgz \
+        "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_${asset}.tar.gz" \
+    && echo "${sum}  /tmp/gitleaks.tgz" > /tmp/gitleaks.sum \
+    && sha256sum --check --strict /tmp/gitleaks.sum \
+    && tar -xzf /tmp/gitleaks.tgz -C /usr/local/bin gitleaks \
+    && rm /tmp/gitleaks.tgz /tmp/gitleaks.sum
+
+WORKDIR /workspace
+
+RUN trivy --version \
+    && syft version \
+    && grype version \
+    && cosign version \
+    && gitleaks version \
+    && git --version
+
+# GitHub Actions supplies commands dynamically.
+# Do not define ENTRYPOINT or CMD.

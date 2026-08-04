@@ -1,0 +1,125 @@
+# Defaults to upstream so local builds work without authenticating to ghcr.io.
+# CI overrides this with our mirrored copy, so builds do not depend on Docker
+# Hub availability or rate limits.
+ARG BASE_IMAGE=debian:bookworm-slim
+# DL3006: the default above is tagged; hadolint just can't see through the ARG.
+# hadolint ignore=DL3006
+FROM ${BASE_IMAGE}
+
+LABEL org.opencontainers.image.source=https://github.com/greenblacked/github-base-images
+LABEL org.opencontainers.image.description="Shared CI image: GCP and Azure deploy tooling (gcloud, az, kubectl) on Debian Bookworm slim"
+LABEL org.opencontainers.image.licenses=MIT
+
+ENV DEBIAN_FRONTEND=noninteractive \
+    CI=true \
+    CLOUDSDK_CORE_DISABLE_PROMPTS=1 \
+    CLOUDSDK_PYTHON=/usr/bin/python3 \
+    PATH=/opt/google-cloud-sdk/bin:$PATH
+
+# Companion to ci-tools, which carries the AWS CLI. The split is by cloud
+# rather than by tool because most repositories deploy to exactly one of them,
+# and a single image carrying all three CLIs would make every job pay for two
+# it does not use -- these SDKs are large.
+#
+# python3 is not optional here: the gcloud CLI is a Python application and the
+# plain linux tarball expects a system interpreter. gnupg is needed to convert
+# Microsoft's ASCII-armoured signing key into a keyring.
+#
+# DL3008: apt pins would go stale and break the weekly rebuild, which is the
+# actual update mechanism here.
+# The upgrade picks up Debian security fixes published since the upstream base
+# was last rebuilt; the Trivy gate blocks fixable HIGH/CRITICAL vulns, so
+# waiting for upstream to rebuild would block this image too.
+# hadolint ignore=DL3008
+RUN apt-get update \
+    && apt-get upgrade --yes \
+    && apt-get install --yes --no-install-recommends \
+        bash \
+        ca-certificates \
+        curl \
+        git \
+        gnupg \
+        gzip \
+        jq \
+        openssh-client \
+        python3 \
+        tar \
+        unzip \
+        xz-utils \
+        zstd \
+    && rm -rf /var/lib/apt/lists/*
+
+# The Azure CLI comes from Microsoft's own apt repository, GPG-signed and
+# pinned to this keyring via signed-by. That is a stronger guarantee than the
+# checksum pattern used elsewhere in this repo -- the signature chains to a key
+# we install deliberately, rather than attesting to one specific file -- and it
+# is why no version ARG appears here: the repository is the update mechanism,
+# exactly as apt is for every other package in these images.
+#
+# DL3008: see above. Version pinning azure-cli would freeze it against a
+# repository that only carries recent versions, breaking the weekly rebuild.
+# hadolint ignore=DL3008
+RUN curl -fsSL --retry 3 --retry-all-errors --max-time 120 \
+        -o /tmp/microsoft.asc https://packages.microsoft.com/keys/microsoft.asc \
+    && gpg --dearmor -o /usr/share/keyrings/microsoft.gpg /tmp/microsoft.asc \
+    && rm /tmp/microsoft.asc \
+    && echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/microsoft.gpg] https://packages.microsoft.com/repos/azure-cli/ bookworm main" \
+        > /etc/apt/sources.list.d/azure-cli.list \
+    && apt-get update \
+    && apt-get install --yes --no-install-recommends azure-cli \
+    && rm -rf /var/lib/apt/lists/*
+
+# The Google Cloud CLI is a versioned tarball. Google publishes no per-file
+# SHA-256 alongside it -- the release bucket carries no .sha256 companions --
+# so this download is NOT checksum-verified, exactly like the Docker static
+# tarball and the AWS CLI installer in ci-tools. Recording a hash computed from
+# one of our own downloads would attest only to what we happened to fetch, so
+# it is left out and labelled rather than faked. CONTRIBUTING.md records this.
+#
+# Google spells arm64 "arm" in its filenames, unlike every other vendor here.
+ARG TARGETARCH
+ARG GCLOUD_VERSION=579.0.0
+RUN case "${TARGETARCH}" in \
+        amd64) gcarch=x86_64 ;; \
+        arm64) gcarch=arm ;; \
+        *) echo "unsupported TARGETARCH: ${TARGETARCH}" >&2; exit 1 ;; \
+    esac \
+    && curl -fsSL --retry 3 --retry-all-errors --max-time 300 -o /tmp/gcloud.tgz \
+        "https://storage.googleapis.com/cloud-sdk-release/google-cloud-cli-${GCLOUD_VERSION}-linux-${gcarch}.tar.gz" \
+    && tar -xzf /tmp/gcloud.tgz -C /opt \
+    && rm /tmp/gcloud.tgz \
+    && /opt/google-cloud-sdk/install.sh \
+        --quiet \
+        --usage-reporting=false \
+        --path-update=false \
+        --command-completion=false \
+    && rm -rf /opt/google-cloud-sdk/.install/.backup
+
+# kubectl is shared with ci-tools and pinned to the same version and checksums,
+# so a cluster deploy behaves identically whichever of the two images runs it.
+# The vendor publishes a per-artifact SHA-256, so this one is verified.
+ARG KUBECTL_VERSION=1.36.2
+ARG KUBECTL_SHA256_AMD64=1e9045ec32bea85da43de85f0065358529ea7c7a152eca78154fba5b58c27d82
+ARG KUBECTL_SHA256_ARM64=c957eb8c4bea27a3bb35b269edd9082e27f027f7b76b20b5bf4afebc726c6d3e
+RUN case "${TARGETARCH}" in \
+        amd64) sum="${KUBECTL_SHA256_AMD64}" ;; \
+        arm64) sum="${KUBECTL_SHA256_ARM64}" ;; \
+        *) echo "unsupported TARGETARCH: ${TARGETARCH}" >&2; exit 1 ;; \
+    esac \
+    && curl -fsSL --retry 3 --retry-all-errors --max-time 180 \
+        -o /usr/local/bin/kubectl \
+        "https://dl.k8s.io/release/v${KUBECTL_VERSION}/bin/linux/${TARGETARCH}/kubectl" \
+    && echo "${sum}  /usr/local/bin/kubectl" > /tmp/kubectl.sum \
+    && sha256sum --check --strict /tmp/kubectl.sum \
+    && rm /tmp/kubectl.sum \
+    && chmod +x /usr/local/bin/kubectl
+
+WORKDIR /workspace
+
+RUN gcloud version \
+    && az version \
+    && kubectl version --client \
+    && git --version
+
+# GitHub Actions supplies commands dynamically.
+# Do not define ENTRYPOINT or CMD.
