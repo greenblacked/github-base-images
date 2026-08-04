@@ -40,25 +40,74 @@ RUN apt-get update \
 # a build arg so a bump is a one-line change that the vulnerability scan and
 # smoke tests then revalidate.
 #
+# Terraform and kubectl are additionally verified against the SHA-256 their
+# vendor publishes alongside the release, in the same style as Composer in
+# ci-php84 and gitleaks in security.yml. `curl -f` over TLS proves the transport
+# was not tampered with; it does not prove the artifact is the one that was
+# published. Checksums are per-architecture, so a version bump is a three-line
+# change (version plus both sums) that CI revalidates.
+#
+# The Docker static tarball and the AWS CLI installer are deliberately NOT
+# checksummed: neither vendor publishes a usable per-file digest.
+# download.docker.com returns 404 for `<tarball>.sha256`, and AWS ships only a
+# detached GPG signature, which would mean adding gnupg and a pinned AWS public
+# key to this build. Recording a hash computed from one of our own downloads
+# would attest only to what we happened to fetch, so it is left out rather than
+# faked. CONTRIBUTING.md records this and the GPG follow-up.
+#
 # TARGETARCH is set by buildx (amd64 / arm64); each vendor spells the
-# architecture differently, hence the per-tool mapping.
+# architecture differently, hence the per-tool mapping. Every mapping now fails
+# loudly on an unknown value: the previous `[ x = arm64 ] && ... || ...` form
+# silently fell through to x86_64 for any other input, which installs a
+# wrong-arch binary that only surfaces as a confusing smoke-test failure.
+#
+# Every download carries --retry and --max-time. Without a deadline a hung CDN
+# connection stalls until the job's 45-minute timeout and is reported as "build
+# timed out" rather than naming the download that hung.
 ARG TARGETARCH
 ARG TERRAFORM_VERSION=1.15.7
+ARG TERRAFORM_SHA256_AMD64=73bbb8f5188ad75d4fb853fd100ae4d7e146ef7af7db18776109642fdb7759d2
+ARG TERRAFORM_SHA256_ARM64=7a9e92105ede978cf9049a2fbe53dfe67c6a8da4b4d7f613d89e7dd7c63ec40d
 ARG KUBECTL_VERSION=1.36.2
+ARG KUBECTL_SHA256_AMD64=1e9045ec32bea85da43de85f0065358529ea7c7a152eca78154fba5b58c27d82
+ARG KUBECTL_SHA256_ARM64=c957eb8c4bea27a3bb35b269edd9082e27f027f7b76b20b5bf4afebc726c6d3e
 ARG AWSCLI_VERSION=2.36.2
 ARG DOCKER_VERSION=29.6.2
 
-RUN curl -fsSLo /tmp/terraform.zip \
+RUN case "${TARGETARCH}" in \
+        amd64) sum="${TERRAFORM_SHA256_AMD64}" ;; \
+        arm64) sum="${TERRAFORM_SHA256_ARM64}" ;; \
+        *) echo "unsupported TARGETARCH: ${TARGETARCH}" >&2; exit 1 ;; \
+    esac \
+    && curl -fsSL --retry 3 --retry-all-errors --max-time 180 \
+        -o /tmp/terraform.zip \
         "https://releases.hashicorp.com/terraform/${TERRAFORM_VERSION}/terraform_${TERRAFORM_VERSION}_linux_${TARGETARCH}.zip" \
+    && echo "${sum}  /tmp/terraform.zip" > /tmp/terraform.sum \
+    && sha256sum --check --strict /tmp/terraform.sum \
+    && rm /tmp/terraform.sum \
     && unzip -o /tmp/terraform.zip -d /usr/local/bin terraform \
     && rm /tmp/terraform.zip
 
-RUN curl -fsSLo /usr/local/bin/kubectl \
+RUN case "${TARGETARCH}" in \
+        amd64) sum="${KUBECTL_SHA256_AMD64}" ;; \
+        arm64) sum="${KUBECTL_SHA256_ARM64}" ;; \
+        *) echo "unsupported TARGETARCH: ${TARGETARCH}" >&2; exit 1 ;; \
+    esac \
+    && curl -fsSL --retry 3 --retry-all-errors --max-time 180 \
+        -o /usr/local/bin/kubectl \
         "https://dl.k8s.io/release/v${KUBECTL_VERSION}/bin/linux/${TARGETARCH}/kubectl" \
+    && echo "${sum}  /usr/local/bin/kubectl" > /tmp/kubectl.sum \
+    && sha256sum --check --strict /tmp/kubectl.sum \
+    && rm /tmp/kubectl.sum \
     && chmod +x /usr/local/bin/kubectl
 
-RUN awsarch="$([ "${TARGETARCH}" = arm64 ] && echo aarch64 || echo x86_64)" \
-    && curl -fsSLo /tmp/awscli.zip \
+RUN case "${TARGETARCH}" in \
+        amd64) awsarch=x86_64 ;; \
+        arm64) awsarch=aarch64 ;; \
+        *) echo "unsupported TARGETARCH: ${TARGETARCH}" >&2; exit 1 ;; \
+    esac \
+    && curl -fsSL --retry 3 --retry-all-errors --max-time 300 \
+        -o /tmp/awscli.zip \
         "https://awscli.amazonaws.com/awscli-exe-linux-${awsarch}-${AWSCLI_VERSION}.zip" \
     && unzip -q /tmp/awscli.zip -d /tmp \
     && /tmp/aws/install \
@@ -66,8 +115,13 @@ RUN awsarch="$([ "${TARGETARCH}" = arm64 ] && echo aarch64 || echo x86_64)" \
 
 # Docker *client* only, no daemon. In Actions it talks to the host daemon via
 # the mounted socket, or to a docker:dind service container.
-RUN dockerarch="$([ "${TARGETARCH}" = arm64 ] && echo aarch64 || echo x86_64)" \
-    && curl -fsSLo /tmp/docker.tgz \
+RUN case "${TARGETARCH}" in \
+        amd64) dockerarch=x86_64 ;; \
+        arm64) dockerarch=aarch64 ;; \
+        *) echo "unsupported TARGETARCH: ${TARGETARCH}" >&2; exit 1 ;; \
+    esac \
+    && curl -fsSL --retry 3 --retry-all-errors --max-time 180 \
+        -o /tmp/docker.tgz \
         "https://download.docker.com/linux/static/stable/${dockerarch}/docker-${DOCKER_VERSION}.tgz" \
     && tar -xzf /tmp/docker.tgz -C /tmp docker/docker \
     && mv /tmp/docker/docker /usr/local/bin/docker \

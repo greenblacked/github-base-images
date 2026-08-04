@@ -58,9 +58,30 @@ Project dependencies, application source, credentials, and project-specific buil
 `test.sh` asserts their absence, and those assertions are the point — if you find yourself relaxing
 one to make a build pass, that is usually the bug rather than the test.
 
-Pinned tool versions (Terraform, kubectl, AWS CLI, Docker client in `ci-tools`) are `ARG`s so a
-bump is a one-line change that CI revalidates. Note that Dependabot does **not** track these — it
-only updates each Dockerfile's `ARG BASE_IMAGE` — so they move when a human moves them.
+Pinned tool versions (Terraform, kubectl, AWS CLI, Docker client in `ci-tools`; Composer in
+`ci-php84`) are `ARG`s so a bump is a small change that CI revalidates. Note that Dependabot does
+**not** track these — it only updates each Dockerfile's `ARG BASE_IMAGE` — so they move when a
+human moves them.
+
+Where the vendor publishes a per-file SHA-256, the download is checked against it, and the
+checksum is an `ARG` alongside the version. Bumping one of those is a **three**-line change —
+version plus both per-architecture sums — because the checksums differ per architecture:
+
+```bash
+# Terraform publishes a combined sums file:
+curl -s https://releases.hashicorp.com/terraform/<VERSION>/terraform_<VERSION>_SHA256SUMS \
+  | grep -E 'linux_(amd64|arm64)\.zip'
+
+# kubectl publishes one per artifact:
+for a in amd64 arm64; do curl -s "https://dl.k8s.io/release/v<VERSION>/bin/linux/$a/kubectl.sha256"; echo; done
+```
+
+Two downloads are **not** checksummed, deliberately: the Docker static tarball (no `.sha256` is
+published — the URL 404s) and the AWS CLI installer (detached GPG signature only, which would mean
+adding `gnupg` and a pinned AWS public key to the build). Recording a hash computed from one of our
+own downloads would attest only to what we happened to fetch, so those stay unverified and
+labelled rather than given a checksum that looks authoritative and is not. Adding GPG verification
+for the AWS CLI is a reasonable follow-up.
 
 ## Commit and PR conventions
 

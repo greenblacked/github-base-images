@@ -1,20 +1,33 @@
 #!/usr/bin/env bash
 # Smoke tests for the ci-python313 image. Run against a built image before it is pushed.
 #   ./ci-python313/test.sh ci-python313:test
+#
+# Exit codes: 0 all checks passed, 1 one or more checks failed, 2 bad usage.
 # SC2016: check strings are deliberately single-quoted so they expand inside
 # the container (docker run bash -c), not on the host.
 # shellcheck disable=SC2016
 set -euo pipefail
 
-IMAGE="${1:?usage: test.sh <image-ref>}"
+if [ "$#" -ne 1 ]; then
+  echo "usage: test.sh <image-ref>" >&2
+  exit 2
+fi
+IMAGE="$1"
 failed=0
 
+# On failure, print what the container actually said. Discarding it means an
+# arm64 machine is needed to reproduce what the log could have shown: a
+# wrong-arch binary says "exec format error", a missing library names the .so,
+# a TLS failure names the certificate problem.
 check() {
-  local name="$1" script="$2"
-  if docker run --rm "$IMAGE" bash -c "$script" >/dev/null 2>&1; then
+  local name="$1" script="$2" out
+  if out=$(docker run --rm "$IMAGE" bash -c "$script" 2>&1); then
     echo "ok       $name"
   else
     echo "FAILED   $name"
+    if [ -n "$out" ]; then
+      printf '%s\n' "$out" | sed 's/^/         | /' >&2
+    fi
     failed=1
   fi
 }
@@ -40,7 +53,7 @@ check "zstd is present"            'zstd --version'
 # ca-certificates is only meaningfully installed if TLS actually verifies;
 # pip install depends on this working.
 check "CA bundle exists"           'test -s /etc/ssl/certs/ca-certificates.crt'
-check "TLS verification works"     'curl -sSf https://pypi.org/ -o /dev/null'
+check "TLS verification works"     'curl -sSf --max-time 15 https://pypi.org/ -o /dev/null'
 
 check "workdir is /workspace"      '[ "$PWD" = /workspace ]'
 
