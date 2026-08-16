@@ -38,6 +38,16 @@ echo "Testing $IMAGE"
 # one of these silently goes missing, so assert each one individually.
 check "go is present"              'go version'
 check "go is 1.x"                  'go version | grep -qE "go1\.[0-9]+"'
+# A rolling tag has its own failure mode: if upstream ever stops republishing
+# `1-bookworm`, this pipeline keeps rebuilding a frozen toolchain and every
+# "is 1.x" assertion still passes -- the exact staleness this image was renamed
+# to prevent, but now invisible. The floor below turns that into a red build.
+# It is not a pin: it only has to stay at or below current stable, so it never
+# blocks an upgrade and moves rarely.
+# Go supports the newest two minors, so the floor tracks that window.
+GO_MIN_MINOR=25
+check "go >= 1.$GO_MIN_MINOR (not frozen)" \
+  "test \"\$(go version | cut -d' ' -f3 | sed 's/^go//' | cut -d. -f2)\" -ge $GO_MIN_MINOR"
 check "go builds a program"        'cd $(mktemp -d) && printf "package main\nfunc main(){}\n" > main.go && go mod init smoke && go build .'
 check "bash is present"            'bash --version'
 check "git is present"             'git --version'

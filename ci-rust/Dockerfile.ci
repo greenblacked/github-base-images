@@ -6,12 +6,21 @@
 # language images that track a release line. Rust has no LTS and no parallel
 # supported branches: upstream patches exactly one version, the current stable,
 # and fixes are never backported to an older minor. An image called
-# `ci-rust` therefore promises a choice that does not exist -- and guarantees
+# `ci-rust185` therefore promises a choice that does not exist -- and guarantees
 # it falls out of support six weeks later, which is exactly what happened: it
 # sat on 1.85 while stable reached 1.97.
 #
-# Rust's own stability guarantee makes the rolling `1-bookworm` tag safe: code
-# that compiles on one 1.x compiles on later 1.x. Consumers who genuinely need
+# Rust's own stability guarantee makes the rolling `1-bookworm` tag safe FOR
+# COMPILATION: code that compiles on one 1.x compiles on later 1.x.
+#
+# It is NOT safe for linting, and that is the real cost of this choice. clippy
+# gains lints every six weeks, so a consumer running `cargo clippy -- -D
+# warnings` can go red without changing a line of their own code, and rustfmt
+# can reflow on a new release. That trade is deliberate: the alternative was an
+# image frozen twelve releases behind with no security fixes at all. Consumers
+# who need lint stability should either not use `-D warnings` in CI, or pin the
+# toolchain per project with a rust-toolchain.toml, which rustup honours inside
+# this image and which holds clippy along with rustc. Consumers who genuinely need
 # an exact toolchain pin it per project with a rust-toolchain.toml, which is
 # the mechanism Rust provides for that and which this image respects.
 ARG BASE_IMAGE=rust:1-bookworm

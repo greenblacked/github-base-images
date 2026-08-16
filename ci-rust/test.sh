@@ -38,6 +38,15 @@ echo "Testing $IMAGE"
 # one of these silently goes missing, so assert each one individually.
 check "rustc is present"           'rustc --version'
 check "rustc is 1.x stable"        'rustc --version | grep -qE "^rustc 1\.[0-9]+\.[0-9]+"'
+# A rolling tag has its own failure mode: if upstream ever stops republishing
+# `1-bookworm`, this pipeline keeps rebuilding a frozen toolchain and every
+# "is 1.x" assertion still passes -- the exact staleness this image was renamed
+# to prevent, but now invisible. The floor below turns that into a red build.
+# It is not a pin: it only has to stay at or below current stable, so it never
+# blocks an upgrade and moves rarely.
+RUST_MIN_MINOR=95
+check "rustc >= 1.$RUST_MIN_MINOR (not frozen)" \
+  "test \"\$(rustc --version | cut -d' ' -f2 | cut -d. -f2)\" -ge $RUST_MIN_MINOR"
 check "cargo is present"           'cargo --version'
 check "rustfmt is present"         'cargo fmt --version'
 check "clippy is present"          'cargo clippy --version'

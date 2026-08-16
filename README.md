@@ -364,7 +364,22 @@ exist yet.
   bumped to `v2` only when the *contents* of the
   image change — a tool added or removed. Determinism in production comes from pinning a digest,
   not from the tag.
+  - For `ci-rust` and `ci-go` the line is rolling in one extra respect: the **language toolchain
+    minor moves too**, because those images track `rust:1-bookworm` and `golang:1-bookworm`
+    ([why](#images)). That is a deliberate exception to "contents change ⇒ bump to v2" — under the
+    strict reading every upstream Rust release would need a new tag, which would make the contract
+    line meaningless for exactly the two images whose upstreams have no support lines. The
+    guarantee those two carry is *current stable of a 1.x-compatible language*, not a fixed minor.
+    If you need a fixed minor, pin a digest, or pin the toolchain per project with a
+    `rust-toolchain.toml` or a `toolchain` directive in `go.mod`.
 - **`latest`** exists for testing. Never use it in a protected deployment job.
+- **Renamed or removed images keep their old package.** GHCR does not delete a package when this
+  repository stops building it, and nothing in the pipeline can: the package simply drops out of
+  the weekly rebuild and the Trivy re-scan while staying published and pullable. It then quietly
+  accumulates unpatched CVEs, and a consumer still pointing at it sees a working pull and no
+  signal at all. **Deleting the old package is therefore part of a rename, not an optional
+  tidy-up.** `ci-rust185` and `ci-go125` were retired this way and should be deleted from the
+  package settings.
 - **`<commit-sha>`** identifies the exact build.
 
 Every image rebuilds on every push to `main` touching any image directory, weekly on a schedule,

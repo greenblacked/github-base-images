@@ -5,7 +5,7 @@
 # a test.sh.
 #
 #   make list                        # show the images this repo builds
-#   make check IMAGE=ci-rust185      # build one image from upstream, then smoke-test it
+#   make check IMAGE=ci-rust      # build one image from upstream, then smoke-test it
 #   make build IMAGE=ci-ruby34       # build only, tagged ci-ruby34:test
 #   make test  IMAGE=ci-ruby34       # smoke-test an already-built ci-ruby34:test
 #   make check-all                   # build + test every image
@@ -60,7 +60,7 @@ lint:
 
 # IMAGE must name a real image directory before build/test run.
 guard-image:
-	@test -n "$(IMAGE)" || { echo "error: set IMAGE=<name>, e.g. IMAGE=ci-rust185" >&2; exit 2; }
+	@test -n "$(IMAGE)" || { echo "error: set IMAGE=<name>, e.g. IMAGE=ci-rust" >&2; exit 2; }
 	@test -f "$(IMAGE)/Dockerfile.ci" || { echo "error: no such image '$(IMAGE)' (try 'make list')" >&2; exit 2; }
 
 build: guard-image
