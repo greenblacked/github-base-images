@@ -51,6 +51,9 @@ Two rules that are easy to miss:
   fails if it is missing or not executable.
 - **Match the directory name and the `image` field** in `images.json`; the lint job cross-checks
   both directions.
+- **Bump kubectl in both places.** It is pinned in `ci-tools` *and* `ci-cloud` so a cluster deploy
+  behaves the same whichever image runs it. The lint job asserts the version and both checksums are
+  identical, so updating one and not the other fails the build rather than shipping a version skew.
 
 ## What does not belong in an image
 
@@ -76,12 +79,24 @@ curl -s https://releases.hashicorp.com/terraform/<VERSION>/terraform_<VERSION>_S
 for a in amd64 arm64; do curl -s "https://dl.k8s.io/release/v<VERSION>/bin/linux/$a/kubectl.sha256"; echo; done
 ```
 
-Two downloads are **not** checksummed, deliberately: the Docker static tarball (no `.sha256` is
-published — the URL 404s) and the AWS CLI installer (detached GPG signature only, which would mean
-adding `gnupg` and a pinned AWS public key to the build). Recording a hash computed from one of our
-own downloads would attest only to what we happened to fetch, so those stay unverified and
-labelled rather than given a checksum that looks authoritative and is not. Adding GPG verification
-for the AWS CLI is a reasonable follow-up.
+Composer is the exception to "the vendor publishes it": neither its GitHub release nor
+`getcomposer.org` exposes a digest we can reach, so its `ARG` records a hash computed from the
+release asset itself. That is trust-on-first-use rather than vendor attestation — it detects a
+later substitution, not an originally bad artifact. When bumping it, verify the method still
+reproduces the *current* pin before trusting a new one.
+
+Three downloads are **not** checksummed, deliberately: the Docker static tarball (no `.sha256` is
+published — the URL 404s), the AWS CLI installer (detached GPG signature only, which would mean
+adding `gnupg` and a pinned AWS public key to the build), and the gcloud CLI in `ci-cloud` (the
+release bucket carries no `.sha256` companions). These stay unverified and labelled rather than
+given a checksum that looks vendor-attested and is not.
+
+That is admittedly inconsistent with Composer, which does carry a computed hash — the difference
+is historical rather than principled, and worth resolving in one direction or the other. The
+argument for extending trust-on-first-use to all four is that it detects a later substitution,
+which is better than nothing; the argument against is that a computed hash in the same `ARG` shape
+as a vendor-published one invites the reader to assume a guarantee that is not there. Adding GPG
+verification for the AWS CLI would remove it from this list properly, and is the better fix.
 
 ## Commit and PR conventions
 

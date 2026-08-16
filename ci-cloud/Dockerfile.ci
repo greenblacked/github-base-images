@@ -110,9 +110,9 @@ RUN case "${TARGETARCH}" in \
 # kubectl is shared with ci-tools and pinned to the same version and checksums,
 # so a cluster deploy behaves identically whichever of the two images runs it.
 # The vendor publishes a per-artifact SHA-256, so this one is verified.
-ARG KUBECTL_VERSION=1.36.2
-ARG KUBECTL_SHA256_AMD64=1e9045ec32bea85da43de85f0065358529ea7c7a152eca78154fba5b58c27d82
-ARG KUBECTL_SHA256_ARM64=c957eb8c4bea27a3bb35b269edd9082e27f027f7b76b20b5bf4afebc726c6d3e
+ARG KUBECTL_VERSION=1.36.3
+ARG KUBECTL_SHA256_AMD64=ebbd080e7c2e275093b55915722043257eb24004363e20acb3c4d71919f88336
+ARG KUBECTL_SHA256_ARM64=3d86f24401c41ae5a46ac50eef8865fe891d3647d324a0836f6c63757a126e62
 RUN case "${TARGETARCH}" in \
         amd64) sum="${KUBECTL_SHA256_AMD64}" ;; \
         arm64) sum="${KUBECTL_SHA256_ARM64}" ;; \

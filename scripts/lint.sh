@@ -113,6 +113,21 @@ note "images.json cross-check"
     jq -e --arg i "${d%/}" 'any(.[]; .image == $i)' .github/images.json >/dev/null \
       || { echo "error: directory $d has no images.json entry"; exit 1; }
   done
+
+  # kubectl is pinned in two Dockerfiles -- ci-tools and ci-cloud -- so a
+  # cluster deploy behaves identically whichever image runs it. Nothing made
+  # that true except a comment, so assert it: a bump that updates one and not
+  # the other is caught here rather than by someone debugging a version skew.
+  for key in KUBECTL_VERSION KUBECTL_SHA256_AMD64 KUBECTL_SHA256_ARM64; do
+    a=$(grep -m1 "^ARG $key=" ci-tools/Dockerfile.ci)
+    b=$(grep -m1 "^ARG $key=" ci-cloud/Dockerfile.ci)
+    [ "$a" = "$b" ] || {
+      echo "error: $key differs between ci-tools and ci-cloud"
+      echo "  ci-tools: $a"
+      echo "  ci-cloud: $b"
+      exit 1
+    }
+  done
 } || fail=1
 
 # --- 5. zizmor, best-effort and non-gating -- the same posture as CI, where
