@@ -89,7 +89,7 @@ RUN curl -fsSL --retry 3 --retry-all-errors --max-time 120 \
 # needs urllib3's test server. If a future SDK bundles more fixtures the gate
 # will say so, and they get deleted here too.
 ARG TARGETARCH
-ARG GCLOUD_VERSION=579.0.0
+ARG GCLOUD_VERSION=580.0.0
 RUN case "${TARGETARCH}" in \
         amd64) gcarch=x86_64 ;; \
         arm64) gcarch=arm ;; \
