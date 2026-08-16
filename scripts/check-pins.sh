@@ -14,9 +14,13 @@
 #
 # Exit codes:
 #   0  every pin is current
-#   1  a runtime failure (a vendor endpoint was unreachable or unparseable)
+#   1  no drift, but a vendor endpoint was unreachable -- a broken checker
 #   2  bad usage
-#   3  drift found -- this is a normal, expected outcome, not an error
+#   3  drift found -- a normal, expected outcome, not an error
+#
+# 3 outranks 1: drift is actionable and must still reach the tracking issue even
+# when one resolver is broken. Unresolved tools appear in the report with
+# state "unresolved" so they are never silently dropped.
 #
 # Read-only: it fetches version metadata and never writes to the repository or
 # to any vendor. The caller (the pin-drift workflow) is what opens an issue.
@@ -89,7 +93,7 @@ trap 'rm -rf "$tmp"' EXIT INT TERM
 readonly PINS='
 terraform  | ci-tools/Dockerfile.ci               | TERRAFORM_VERSION  | hashicorp | terraform
 kubectl    | ci-tools/Dockerfile.ci               | KUBECTL_VERSION    | k8s       | -
-awscli     | ci-tools/Dockerfile.ci               | AWSCLI_VERSION     | github    | aws/aws-cli
+awscli     | ci-tools/Dockerfile.ci               | AWSCLI_VERSION     | githubtag | aws/aws-cli
 docker     | ci-tools/Dockerfile.ci               | DOCKER_VERSION     | dockerstatic | -
 gcloud     | ci-cloud/Dockerfile.ci               | GCLOUD_VERSION     | gcs       | -
 playwright | ci-node22/Dockerfile.ci              | PLAYWRIGHT_VERSION | npm       | playwright
@@ -121,6 +125,20 @@ resolve_github() {
   fetch "${auth[@]}" -H 'Accept: application/vnd.github+json' \
     "https://api.github.com/repos/$repo/releases/latest" \
     | jq -r '.tag_name // empty' | sed 's/^v//'
+}
+
+# aws/aws-cli publishes git TAGS but no GitHub Releases, so releases/latest
+# 404s there. Read the tag list instead and take the highest semver -- tags come
+# back newest-first rather than sorted, so `sort -V` does the ordering.
+resolve_githubtag() {
+  local repo="$1" auth=()
+  if [ -n "${GITHUB_TOKEN:-}" ]; then
+    auth=(-H "Authorization: Bearer $GITHUB_TOKEN")
+  fi
+  fetch "${auth[@]}" -H 'Accept: application/vnd.github+json' \
+    "https://api.github.com/repos/$repo/tags?per_page=100" \
+    | jq -r '.[].name // empty' | sed 's/^v//' \
+    | grep -E '^[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -1
 }
 
 resolve_k8s() { fetch https://dl.k8s.io/release/stable.txt | sed 's/^v//'; }
@@ -180,6 +198,7 @@ while IFS='|' read -r name file key resolver arg; do
   latest=""
   case "$resolver" in
     github)       latest=$(resolve_github "$arg" || true) ;;
+    githubtag)    latest=$(resolve_githubtag "$arg" || true) ;;
     k8s)          latest=$(resolve_k8s || true) ;;
     hashicorp)    latest=$(resolve_hashicorp "$arg" || true) ;;
     dockerstatic) latest=$(resolve_dockerstatic || true) ;;
@@ -193,7 +212,12 @@ while IFS='|' read -r name file key resolver arg; do
     # not hide drift in the other twelve. Counted, reported, and reflected in
     # the exit code.
     log error "$name: could not resolve current version from vendor"
-    failed=$((failed + 1)); continue
+    failed=$((failed + 1))
+    jq -nc --arg tool "$name" --arg pinned "$pinned" --arg file "$file" \
+           --arg key "$key" \
+      '{tool:$tool, pinned:$pinned, latest:null, file:$file, key:$key, state:"unresolved"}' \
+      >> "$tmp/rows.jsonl"
+    continue
   fi
 
   if [ "$pinned" = "$latest" ]; then
@@ -230,7 +254,11 @@ else
   printf 'checked=%d behind=%d unresolved=%d\n' "$checked" "$drift" "$failed"
 fi
 
-[ "$failed" -gt 0 ] && { log error "$failed tool(s) could not be resolved"; exit 1; }
+[ "$failed" -gt 0 ] && log error "$failed tool(s) could not be resolved"
+# Drift takes precedence over an unresolved vendor: drift is actionable and must
+# still reach the tracking issue even if one resolver is broken. A run with no
+# drift but a failed resolver is a broken checker, and goes red.
 [ "$drift" -gt 0 ] && { log info "$drift pin(s) behind"; exit "$EXIT_DRIFT"; }
+[ "$failed" -gt 0 ] && exit 1
 log info "all $checked pins current"
 exit 0

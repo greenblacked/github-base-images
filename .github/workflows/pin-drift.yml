@@ -72,9 +72,19 @@ jobs:
           case "$code" in
             0) echo "drift=false" >> "$GITHUB_OUTPUT" ;;
             3) echo "drift=true"  >> "$GITHUB_OUTPUT" ;;
-            *) echo "::error::check-pins.sh failed with exit $code"; jq . report.json || cat report.json; exit "$code" ;;
+            1) echo "drift=false" >> "$GITHUB_OUTPUT" ;;
+            *) echo "::error::check-pins.sh failed with exit $code"; cat report.json 2>/dev/null; exit "$code" ;;
           esac
           jq . report.json
+
+          # An unresolved vendor is a broken checker and must be loud, but it no
+          # longer hides drift: exit 3 outranks exit 1, so a run with both still
+          # reports drift and reaches the issue below.
+          unresolved=$(jq -r '[.tools[] | select(.state == "unresolved") | .tool] | join(", ")' report.json)
+          if [ -n "$unresolved" ]; then
+            echo "::warning::could not resolve upstream version for: $unresolved"
+          fi
+          echo "unresolved=$unresolved" >> "$GITHUB_OUTPUT"
 
       - name: Render report
         id: render
@@ -84,9 +94,17 @@ jobs:
             echo
             echo "| tool | pinned | latest | state |"
             echo "|---|---|---|---|"
-            jq -r '.tools[] | "| \(.tool) | `\(.pinned)` | `\(.latest)` | \(.state) |"' report.json
+            jq -r '.tools[] | "| \(.tool) | `\(.pinned)` | \(if .latest then "`" + .latest + "`" else "—" end) | \(.state) |"' report.json
           } > table.md
           cat table.md >> "$GITHUB_STEP_SUMMARY"
+
+      # Deferred so the report, the summary table and the warning above are all
+      # produced first: a broken resolver should still leave a usable artifact.
+      - name: Fail if a resolver is broken
+        if: steps.check.outputs.code == '1'
+        run: |
+          echo "::error::one or more vendor resolvers failed; see the warning above"
+          exit 1
 
       # --- issue maintenance, publish contexts only ---------------------------
       # Skipped on pull requests: a PR from a fork gets a read-only token, and a

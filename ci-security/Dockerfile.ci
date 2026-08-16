@@ -52,9 +52,9 @@ RUN apt-get update \
 # invisible to the consumer.
 ARG TARGETARCH
 
-ARG TRIVY_VERSION=0.73.0
-ARG TRIVY_SHA256_AMD64=2edd39da482bb4e9831962487b68f68e3928ec3137794757f54d00383d79547b
-ARG TRIVY_SHA256_ARM64=13833d97e8a1a5367471c372a173180157f593bece570e20d5d925fef552f5dd
+ARG TRIVY_VERSION=0.74.0
+ARG TRIVY_SHA256_AMD64=2ae6fe3ee734b7fdf11335663e18c75ea12dccc76062f09f164a3b0f8be4371a
+ARG TRIVY_SHA256_ARM64=b94ce1976bbf3c15b514b605ee88be7c6d94a29be2302847ff01cb794d47aad5
 RUN case "${TARGETARCH}" in \
         amd64) sum="${TRIVY_SHA256_AMD64}"; asset="Linux-64bit" ;; \
         arm64) sum="${TRIVY_SHA256_ARM64}"; asset="Linux-ARM64" ;; \
@@ -67,9 +67,9 @@ RUN case "${TARGETARCH}" in \
     && tar -xzf /tmp/trivy.tgz -C /usr/local/bin trivy \
     && rm /tmp/trivy.tgz /tmp/trivy.sum
 
-ARG SYFT_VERSION=1.33.0
-ARG SYFT_SHA256_AMD64=adc1b944a827ed3432bcd9f1dbdbc8fa3c0dca7d3d449e7084c90248c2c6cb50
-ARG SYFT_SHA256_ARM64=6688be30048149df88e5959a756dbab086022a04d0f7497790cd298a9669f49d
+ARG SYFT_VERSION=1.51.0
+ARG SYFT_SHA256_AMD64=2a2e837a2c8d59ec9af5472ee22d3b04ee463c4e44476ecf993fd1e5ab6ebc7f
+ARG SYFT_SHA256_ARM64=6c0466811541ea03add5213a60a1562f0851e4c0b0ecfdee1a694a9455285900
 RUN case "${TARGETARCH}" in \
         amd64) sum="${SYFT_SHA256_AMD64}" ;; \
         arm64) sum="${SYFT_SHA256_ARM64}" ;; \
@@ -82,9 +82,9 @@ RUN case "${TARGETARCH}" in \
     && tar -xzf /tmp/syft.tgz -C /usr/local/bin syft \
     && rm /tmp/syft.tgz /tmp/syft.sum
 
-ARG GRYPE_VERSION=0.110.0
-ARG GRYPE_SHA256_AMD64=aaa98d27d2d7efd9317c6a1ad6d9b15f3e65bab320e7d03bde41e251387bb71c
-ARG GRYPE_SHA256_ARM64=804041ee69f119022e3e866741a558eae6f2df372a5dc1a5376d456d16f8c931
+ARG GRYPE_VERSION=0.117.0
+ARG GRYPE_SHA256_AMD64=38525dab1e06f162ebaa02f94d82d1f807076b011a44180cf2777edf1a7b9c26
+ARG GRYPE_SHA256_ARM64=935f628bdf9331ffdd946931ea5fdb50045d3970ba52670cbeb44a88f127291b
 RUN case "${TARGETARCH}" in \
         amd64) sum="${GRYPE_SHA256_AMD64}" ;; \
         arm64) sum="${GRYPE_SHA256_ARM64}" ;; \
@@ -99,9 +99,9 @@ RUN case "${TARGETARCH}" in \
 
 # cosign ships a bare binary rather than a tarball, so the checksum is taken
 # over the installed file directly.
-ARG COSIGN_VERSION=2.6.0
-ARG COSIGN_SHA256_AMD64=ea5c65f99425d6cfbb5c4b5de5dac035f14d09131c1a0ea7c7fc32eab39364f9
-ARG COSIGN_SHA256_ARM64=e09684650882fd721ed22b716ffc399ee11426cd4d1c9b4fec539cba8bf46b86
+ARG COSIGN_VERSION=3.1.3
+ARG COSIGN_SHA256_AMD64=4629c757b7618056f8ddd7e2625ae9fdd94c0372a65049520bc7d9df9efc7f71
+ARG COSIGN_SHA256_ARM64=c5d324e091826b0d7a78eb16fef316450b4eb9aaec045611c08ba06f5e73220a
 RUN case "${TARGETARCH}" in \
         amd64) sum="${COSIGN_SHA256_AMD64}" ;; \
         arm64) sum="${COSIGN_SHA256_ARM64}" ;; \
@@ -117,9 +117,9 @@ RUN case "${TARGETARCH}" in \
 # Kept at the same version security.yml pins for the repository's own history
 # scan, so the tool a consumer runs locally matches the one that gates here.
 # gitleaks spells x86_64 "x64", unlike the other four.
-ARG GITLEAKS_VERSION=8.30.0
-ARG GITLEAKS_SHA256_AMD64=79a3ab579b53f71efd634f3aaf7e04a0fa0cf206b7ed434638d1547a2470a66e
-ARG GITLEAKS_SHA256_ARM64=b4cbbb6ddf7d1b2a603088cd03a4e3f7ce48ee7fd449b51f7de6ee2906f5fa2f
+ARG GITLEAKS_VERSION=8.30.1
+ARG GITLEAKS_SHA256_AMD64=551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb
+ARG GITLEAKS_SHA256_ARM64=e4a487ee7ccd7d3a7f7ec08657610aa3606637dab924210b3aee62570fb4b080
 RUN case "${TARGETARCH}" in \
         amd64) sum="${GITLEAKS_SHA256_AMD64}"; asset="x64" ;; \
         arm64) sum="${GITLEAKS_SHA256_ARM64}"; asset="arm64" ;; \
