@@ -79,11 +79,20 @@ curl -s https://releases.hashicorp.com/terraform/<VERSION>/terraform_<VERSION>_S
 for a in amd64 arm64; do curl -s "https://dl.k8s.io/release/v<VERSION>/bin/linux/$a/kubectl.sha256"; echo; done
 ```
 
-Composer is the exception to "the vendor publishes it": neither its GitHub release nor
-`getcomposer.org` exposes a digest we can reach, so its `ARG` records a hash computed from the
-release asset itself. That is trust-on-first-use rather than vendor attestation — it detects a
-later substitution, not an originally bad artifact. When bumping it, verify the method still
-reproduces the *current* pin before trusting a new one.
+Composer is the exception. Its GitHub release carries no `.sha256` asset, so the `ARG` here
+records a hash computed from the release artifact itself — trust-on-first-use rather than vendor
+attestation. It detects a later substitution, not an originally bad artifact.
+
+**`getcomposer.org` does publish a per-release digest** at
+`https://getcomposer.org/download/<VERSION>/composer.phar.sha256sum`, which is strictly better than
+a computed hash. It is unreachable from some restricted build and development networks — the same
+reason the binary itself is fetched from GitHub rather than from there — so it could not be used
+when this pin was last set. If you are on a network that can reach it, **verify against it and say
+so in the PR**; that upgrades this pin from trust-on-first-use to vendor-attested and the caveat
+above can go.
+
+Either way, when bumping Composer, first confirm the method still reproduces the *current* pin
+before trusting a hash it produces for a new one.
 
 Three downloads are **not** checksummed, deliberately: the Docker static tarball (no `.sha256` is
 published — the URL 404s), the AWS CLI installer (detached GPG signature only, which would mean

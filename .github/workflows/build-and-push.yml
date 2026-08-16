@@ -181,8 +181,14 @@ jobs:
           # one and not the other is caught here rather than by someone
           # debugging a version skew in production.
           for key in KUBECTL_VERSION KUBECTL_SHA256_AMD64 KUBECTL_SHA256_ARM64; do
-            a=$(grep -m1 "^ARG $key=" ci-tools/Dockerfile.ci)
-            b=$(grep -m1 "^ARG $key=" ci-cloud/Dockerfile.ci)
+            a=$(grep -m1 "^ARG $key=" ci-tools/Dockerfile.ci || true)
+            b=$(grep -m1 "^ARG $key=" ci-cloud/Dockerfile.ci || true)
+            # Missing from both would compare "" = "" and pass, silently
+            # disabling the check after a rename or deletion.
+            if [ -z "$a" ] || [ -z "$b" ]; then
+              echo "::error::$key not found in ci-tools and/or ci-cloud Dockerfile.ci"
+              exit 1
+            fi
             if [ "$a" != "$b" ]; then
               echo "::error::$key differs between ci-tools ($a) and ci-cloud ($b)"
               exit 1
