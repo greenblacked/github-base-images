@@ -1,0 +1,154 @@
+# Weekly check that the hand-pinned tool versions have not fallen behind
+# upstream, reported as a single tracking issue that is opened, updated and
+# closed automatically.
+#
+# Why this exists: Dependabot reads each Dockerfile's `ARG BASE_IMAGE` and
+# nothing else, so every tool pinned as a plain `ARG *_VERSION` moves only when
+# a human moves it. A manual audit found six behind at once. This is the same
+# audit on a timer.
+#
+# Reporting, never gating. Drift is not a broken build -- it is a bump someone
+# should make deliberately, with a fresh checksum, through the normal PR path.
+# Failing a build for it would only train people to ignore a red repository.
+name: Pin drift
+
+on:
+  schedule:
+    # Mondays, a few hours after the image rebuild at 04:17, so the two jobs do
+    # not contend and the drift report reflects whatever the rebuild published.
+    #
+    # GitHub disables scheduled workflows after 60 days without repository
+    # activity, silently. If the last run here is old, trigger it manually.
+    - cron: '41 7 * * 1'
+  workflow_dispatch:
+  # So a change to the checker or the pins is validated on the PR that makes it,
+  # rather than first running a week later on a schedule nobody is watching.
+  pull_request:
+    branches: [main]
+    paths:
+      - 'scripts/check-pins.sh'
+      - '.github/workflows/pin-drift.yml'
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    name: Check pinned tool versions
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      # Needed only to maintain the single tracking issue. Not granted on pull
+      # requests, where the job reports to the step summary instead.
+      issues: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # Nothing here runs a git operation after checkout, so leaving
+          # credentials in .git/config is pure exposure (zizmor: artipacked).
+          persist-credentials: false
+
+      # Exit 3 means drift, which is an expected outcome rather than a failure,
+      # so it is captured instead of aborting the job. Exit 1 (a vendor endpoint
+      # unreachable) is still a real failure and is surfaced below.
+      - name: Check pins
+        id: check
+        env:
+          # Read by the script for api.github.com; raises the rate limit from
+          # 60/hour to 1000/hour, which nine GitHub-hosted tools need.
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set +e
+          ./scripts/check-pins.sh --format json > report.json
+          code=$?
+          set -e
+          echo "code=$code" >> "$GITHUB_OUTPUT"
+          case "$code" in
+            0) echo "drift=false" >> "$GITHUB_OUTPUT" ;;
+            3) echo "drift=true"  >> "$GITHUB_OUTPUT" ;;
+            *) echo "::error::check-pins.sh failed with exit $code"; jq . report.json || cat report.json; exit "$code" ;;
+          esac
+          jq . report.json
+
+      - name: Render report
+        id: render
+        run: |
+          {
+            echo "### Pinned tool versions"
+            echo
+            echo "| tool | pinned | latest | state |"
+            echo "|---|---|---|---|"
+            jq -r '.tools[] | "| \(.tool) | `\(.pinned)` | `\(.latest)` | \(.state) |"' report.json
+          } > table.md
+          cat table.md >> "$GITHUB_STEP_SUMMARY"
+
+      # --- issue maintenance, publish contexts only ---------------------------
+      # Skipped on pull requests: a PR from a fork gets a read-only token, and a
+      # PR should not mutate the issue tracker as a side effect of being opened.
+      - name: Open or update the tracking issue
+        if: github.event_name != 'pull_request' && steps.check.outputs.drift == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TITLE: Pinned tool versions are behind upstream
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          {
+            echo "Some hand-pinned tool versions have fallen behind the version their vendor ships."
+            echo
+            cat table.md
+            echo
+            echo "Dependabot does not track these -- it only updates each Dockerfile's \`ARG BASE_IMAGE\` --"
+            echo "so they move when a human moves them."
+            echo
+            echo "**To bump one:** update the \`ARG\` *and its checksums* where the vendor publishes them"
+            echo "(see CONTRIBUTING.md), then let CI revalidate. A checksum left at the old value fails"
+            echo "the build immediately at \`sha256sum --check\`, which is the intended behaviour."
+            echo
+            echo "This issue is maintained automatically: it is updated while drift remains and closed"
+            echo "once every pin is current. Last checked: $RUN_URL"
+          } > body.md
+
+          # Idempotent by construction: find the existing open issue by exact
+          # title and edit it, so a weekly run updates one issue rather than
+          # opening a 52nd.
+          existing=$(gh issue list --state open --limit 100 --json number,title \
+            | jq -r --arg t "$TITLE" 'map(select(.title == $t)) | .[0].number // empty')
+
+          if [ -n "$existing" ]; then
+            echo "updating existing issue #$existing"
+            gh issue edit "$existing" --body-file body.md
+          else
+            echo "opening a new tracking issue"
+            gh issue create --title "$TITLE" --body-file body.md
+          fi
+
+      - name: Close the tracking issue when everything is current
+        if: github.event_name != 'pull_request' && steps.check.outputs.drift == 'false'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TITLE: Pinned tool versions are behind upstream
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          existing=$(gh issue list --state open --limit 100 --json number,title \
+            | jq -r --arg t "$TITLE" 'map(select(.title == $t)) | .[0].number // empty')
+          if [ -n "$existing" ]; then
+            echo "closing #$existing -- every pin is current"
+            gh issue close "$existing" --comment "Every pinned tool is now current. Verified by $RUN_URL"
+          else
+            echo "no open drift issue and no drift; nothing to do"
+          fi
+
+      - name: Upload report
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: pin-drift-report
+          path: report.json
+          if-no-files-found: warn
+          retention-days: 90
