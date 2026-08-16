@@ -1,13 +1,26 @@
 # Defaults to upstream so local builds work without authenticating to ghcr.io.
 # CI overrides this with our mirrored copy, so builds do not depend on Docker
 # Hub availability or rate limits.
-ARG BASE_IMAGE=rust:1.85-bookworm
+#
+# NOTE: this image is deliberately NOT named for a Rust version, unlike the
+# language images that track a release line. Rust has no LTS and no parallel
+# supported branches: upstream patches exactly one version, the current stable,
+# and fixes are never backported to an older minor. An image called
+# `ci-rust` therefore promises a choice that does not exist -- and guarantees
+# it falls out of support six weeks later, which is exactly what happened: it
+# sat on 1.85 while stable reached 1.97.
+#
+# Rust's own stability guarantee makes the rolling `1-bookworm` tag safe: code
+# that compiles on one 1.x compiles on later 1.x. Consumers who genuinely need
+# an exact toolchain pin it per project with a rust-toolchain.toml, which is
+# the mechanism Rust provides for that and which this image respects.
+ARG BASE_IMAGE=rust:1-bookworm
 # DL3006: the default above is tagged; hadolint just can't see through the ARG.
 # hadolint ignore=DL3006
 FROM ${BASE_IMAGE}
 
 LABEL org.opencontainers.image.source=https://github.com/greenblacked/github-base-images
-LABEL org.opencontainers.image.description="Shared CI image: Rust 1.85 on Debian Bookworm"
+LABEL org.opencontainers.image.description="Shared CI image: current stable Rust on Debian Bookworm"
 LABEL org.opencontainers.image.licenses=MIT
 
 ENV DEBIAN_FRONTEND=noninteractive \

@@ -13,7 +13,7 @@ both use the upstream base directly, via each Dockerfile's `ARG BASE_IMAGE` defa
 
 ```bash
 make list                     # images, discovered by globbing */Dockerfile.ci
-make check IMAGE=ci-rust185   # build, then smoke-test
+make check IMAGE=ci-rust   # build, then smoke-test
 make check-all                # every image
 ```
 
