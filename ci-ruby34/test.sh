@@ -63,7 +63,7 @@ check "workdir is /workspace"      '[ "$PWD" = /workspace ]'
 check "no Gemfile baked in"        '! test -e /workspace/Gemfile'
 check "no bundled gems baked in"   '! test -e /workspace/vendor/bundle'
 
-# The global equivalent of ci-python313's "pip list is empty" and ci-go125's
+# The global equivalent of ci-python313's "pip list is empty" and ci-go's
 # "GOMODCACHE is empty". It targets GEM_HOME rather than `gem list` because Ruby
 # ships default gems (bundler, json, psych, ...) as part of the runtime, so
 # `gem list` can never be empty and asserting on it would fail on a stock image.

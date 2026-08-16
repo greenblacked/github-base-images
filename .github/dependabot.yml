@@ -45,7 +45,7 @@ updates:
       default-days: 7
 
   - package-ecosystem: docker
-    directory: /ci-go125
+    directory: /ci-go
     schedule:
       interval: weekly
     cooldown:
@@ -59,7 +59,7 @@ updates:
       default-days: 7
 
   - package-ecosystem: docker
-    directory: /ci-rust185
+    directory: /ci-rust
     schedule:
       interval: weekly
     cooldown:

@@ -1,13 +1,26 @@
 # Defaults to upstream so local builds work without authenticating to ghcr.io.
 # CI overrides this with our mirrored copy, so builds do not depend on Docker
 # Hub availability or rate limits.
-ARG BASE_IMAGE=golang:1.25-bookworm
+#
+# NOTE: like ci-rust, this image is deliberately not named for a Go version.
+# Go supports only the two most recent minors -- 1.25 stopped being the newest
+# the day 1.26 shipped -- and the Go 1 compatibility promise means code that
+# builds on one 1.x builds on later 1.x. A minor in the name would pin the
+# image to a branch that upstream stops patching on a fixed schedule.
+#
+# Projects needing a MINIMUM toolchain declare it in go.mod: since Go 1.21 the
+# toolchain directive makes the build fetch that version when the image ships
+# an older one. Note the asymmetry -- GOTOOLCHAIN=auto only ever upgrades. A
+# project that must build on an OLDER Go than this image ships is not served by
+# the directive and needs GOTOOLCHAIN=go1.x set explicitly, or its own image.
+# That is the honest limit of this approach.
+ARG BASE_IMAGE=golang:1-bookworm
 # DL3006: the default above is tagged; hadolint just can't see through the ARG.
 # hadolint ignore=DL3006
 FROM ${BASE_IMAGE}
 
 LABEL org.opencontainers.image.source=https://github.com/greenblacked/github-base-images
-LABEL org.opencontainers.image.description="Shared CI image: Go 1.25 on Debian Bookworm"
+LABEL org.opencontainers.image.description="Shared CI image: current stable Go on Debian Bookworm"
 LABEL org.opencontainers.image.licenses=MIT
 
 ENV DEBIAN_FRONTEND=noninteractive \
