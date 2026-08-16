@@ -409,6 +409,27 @@ docker buildx imagetools inspect ghcr.io/greenblacked/ci-ruby34:bookworm-v1
 docker exporter via `load:`, which cannot carry attestations. `imagetools create` preserves them
 into the final multi-arch index.
 
+### Pin drift
+
+Most of this repository's supply chain is watched by something: Dependabot tracks the action pins
+and each Dockerfile's `ARG BASE_IMAGE`, and the weekly rebuild plus the Trivy gate cover the OS
+packages. The tools installed as pinned release binaries — Terraform, kubectl, the AWS CLI, the
+Docker client, gcloud, Composer, Playwright, and the five scanners in `ci-security` — were the gap:
+nothing read them, so they moved only when a human remembered. An audit found six behind at once.
+
+[pin-drift.yml](.github/workflows/pin-drift.yml) closes that gap. Weekly, it compares every pinned
+version against the version its vendor currently ships and maintains **one** tracking issue —
+opened when something falls behind, updated while it stays behind, closed automatically once every
+pin is current.
+
+It reports rather than gates. Drift is not a broken build; it is a bump someone should make
+deliberately, with a fresh checksum, through the normal PR path. Failing builds over it would just
+teach people to ignore a permanently red repository.
+
+```bash
+./scripts/check-pins.sh              # the same check, locally
+```
+
 ### Repository security checks
 
 [security.yml](.github/workflows/security.yml) scans the **repository**, where `build-and-push.yml`

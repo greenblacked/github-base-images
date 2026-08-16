@@ -59,9 +59,22 @@ Project dependencies, application source, credentials, and project-specific buil
 one to make a build pass, that is usually the bug rather than the test.
 
 Pinned tool versions (Terraform, kubectl, AWS CLI, Docker client in `ci-tools`; Composer in
-`ci-php84`) are `ARG`s so a bump is a small change that CI revalidates. Note that Dependabot does
-**not** track these — it only updates each Dockerfile's `ARG BASE_IMAGE` — so they move when a
-human moves them.
+`ci-php84`) are `ARG`s so a bump is a small change that CI revalidates. Dependabot does **not**
+track these — it only updates each Dockerfile's `ARG BASE_IMAGE` — so they still move when a human
+moves them. What has changed is that you no longer have to *notice*: the weekly
+[pin drift](../.github/workflows/pin-drift.yml) job compares every one of them against its vendor's
+current release and maintains a single tracking issue, opened when something falls behind and
+closed when everything is current.
+
+Run it yourself any time:
+
+```bash
+./scripts/check-pins.sh                 # table of every pin vs upstream
+./scripts/check-pins.sh --only trivy    # just one
+```
+
+Exit codes are `0` current, `3` drift found, `1` a vendor endpoint was unreachable — so drift is
+distinguishable from a broken check.
 
 Where the vendor publishes a per-file SHA-256, the download is checked against it, and the
 checksum is an `ARG` alongside the version. Bumping one of those is a **three**-line change —
