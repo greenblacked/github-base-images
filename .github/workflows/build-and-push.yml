@@ -175,6 +175,25 @@ jobs:
             jq -e --arg i "${d%/}" 'any(.[]; .image == $i)' .github/images.json >/dev/null \
               || { echo "::error::directory $d has no images.json entry"; exit 1; }
           done
+          # kubectl is pinned in two Dockerfiles -- ci-tools and ci-cloud -- so a
+          # cluster deploy behaves identically whichever image runs it. Nothing
+          # made that true except a comment, so assert it: a bump that updates
+          # one and not the other is caught here rather than by someone
+          # debugging a version skew in production.
+          for key in KUBECTL_VERSION KUBECTL_SHA256_AMD64 KUBECTL_SHA256_ARM64; do
+            a=$(grep -m1 "^ARG $key=" ci-tools/Dockerfile.ci || true)
+            b=$(grep -m1 "^ARG $key=" ci-cloud/Dockerfile.ci || true)
+            # Missing from both would compare "" = "" and pass, silently
+            # disabling the check after a rename or deletion.
+            if [ -z "$a" ] || [ -z "$b" ]; then
+              echo "::error::$key not found in ci-tools and/or ci-cloud Dockerfile.ci"
+              exit 1
+            fi
+            if [ "$a" != "$b" ]; then
+              echo "::error::$key differs between ci-tools ($a) and ci-cloud ($b)"
+              exit 1
+            fi
+          done
 
   # Copy the upstream bases into ghcr.io so builds do not depend on upstream
   # registry availability or rate limits, and so we control the digest we build

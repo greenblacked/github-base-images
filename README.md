@@ -18,8 +18,8 @@ means the published images are stale or broken, not that someone's pull request 
 | `ghcr.io/greenblacked/ci-node24` | `node:24-bookworm-slim` | `bookworm-v1` | `linux/amd64`, `linux/arm64` |
 | `ghcr.io/greenblacked/ci-python313` | `python:3.13-slim-bookworm` | `bookworm-v1` | `linux/amd64`, `linux/arm64` |
 | `ghcr.io/greenblacked/ci-python312` | `python:3.12-slim-bookworm` | `bookworm-v1` | `linux/amd64`, `linux/arm64` |
-| `ghcr.io/greenblacked/ci-go125` | `golang:1.25-bookworm` | `bookworm-v1` | `linux/amd64`, `linux/arm64` |
-| `ghcr.io/greenblacked/ci-rust185` | `rust:1.85-bookworm` | `bookworm-v1` | `linux/amd64`, `linux/arm64` |
+| `ghcr.io/greenblacked/ci-go` | `golang:1-bookworm` | `bookworm-v1` | `linux/amd64`, `linux/arm64` |
+| `ghcr.io/greenblacked/ci-rust` | `rust:1-bookworm` | `bookworm-v1` | `linux/amd64`, `linux/arm64` |
 | `ghcr.io/greenblacked/ci-ruby34` | `ruby:3.4-slim-bookworm` | `bookworm-v1` | `linux/amd64`, `linux/arm64` |
 | `ghcr.io/greenblacked/ci-java21` | `eclipse-temurin:21-jdk-noble` | `noble-v1` | `linux/amd64`, `linux/arm64` |
 | `ghcr.io/greenblacked/ci-java17` | `eclipse-temurin:17-jdk-noble` | `noble-v1` | `linux/amd64`, `linux/arm64` |
@@ -44,9 +44,11 @@ curl, tar, gzip, unzip, xz, zstd, jq, and the OpenSSH client. On top of that:
   into `ci-node22`.
 - **`ci-python312`** — the same image on Python 3.12, for the still-common case of a library that
   supports both and tests each in a matrix.
-- **`ci-go125`** — the Go 1.25 toolchain (non-slim upstream, so cgo's C toolchain is included).
-- **`ci-rust185`** — the Rust 1.85 toolchain, plus the `rustfmt` and `clippy` components CI lints
-  with (non-slim upstream, so the C toolchain the linker needs is included).
+- **`ci-go`** — the current stable Go toolchain (non-slim upstream, so cgo's C toolchain is
+  included). Deliberately not named for a Go version — see below.
+- **`ci-rust`** — the current stable Rust toolchain, plus the `rustfmt` and `clippy` components CI
+  lints with (non-slim upstream, so the C toolchain the linker needs is included). Deliberately not
+  named for a Rust version — see below.
 - **`ci-ruby34`** — Ruby 3.4, RubyGems, and Bundler. No compiler toolchain: projects with gems
   that build native extensions add `build-essential` in their own workflow, same as `ci-python313`.
 - **`ci-java21`** — the Temurin JDK 21. No Maven and no Gradle: both ship a wrapper (`mvnw`,
@@ -82,6 +84,23 @@ curl, tar, gzip, unzip, xz, zstd, jq, and the OpenSSH client. On top of that:
   `redis-cli`, and pinned `golang-migrate`. Clients only — a job needing a live database declares
   it as a `services:` container, which Actions health-checks and tears down; a server baked in here
   would be a second, unsupervised copy.
+
+**Why `ci-go` and `ci-rust` carry no version, when every other image does.** The versioned names
+are not decoration — they are the choice a consumer makes between *parallel supported lines*. Node
+22 and 24, Python 3.13, Java 21, PHP 8.4 and .NET 8 and 9 are all patched independently by
+upstream, so `ci-python313` is not "behind" 3.14 any more than `ci-node22` is behind 24; you pick
+the line your project targets.
+
+Go and Rust have no such lines. Rust patches exactly one version — the current stable — and never
+backports. Go patches only the two newest minors. Both promise that code building on one 1.x builds
+on later 1.x. So a minor in the name offers a choice upstream does not provide, and guarantees the
+image falls out of support on a fixed schedule. This repository proved that the hard way: the image
+formerly called `ci-rust185` sat on Rust 1.85 while stable reached 1.97 — twelve unsupported
+releases behind — because the name made the staleness look intentional. Tracking `rust:1-bookworm`
+and `golang:1-bookworm` fixes it permanently rather than restarting the same countdown.
+
+Projects that genuinely need an exact toolchain already have the right mechanism: a
+`rust-toolchain.toml`, or the `toolchain` directive in `go.mod`. Both work inside these images.
 
 Two of these break a pattern worth naming explicitly:
 
@@ -171,7 +190,7 @@ scans that stay CI's job:
 
 ```bash
 make list                     # one image per line: ci-cloud, ci-db, ci-dotnet8, ...
-make check IMAGE=ci-rust185   # build ci-rust185:test, then run ci-rust185/test.sh against it
+make check IMAGE=ci-rust   # build ci-rust:test, then run ci-rust/test.sh against it
 make check-all                # every image
 ```
 
@@ -282,7 +301,7 @@ for every consuming repository, forever.
 > **One-time manual step:** GHCR packages are created **private**, and visibility cannot be
 > changed by the workflow — `GITHUB_TOKEN` lacks the permission. After the first successful push:
 > package page → *Package settings* → *Change visibility* → **Public**. Do this for every `ci-*`
-> image (`ci-node22`, `ci-node24`, `ci-python313`, `ci-python312`, `ci-go125`, `ci-rust185`,
+> image (`ci-node22`, `ci-node24`, `ci-python313`, `ci-python312`, `ci-go`, `ci-rust`,
 > `ci-ruby34`, `ci-java21`, `ci-java17`, `ci-php84`, `ci-dotnet9`, `ci-dotnet8`, `ci-tools`,
 > `ci-cloud`, `ci-security`, `ci-db`) and every
 > `mirror-*` package.
@@ -315,8 +334,8 @@ The workflow copies the upstream base into `ghcr.io` before building:
 | `ghcr.io/greenblacked/mirror-node:24-bookworm-slim` | `node:24-bookworm-slim` (Docker Hub) |
 | `ghcr.io/greenblacked/mirror-python:3.13-slim-bookworm` | `python:3.13-slim-bookworm` (Docker Hub) |
 | `ghcr.io/greenblacked/mirror-python:3.12-slim-bookworm` | `python:3.12-slim-bookworm` (Docker Hub) |
-| `ghcr.io/greenblacked/mirror-golang:1.25-bookworm` | `golang:1.25-bookworm` (Docker Hub) |
-| `ghcr.io/greenblacked/mirror-rust:1.85-bookworm` | `rust:1.85-bookworm` (Docker Hub) |
+| `ghcr.io/greenblacked/mirror-golang:1-bookworm` | `golang:1-bookworm` (Docker Hub) |
+| `ghcr.io/greenblacked/mirror-rust:1-bookworm` | `rust:1-bookworm` (Docker Hub) |
 | `ghcr.io/greenblacked/mirror-ruby:3.4-slim-bookworm` | `ruby:3.4-slim-bookworm` (Docker Hub) |
 | `ghcr.io/greenblacked/mirror-debian:bookworm-slim` | `debian:bookworm-slim` (Docker Hub) |
 | `ghcr.io/greenblacked/mirror-temurin:21-jdk-noble` | `eclipse-temurin:21-jdk-noble` (Docker Hub) |
@@ -345,7 +364,22 @@ exist yet.
   bumped to `v2` only when the *contents* of the
   image change — a tool added or removed. Determinism in production comes from pinning a digest,
   not from the tag.
+  - For `ci-rust` and `ci-go` the line is rolling in one extra respect: the **language toolchain
+    minor moves too**, because those images track `rust:1-bookworm` and `golang:1-bookworm`
+    ([why](#images)). That is a deliberate exception to "contents change ⇒ bump to v2" — under the
+    strict reading every upstream Rust release would need a new tag, which would make the contract
+    line meaningless for exactly the two images whose upstreams have no support lines. The
+    guarantee those two carry is *current stable of a 1.x-compatible language*, not a fixed minor.
+    If you need a fixed minor, pin a digest, or pin the toolchain per project with a
+    `rust-toolchain.toml` or a `toolchain` directive in `go.mod`.
 - **`latest`** exists for testing. Never use it in a protected deployment job.
+- **Renamed or removed images keep their old package.** GHCR does not delete a package when this
+  repository stops building it, and nothing in the pipeline can: the package simply drops out of
+  the weekly rebuild and the Trivy re-scan while staying published and pullable. It then quietly
+  accumulates unpatched CVEs, and a consumer still pointing at it sees a working pull and no
+  signal at all. **Deleting the old package is therefore part of a rename, not an optional
+  tidy-up.** `ci-rust185` and `ci-go125` were retired this way and should be deleted from the
+  package settings.
 - **`<commit-sha>`** identifies the exact build.
 
 Every image rebuilds on every push to `main` touching any image directory, weekly on a schedule,
@@ -408,6 +442,27 @@ docker buildx imagetools inspect ghcr.io/greenblacked/ci-ruby34:bookworm-v1
 `sbom: true` and `provenance: mode=max` are set on the push step only — the test build uses the
 docker exporter via `load:`, which cannot carry attestations. `imagetools create` preserves them
 into the final multi-arch index.
+
+### Pin drift
+
+Most of this repository's supply chain is watched by something: Dependabot tracks the action pins
+and each Dockerfile's `ARG BASE_IMAGE`, and the weekly rebuild plus the Trivy gate cover the OS
+packages. The tools installed as pinned release binaries — Terraform, kubectl, the AWS CLI, the
+Docker client, gcloud, Composer, Playwright, and the five scanners in `ci-security` — were the gap:
+nothing read them, so they moved only when a human remembered. An audit found six behind at once.
+
+[pin-drift.yml](.github/workflows/pin-drift.yml) closes that gap. Weekly, it compares every pinned
+version against the version its vendor currently ships and maintains **one** tracking issue —
+opened when something falls behind, updated while it stays behind, closed automatically once every
+pin is current.
+
+It reports rather than gates. Drift is not a broken build; it is a bump someone should make
+deliberately, with a fresh checksum, through the normal PR path. Failing builds over it would just
+teach people to ignore a permanently red repository.
+
+```bash
+./scripts/check-pins.sh              # the same check, locally
+```
 
 ### Repository security checks
 

@@ -82,6 +82,24 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      # The GHA layer cache is scoped per ISO week. Without this the
+      # `apt-get update && apt-get upgrade` layer is reused indefinitely, so a
+      # weekly rebuild re-tags an image whose packages were installed whenever
+      # the cache was first written -- silently defeating the premise that the
+      # weekly rebuild IS the security-update mechanism.
+      #
+      # ci-db proved it: the vulnerability gate caught fixable postgresql CVEs
+      # that `apt-get upgrade` would have fixed, had it re-run at all. The gate
+      # was right; the cache was hiding the fix.
+      #
+      # The cost is one cold build per image per week, which is exactly what the
+      # weekly rebuild is for. Within a week, caching behaves as before. Both the
+      # test build and the push below share the scope, so the push still hits the
+      # cache the test build just wrote.
+      - name: Cache epoch
+        id: epoch
+        run: echo "week=$(date -u +%G-W%V)" >> "$GITHUB_OUTPUT"
+
       # Build into the local daemon only. Nothing is pushed until the smoke
       # tests and the gates below have passed. Non-publishing runs build from
       # upstream so they never depend on (or mutate) the mirror.
@@ -96,8 +114,8 @@ jobs:
           load: true
           push: false
           tags: ${{ inputs.image }}:test
-          cache-from: type=gha,scope=${{ inputs.image }}-${{ matrix.arch }}
-          cache-to: type=gha,mode=max,scope=${{ inputs.image }}-${{ matrix.arch }}
+          cache-from: type=gha,scope=${{ inputs.image }}-${{ matrix.arch }}-${{ steps.epoch.outputs.week }}
+          cache-to: type=gha,mode=max,scope=${{ inputs.image }}-${{ matrix.arch }}-${{ steps.epoch.outputs.week }}
 
       - name: Smoke test (${{ matrix.arch }})
         env:
@@ -288,8 +306,8 @@ jobs:
           # the docker exporter via `load:`, which cannot carry attestations.
           sbom: true
           provenance: mode=max
-          cache-from: type=gha,scope=${{ inputs.image }}-${{ matrix.arch }}
-          cache-to: type=gha,mode=max,scope=${{ inputs.image }}-${{ matrix.arch }}
+          cache-from: type=gha,scope=${{ inputs.image }}-${{ matrix.arch }}-${{ steps.epoch.outputs.week }}
+          cache-to: type=gha,mode=max,scope=${{ inputs.image }}-${{ matrix.arch }}-${{ steps.epoch.outputs.week }}
 
       - name: Export digest
         if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'

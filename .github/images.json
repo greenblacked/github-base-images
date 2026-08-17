@@ -24,10 +24,10 @@
     "upstream": "mcr.microsoft.com/dotnet/sdk:9.0-bookworm-slim"
   },
   {
-    "image": "ci-go125",
+    "image": "ci-go",
     "version": "bookworm-v1",
-    "mirror": "mirror-golang:1.25-bookworm",
-    "upstream": "golang:1.25-bookworm"
+    "mirror": "mirror-golang:1-bookworm",
+    "upstream": "golang:1-bookworm"
   },
   {
     "image": "ci-java17",
@@ -78,10 +78,10 @@
     "upstream": "ruby:3.4-slim-bookworm"
   },
   {
-    "image": "ci-rust185",
+    "image": "ci-rust",
     "version": "bookworm-v1",
-    "mirror": "mirror-rust:1.85-bookworm",
-    "upstream": "rust:1.85-bookworm"
+    "mirror": "mirror-rust:1-bookworm",
+    "upstream": "rust:1-bookworm"
   },
   {
     "image": "ci-security",
