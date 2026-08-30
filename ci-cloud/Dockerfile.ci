@@ -89,7 +89,7 @@ RUN curl -fsSL --retry 3 --retry-all-errors --max-time 120 \
 # needs urllib3's test server. If a future SDK bundles more fixtures the gate
 # will say so, and they get deleted here too.
 ARG TARGETARCH
-ARG GCLOUD_VERSION=580.0.0
+ARG GCLOUD_VERSION=582.0.0
 RUN case "${TARGETARCH}" in \
         amd64) gcarch=x86_64 ;; \
         arm64) gcarch=arm ;; \
@@ -110,9 +110,9 @@ RUN case "${TARGETARCH}" in \
 # kubectl is shared with ci-tools and pinned to the same version and checksums,
 # so a cluster deploy behaves identically whichever of the two images runs it.
 # The vendor publishes a per-artifact SHA-256, so this one is verified.
-ARG KUBECTL_VERSION=1.36.3
-ARG KUBECTL_SHA256_AMD64=ebbd080e7c2e275093b55915722043257eb24004363e20acb3c4d71919f88336
-ARG KUBECTL_SHA256_ARM64=3d86f24401c41ae5a46ac50eef8865fe891d3647d324a0836f6c63757a126e62
+ARG KUBECTL_VERSION=1.37.0
+ARG KUBECTL_SHA256_AMD64=6129359f4e1f3848a5572ccb0b26cf28b8ca08cef38c95a765b2f64a2c961a2f
+ARG KUBECTL_SHA256_ARM64=922df28df248cc00a9e025f947704f1d1482de64ece54cfe57e61f19eaf1eef3
 RUN case "${TARGETARCH}" in \
         amd64) sum="${KUBECTL_SHA256_AMD64}" ;; \
         arm64) sum="${KUBECTL_SHA256_ARM64}" ;; \
