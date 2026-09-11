@@ -14,7 +14,7 @@
 # uv). Its findings are reported, not gating -- the same posture as CI.
 set -euo pipefail
 
-HADOLINT_VERSION=2.14.0
+HADOLINT_VERSION=2.15.0
 ACTIONLINT_VERSION=1.7.10
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -47,11 +47,11 @@ hadolint_bin=""
 case "$os-$arch" in
   Linux-x86_64)
     fetch "https://github.com/hadolint/hadolint/releases/download/v${HADOLINT_VERSION}/hadolint-Linux-x86_64" \
-      "$CACHE/hadolint" 6bf226944684f56c84dd014e8b979d27425c0148f61b3bd99bcc6f39e9dc5a47
+      "$CACHE/hadolint" eb8eb4dd06a068cce65cb84743fba69f09ed12a36ff13d58f9af090d6d696970
     chmod +x "$CACHE/hadolint"; hadolint_bin="$CACHE/hadolint" ;;
   Linux-aarch64|Linux-arm64)
     fetch "https://github.com/hadolint/hadolint/releases/download/v${HADOLINT_VERSION}/hadolint-Linux-arm64" \
-      "$CACHE/hadolint" 331f1d3511b84a4f1e3d18d52fec284723e4019552f4f47b19322a53ce9a40ed
+      "$CACHE/hadolint" 17993abf41a0a4da7f2e08970b4f4baf3f95e5e79b9ac80ba6b2aac1960ca71c
     chmod +x "$CACHE/hadolint"; hadolint_bin="$CACHE/hadolint" ;;
   Darwin-*)
     if command -v hadolint >/dev/null; then

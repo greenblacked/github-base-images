@@ -82,23 +82,37 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      # The GHA layer cache is scoped per ISO week. Without this the
+      # The GHA layer cache is scoped per UTC day. Without any rotation the
       # `apt-get update && apt-get upgrade` layer is reused indefinitely, so a
-      # weekly rebuild re-tags an image whose packages were installed whenever
-      # the cache was first written -- silently defeating the premise that the
-      # weekly rebuild IS the security-update mechanism.
+      # rebuild re-tags an image whose packages were installed whenever the
+      # cache was first written -- silently defeating the premise that the
+      # rebuild IS the security-update mechanism.
       #
-      # ci-db proved it: the vulnerability gate caught fixable postgresql CVEs
-      # that `apt-get upgrade` would have fixed, had it re-run at all. The gate
-      # was right; the cache was hiding the fix.
+      # ci-db proved that much: the vulnerability gate caught fixable postgresql
+      # CVEs that `apt-get upgrade` would have fixed, had it re-run at all. The
+      # gate was right; the cache was hiding the fix.
       #
-      # The cost is one cold build per image per week, which is exactly what the
-      # weekly rebuild is for. Within a week, caching behaves as before. Both the
-      # test build and the push below share the scope, so the push still hits the
-      # cache the test build just wrote.
+      # This was first scoped per ISO week, and a week turned out to be too
+      # coarse. Trivy's vulnerability database refreshes daily, so between the
+      # Monday rebuild and the following Sunday the gate can learn about a fix
+      # the cached layer cannot pick up. Debian publishing linux-libc-dev
+      # 6.1.187-1 mid-week did exactly that: ci-go and ci-php84 -- the only two
+      # images on a non-slim Debian base, and so the only two carrying
+      # libc6-dev -- failed the gate on 63 fixable HIGH findings, and would have
+      # kept failing every pull request until the epoch rolled over on its own.
+      # A gate that stays red for days over a fix the build is forbidden to
+      # fetch teaches people to ignore it.
+      #
+      # Matching the cache epoch to the database cadence closes that window: the
+      # build can always reach any fix the gate can see. The cost is one cold
+      # build per image per day on which anything builds at all -- and on a
+      # normal day that is the scheduled rebuild, which wants to be cold anyway.
+      # Within a day, caching behaves as before. Both the test build and the
+      # push below share the scope, so the push still hits the cache the test
+      # build just wrote.
       - name: Cache epoch
         id: epoch
-        run: echo "week=$(date -u +%G-W%V)" >> "$GITHUB_OUTPUT"
+        run: echo "day=$(date -u +%Y-%m-%d)" >> "$GITHUB_OUTPUT"
 
       # Build into the local daemon only. Nothing is pushed until the smoke
       # tests and the gates below have passed. Non-publishing runs build from
@@ -114,8 +128,8 @@ jobs:
           load: true
           push: false
           tags: ${{ inputs.image }}:test
-          cache-from: type=gha,scope=${{ inputs.image }}-${{ matrix.arch }}-${{ steps.epoch.outputs.week }}
-          cache-to: type=gha,mode=max,scope=${{ inputs.image }}-${{ matrix.arch }}-${{ steps.epoch.outputs.week }}
+          cache-from: type=gha,scope=${{ inputs.image }}-${{ matrix.arch }}-${{ steps.epoch.outputs.day }}
+          cache-to: type=gha,mode=max,scope=${{ inputs.image }}-${{ matrix.arch }}-${{ steps.epoch.outputs.day }}
 
       - name: Smoke test (${{ matrix.arch }})
         env:
@@ -208,7 +222,7 @@ jobs:
       - name: Upload SARIF to code scanning
         if: always()
         continue-on-error: true
-        uses: github/codeql-action/upload-sarif@f205ea1c3313d32999d8d6a48b4f6530d4437b38 # v4.37.4
+        uses: github/codeql-action/upload-sarif@ff2f1c621b7f889edc0d3c761ac2e6a3f8cdb0dd # v4.37.7
         with:
           sarif_file: trivy-${{ inputs.image }}-${{ matrix.arch }}.sarif
           category: ${{ inputs.image }}-${{ matrix.arch }}
@@ -306,8 +320,8 @@ jobs:
           # the docker exporter via `load:`, which cannot carry attestations.
           sbom: true
           provenance: mode=max
-          cache-from: type=gha,scope=${{ inputs.image }}-${{ matrix.arch }}-${{ steps.epoch.outputs.week }}
-          cache-to: type=gha,mode=max,scope=${{ inputs.image }}-${{ matrix.arch }}-${{ steps.epoch.outputs.week }}
+          cache-from: type=gha,scope=${{ inputs.image }}-${{ matrix.arch }}-${{ steps.epoch.outputs.day }}
+          cache-to: type=gha,mode=max,scope=${{ inputs.image }}-${{ matrix.arch }}-${{ steps.epoch.outputs.day }}
 
       - name: Export digest
         if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
