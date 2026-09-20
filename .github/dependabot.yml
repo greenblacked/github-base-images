@@ -22,6 +22,24 @@ updates:
       interval: weekly
     cooldown:
       default-days: 7
+    # github/codeql-action is ONE action with three subpaths -- init, analyze
+    # and upload-sarif -- pinned to one SHA in six places. Dependabot treats
+    # each subpath as its own dependency, so without this it opens three PRs
+    # per release, each moving only its own lines.
+    #
+    # That is not merely noisy, it is broken: CodeQL rejects a setup where init
+    # and analyze are on different versions, so two of the three fail CI with
+    # "CodeQL job status was configuration error" and the third passes while
+    # being a third of a change. It has happened twice here (#32/#33/#34, and
+    # the round before it), costing six PRs that all had to be closed and
+    # replaced by a hand-assembled one (#36, #37).
+    #
+    # Grouping makes Dependabot open a single PR moving all six pins together,
+    # which is the only arrangement that works.
+    groups:
+      codeql-action:
+        patterns:
+          - "github/codeql-action*"
 
   # Base image bumps arrive as PRs. Dependabot reads the default of the
   # `ARG BASE_IMAGE` each Dockerfile builds FROM, which is why that default
