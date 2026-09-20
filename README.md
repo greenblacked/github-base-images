@@ -385,6 +385,21 @@ exist yet.
 Every image rebuilds on every push to `main` touching any image directory, weekly on a schedule,
 and on demand via *Run workflow*.
 
+**Why the rebuild actually refreshes anything.** "The rebuild carries Debian security updates"
+holds only if `apt-get update && apt-get upgrade` genuinely re-runs, and a build cache will happily
+reuse that layer forever. It did: for a period every rebuild re-tagged images whose packages were
+installed whenever the cache was first written, and the repository's central claim was quietly
+false until the vulnerability gate caught fixable postgresql CVEs in `ci-db` that an upgrade would
+have fixed had it run at all. The gate was right; the cache was hiding the fix.
+
+The GHA layer cache is therefore scoped per **UTC day**, so the apt layer cannot outlive a day.
+Weekly scoping was the first attempt and proved too coarse: Trivy's database refreshes daily, so
+between one rebuild and the next the gate could learn about a fix the cached layer was unable to
+fetch — which is exactly what happened when Debian published `linux-libc-dev` 6.1.187-1 mid-week
+and every pull request failed on 63 findings nobody could act on. Matching the cache epoch to the
+database cadence closes that window. The cost is one cold build per image on each day anything
+builds, which on a normal day is the scheduled rebuild — and that one wants to be cold.
+
 > **Watch out:** GitHub disables scheduled workflows after 60 days with no repository activity. A
 > repo like this one can easily sit untouched that long, and the weekly rebuild then stops
 > silently while the image goes stale. If the last run is old, trigger the workflow manually to
@@ -430,6 +445,18 @@ under a `<image>-<arch>` category, so findings are browsable and diffable over t
 buried in a build log. The upload is `continue-on-error` — code scanning must never be the reason
 an image fails to publish.
 
+**Expect that view to be empty, and read it as good news.** The SARIF is scanned with the *same*
+filter as the gate — `ignore-unfixed`, HIGH/CRITICAL, OS packages only — so it can only ever
+contain findings the gate is simultaneously blocking on. When it has contents the build has
+already failed and nothing was published. A green pipeline and an empty *Code scanning* view are
+the same fact stated twice.
+
+So the Security tab is not where you look for what the gate *tolerates*. Unfixed CVEs, library
+findings, misconfiguration and licences are all reported at full severity, but only into the job
+summary and the `security-report-<image>-<arch>` artifact. If you need a standing inventory of
+accepted risk rather than a duplicate of the exit code, widen the SARIF step's scope beyond the
+gate's — that is a deliberate choice about alert volume, not an oversight.
+
 ### Attestations
 
 Published images carry an **SBOM and provenance attestation** attached to the artifact itself, not
@@ -447,7 +474,12 @@ into the final multi-arch index.
 
 Most of this repository's supply chain is watched by something: Dependabot tracks the action pins
 and each Dockerfile's `ARG BASE_IMAGE`, and the weekly rebuild plus the Trivy gate cover the OS
-packages. The tools installed as pinned release binaries — Terraform, kubectl, the AWS CLI, the
+packages. Its config carries a seven-day `cooldown` on every ecosystem — nothing is adopted the day
+it ships, since the window between publication and discovery is exactly when a same-day bump would
+pull in a compromised release — and one `groups` rule for `github/codeql-action`, whose `init`,
+`analyze` and `upload-sarif` subpaths are one action on one SHA. Without the grouping Dependabot
+opens a PR per subpath, and since CodeQL rejects `init` and `analyze` on different versions, two of
+the three fail by construction while the third passes as a third of a change. The tools installed as pinned release binaries — Terraform, kubectl, the AWS CLI, the
 Docker client, gcloud, Composer, Playwright, and the five scanners in `ci-security` — were the gap:
 nothing read them, so they moved only when a human remembered. An audit found six behind at once.
 
@@ -459,6 +491,13 @@ pin is current.
 It reports rather than gates. Drift is not a broken build; it is a bump someone should make
 deliberately, with a fresh checksum, through the normal PR path. Failing builds over it would just
 teach people to ignore a permanently red repository.
+
+Two cautions when acting on that issue. It is only as fresh as its last weekly run, so re-dispatch
+the workflow before working from the table — more than once a bump has been prepared against a
+version already superseded. And `hadolint-action` bundles the hadolint binary, so its version is
+coupled to `HADOLINT_VERSION` in `scripts/lint.sh`; nothing enforces that, no check can see it, and
+a Dependabot PR moving only the action is green while putting local and CI on different linters.
+`lint.sh` carries a comment above the pin recording the mapping.
 
 ```bash
 ./scripts/check-pins.sh              # the same check, locally
@@ -491,13 +530,20 @@ changed — `build-and-push.yml` is path-filtered, this is not.
   who clones. **Reported, not gating**, and deliberately so: a history finding cannot be fixed by
   a commit — it needs a history rewrite *plus* rotation — so failing the build would block every
   unrelated change until that happened. Treat a hit as an incident, not a broken build.
+- **Token permissions** — not a scan but the posture the scans check for. Every workflow declares
+  `permissions: {}` at the top level and every job opts back in to exactly the scopes it needs, so
+  a job added without a `permissions:` block gets nothing and fails loudly rather than inheriting
+  the repository default. That matters most in the two build workflows, which are the ones holding
+  `packages: write` and `id-token: write`.
 - **OpenSSF Scorecard** — branch protection, token permissions, pinned dependencies, dangerous
   workflow patterns. Produces the score behind the README badge. Runs on `main` only, since several
   checks inspect repository settings rather than the tree.
 
-All three publish SARIF to the Security tab, so *Security → Code scanning* is the single place to
-see everything: image vulnerabilities per architecture, repository secrets, workflow findings, and
-the Scorecard result.
+Four of the five publish SARIF to the Security tab — everything above except the git-history scan,
+whose findings are deliberately kept out of a view people triage to empty. So *Security → Code
+scanning* collects repository secrets, workflow findings, the CodeQL results and the Scorecard
+result. Image vulnerabilities are uploaded there too, but see the note above on why that category
+is empty on a healthy build.
 
 > **First run:** the Scorecard badge stays grey until the workflow has run once on `main` and
 > published its results. Both badges track `main`, so they will not reflect a pull request.
