@@ -40,6 +40,15 @@ on:
 env:
   DOCKERFILE: Dockerfile.ci
 
+# Default-deny. Every job below sets the permissions it actually needs, and a
+# job-level block overrides this one -- so this changes nothing for the jobs
+# that exist today. It is here for the job that does not exist yet: without it,
+# a new job added without a permissions block silently inherits the repository
+# default, which can be read-write on everything. With it, forgetting the block
+# means the job gets no token scopes and fails loudly instead of running
+# over-privileged.
+permissions: {}
+
 jobs:
   build:
     runs-on: ${{ matrix.runner }}
