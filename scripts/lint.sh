@@ -14,7 +14,15 @@
 # uv). Its findings are reported, not gating -- the same posture as CI.
 set -euo pipefail
 
-HADOLINT_VERSION=2.15.0
+# Must equal the hadolint that hadolint-action bundles in build-and-push.yml:
+#   action v3.3.0 -> 2.14.0   v3.4.0 -> 2.15.0   v3.5.0 -> 2.15.1
+# Nothing asserts this automatically. CI runs the action's bundled binary and
+# never reads this file, so a bump to one and not the other goes green while
+# putting local and CI on different linters. That has happened twice (#21,
+# #40), both times as a Dependabot PR that moved the action alone. When the
+# action moves, read its release note for the bundled version and move this
+# with it -- and the two checksums below.
+HADOLINT_VERSION=2.15.1
 ACTIONLINT_VERSION=1.7.10
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -47,11 +55,11 @@ hadolint_bin=""
 case "$os-$arch" in
   Linux-x86_64)
     fetch "https://github.com/hadolint/hadolint/releases/download/v${HADOLINT_VERSION}/hadolint-Linux-x86_64" \
-      "$CACHE/hadolint" eb8eb4dd06a068cce65cb84743fba69f09ed12a36ff13d58f9af090d6d696970
+      "$CACHE/hadolint" c7187db94eeeeca956519a6af171adc31453941a1e777961f6e680f697c8c507
     chmod +x "$CACHE/hadolint"; hadolint_bin="$CACHE/hadolint" ;;
   Linux-aarch64|Linux-arm64)
     fetch "https://github.com/hadolint/hadolint/releases/download/v${HADOLINT_VERSION}/hadolint-Linux-arm64" \
-      "$CACHE/hadolint" 17993abf41a0a4da7f2e08970b4f4baf3f95e5e79b9ac80ba6b2aac1960ca71c
+      "$CACHE/hadolint" f6198ef8090f404dbb771abfee086eb8c48ac177f30da7fd3510aca35b344b5d
     chmod +x "$CACHE/hadolint"; hadolint_bin="$CACHE/hadolint" ;;
   Darwin-*)
     if command -v hadolint >/dev/null; then
