@@ -1,27 +1,34 @@
 #!/usr/bin/env bash
-# The CI lint battery, locally -- the same checks the `lint` job runs, on the
-# same engine versions, so local-clean means CI-lint-clean:
+# The lint battery. This script IS the `lint` job -- CI checks out the repo and
+# runs it, so local-clean means CI-lint-clean by construction rather than by
+# convention:
 #
 #   make lint
 #
+# It did not always work that way. CI used to run hadolint and actionlint via
+# marketplace actions while this script ran its own pinned copies, and keeping
+# the two in step was left to whoever noticed. Twice it was not noticed, both
+# times a Dependabot bump of hadolint-action -- which bundles a hadolint binary
+# -- putting local and CI on different linters while CI stayed green, because
+# nothing in that job read this file. There is now one version of each engine,
+# here.
+#
 # Engines are downloaded once into .lint-cache/ (git-ignored) as pinned,
 # checksum-verified release binaries -- the same pattern as the ci-tools
-# binaries, Composer, and gitleaks in security.yml. hadolint is pinned to the
-# exact version hadolint-action bundles in CI, which is the whole point:
-# a version drift between local and CI is how "it passed on my machine" happens.
+# binaries, Composer, and gitleaks in security.yml.
 #
 # zizmor runs best-effort at the end when available (pip install zizmor, or
 # uv). Its findings are reported, not gating -- the same posture as CI.
 set -euo pipefail
 
-# Must equal the hadolint that hadolint-action bundles in build-and-push.yml:
-#   action v3.3.0 -> 2.14.0   v3.4.0 -> 2.15.0   v3.5.0 -> 2.15.1
-# Nothing asserts this automatically. CI runs the action's bundled binary and
-# never reads this file, so a bump to one and not the other goes green while
-# putting local and CI on different linters. That has happened twice (#21,
-# #40), both times as a Dependabot PR that moved the action alone. When the
-# action moves, read its release note for the bundled version and move this
-# with it -- and the two checksums below.
+# These two are now the only place either engine's version is set: CI runs this
+# script, so there is no second copy to keep in step. Bumping one is a one-line
+# change plus its checksums below, both copied from the vendor's own published
+# checksums file, and nothing else in the repository has to move with it.
+#
+# Neither is tracked by Dependabot -- they are plain shell variables, not action
+# pins -- so they drift until a human moves them, exactly like the tool pins in
+# the Dockerfiles. Unlike those, they are not in scripts/check-pins.sh either.
 HADOLINT_VERSION=2.15.1
 ACTIONLINT_VERSION=1.7.10
 
@@ -49,29 +56,38 @@ fetch() {
   mv "$dest.tmp" "$dest"
 }
 
-# --- hadolint: pinned release binary on Linux; PATH fallback on macOS, where
-# --- upstream publishes no per-asset checksum file to pin against.
+# --- hadolint: pinned release binary on every platform.
+#
+# These digests are the vendor's, not ours. hadolint publishes
+#   releases/download/v<version>/checksums.sha256
+# covering all five assets, so a bump means copying two lines out of that file
+# rather than hashing a download and hoping it was the right one. This script
+# used to say upstream published nothing and carried self-observed hashes
+# instead; that was wrong. A hash you computed from your own download attests
+# only to what you happened to fetch -- if the fetch was tampered with, you
+# faithfully record the tampered digest and every later check passes.
+#
+# macOS was a PATH fallback for the same mistaken reason, with a warning when
+# brew's hadolint differed from the pinned one. The vendor publishes macOS
+# digests too, so it now gets the same pinned, verified binary as Linux and the
+# skew it warned about cannot happen.
 hadolint_bin=""
 case "$os-$arch" in
   Linux-x86_64)
     fetch "https://github.com/hadolint/hadolint/releases/download/v${HADOLINT_VERSION}/hadolint-Linux-x86_64" \
-      "$CACHE/hadolint" c7187db94eeeeca956519a6af171adc31453941a1e777961f6e680f697c8c507
-    chmod +x "$CACHE/hadolint"; hadolint_bin="$CACHE/hadolint" ;;
+      "$CACHE/hadolint" c7187db94eeeeca956519a6af171adc31453941a1e777961f6e680f697c8c507 ;;
   Linux-aarch64|Linux-arm64)
     fetch "https://github.com/hadolint/hadolint/releases/download/v${HADOLINT_VERSION}/hadolint-Linux-arm64" \
-      "$CACHE/hadolint" f6198ef8090f404dbb771abfee086eb8c48ac177f30da7fd3510aca35b344b5d
-    chmod +x "$CACHE/hadolint"; hadolint_bin="$CACHE/hadolint" ;;
-  Darwin-*)
-    if command -v hadolint >/dev/null; then
-      hadolint_bin=hadolint
-      have="$(hadolint --version | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)"
-      [ "$have" = "$HADOLINT_VERSION" ] || \
-        printf 'note: PATH hadolint is %s, CI runs %s (brew upgrade hadolint)\n' "$have" "$HADOLINT_VERSION"
-    else
-      die "hadolint not found -- brew install hadolint (CI runs $HADOLINT_VERSION)"
-    fi ;;
+      "$CACHE/hadolint" f6198ef8090f404dbb771abfee086eb8c48ac177f30da7fd3510aca35b344b5d ;;
+  Darwin-arm64)
+    fetch "https://github.com/hadolint/hadolint/releases/download/v${HADOLINT_VERSION}/hadolint-macos-arm64" \
+      "$CACHE/hadolint" 5c09f3213f8e40406abe048233d985eebef336d4a6a20021be47fadb6cf480a2 ;;
+  Darwin-x86_64)
+    fetch "https://github.com/hadolint/hadolint/releases/download/v${HADOLINT_VERSION}/hadolint-macos-x86_64" \
+      "$CACHE/hadolint" ffe9bb18b23d5ed1eae50237aecdbb523d016e96da0bd4e7aa432040acfc3fde ;;
   *) die "unsupported platform $os-$arch" ;;
 esac
+chmod +x "$CACHE/hadolint"; hadolint_bin="$CACHE/hadolint"
 
 # --- actionlint: pinned on all four platforms.
 case "$os-$arch" in
@@ -162,4 +178,4 @@ if [ "$fail" -ne 0 ]; then
   echo "LINT FAILED -- one or more gating checks above reported problems"
   exit 1
 fi
-echo "LINT PASSED -- same engines and thresholds as the CI lint job"
+echo "LINT PASSED -- this is the CI lint job; a green run here is a green run there"

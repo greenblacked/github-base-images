@@ -149,71 +149,41 @@ jobs:
         with:
           persist-credentials: false
 
-      # DL3008 (pin apt versions) is ignored inline in each Dockerfile: the
-      # weekly rebuild is the update mechanism, so apt pins would go stale and
-      # break builds without making anything more reproducible.
-      - name: hadolint (Dockerfiles)
-        uses: hadolint/hadolint-action@06be81baf89a55ffd0e24b8f04a4185738dd3387 # v3.5.0
-        with:
-          recursive: true
-          dockerfile: '*/Dockerfile.ci'
-          failure-threshold: warning
+      # One engine, not two. This job used to run hadolint and actionlint via
+      # their marketplace actions while scripts/lint.sh ran its own pinned,
+      # checksum-verified copies -- so `make lint` and CI could disagree, and
+      # the only thing keeping them honest was a human remembering to move two
+      # numbers together.
+      #
+      # That failed twice, both times as a Dependabot PR bumping
+      # hadolint-action alone: the action bundles a hadolint binary, so the bump
+      # silently put local on one linter and CI on another, and CI passed
+      # because nothing in this job ever read lint.sh. actionlint had the same
+      # shape and nobody had noticed, because raven-actions/actionlint picks its
+      # own binary version independently of ACTIONLINT_VERSION.
+      #
+      # Running the script instead makes agreement structural: there is one
+      # pinned version of each engine, in one file, and local-clean now means
+      # CI-lint-clean by construction rather than by convention.
+      #
+      # It also closes two gaps this job had. The inline jq validation below was
+      # a verbatim copy of the cross-check already in lint.sh -- two copies of
+      # the same forty lines, either of which could drift from the other. And
+      # `shellcheck ./*/test.sh` never covered scripts/ at all, so the repo's own
+      # tooling, including the drift checker that decides which pins get bumped,
+      # was linted locally and not in CI.
+      #
+      # The cost is inline PR annotations: the marketplace actions emitted them,
+      # a plain `run:` step does not. Findings appear in the job log with file
+      # and line instead. That is the price of one engine, and it is worth it.
+      #
+      # shellcheck comes from the runner image. If that ever stops being true
+      # the script exits 2 with a message naming it, rather than skipping.
+      # zizmor is best-effort inside the script and will skip here for want of
+      # uv -- security.yml runs it properly, with SARIF, as its own job.
+      - name: Lint
+        run: ./scripts/lint.sh
 
-      - name: actionlint (workflows)
-        uses: raven-actions/actionlint@3d39aea434753780c3b3d4a1a31c854b4dbf49d7 # v2.2.0
-
-      - name: shellcheck (test scripts)
-        run: shellcheck ./*/test.sh
-
-      # images.json is executable configuration -- a malformed entry fails here,
-      # before any build minutes are spent on it.
-      - name: Validate images.json
-        run: |
-          jq -e 'type == "array" and length > 0 and
-                 all(.[]; (.image | test("^ci-[a-z0-9]+$")) and
-                          (.version | length > 0) and
-                          (.mirror | length > 0) and
-                          (.upstream | length > 0))' \
-            .github/images.json >/dev/null
-          # Every entry must have a directory, and every ci-* directory an entry.
-          for img in $(jq -r '.[].image' .github/images.json); do
-            test -f "$img/Dockerfile.ci" || { echo "::error::$img in images.json but $img/Dockerfile.ci missing"; exit 1; }
-            test -x "$img/test.sh"       || { echo "::error::$img/test.sh missing or not executable"; exit 1; }
-          done
-          for d in ci-*/; do
-            jq -e --arg i "${d%/}" 'any(.[]; .image == $i)' .github/images.json >/dev/null \
-              || { echo "::error::directory $d has no images.json entry"; exit 1; }
-          done
-          # kubectl is pinned in two Dockerfiles -- ci-tools and ci-cloud -- so a
-          # cluster deploy behaves identically whichever image runs it. Nothing
-          # made that true except a comment, so assert it: a bump that updates
-          # one and not the other is caught here rather than by someone
-          # debugging a version skew in production.
-          for key in KUBECTL_VERSION KUBECTL_SHA256_AMD64 KUBECTL_SHA256_ARM64; do
-            a=$(grep -m1 "^ARG $key=" ci-tools/Dockerfile.ci || true)
-            b=$(grep -m1 "^ARG $key=" ci-cloud/Dockerfile.ci || true)
-            # Missing from both would compare "" = "" and pass, silently
-            # disabling the check after a rename or deletion.
-            if [ -z "$a" ] || [ -z "$b" ]; then
-              echo "::error::$key not found in ci-tools and/or ci-cloud Dockerfile.ci"
-              exit 1
-            fi
-            if [ "$a" != "$b" ]; then
-              echo "::error::$key differs between ci-tools ($a) and ci-cloud ($b)"
-              exit 1
-            fi
-          done
-
-  # Copy the upstream bases into ghcr.io so builds do not depend on upstream
-  # registry availability or rate limits, and so we control the digest we build
-  # from. `imagetools create` copies registry-to-registry and preserves the
-  # multi-arch manifest list; docker pull/tag/push would flatten it to one
-  # architecture.
-  #
-  # Skipped for every non-publishing run: PRs and manual runs from non-main
-  # branches use the upstream base directly, so validation cannot mutate
-  # registry state and a brand-new image's first PR needs no existing mirror.
-  # Mirrors only the images this run builds.
   mirror:
     needs: plan
     if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
