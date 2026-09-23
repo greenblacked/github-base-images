@@ -457,6 +457,44 @@ summary and the `security-report-<image>-<arch>` artifact. If you need a standin
 accepted risk rather than a duplicate of the exit code, widen the SARIF step's scope beyond the
 gate's — that is a deliberate choice about alert volume, not an oversight.
 
+### Verifying a signature
+
+Every published manifest list is signed with keyless cosign — no key to distribute, no key to
+leak. The identity in the certificate is the workflow that built it, and checking that identity is
+the whole point: a signature you never verify protects nobody, and until now this README did not
+say how.
+
+```bash
+cosign verify \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+  --certificate-identity-regexp \
+    '^https://github\.com/greenblacked/github-base-images/\.github/workflows/build-image\.yml@refs/heads/main$' \
+  ghcr.io/greenblacked/ci-tools:bookworm-v1
+```
+
+**Do not drop the identity flags.** `cosign verify` without them checks only that *somebody*
+signed the image, which any attacker with a Sigstore account can also do. The pair above is what
+ties the artifact to this repository's `main`.
+
+The identity is `build-image.yml`, not `build-and-push.yml`. Signing happens inside the reusable
+workflow, and a reusable workflow signs under its own path — a common surprise, and the usual
+reason a first `cosign verify` fails. If yours does, print what the signature actually claims
+rather than guessing:
+
+```bash
+cosign verify --insecure-ignore-tlog=false \
+  --certificate-identity-regexp '.*' \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+  ghcr.io/greenblacked/ci-tools:bookworm-v1 2>&1 | head
+```
+
+That accepts any identity, so it is a diagnostic, **not** a verification — never leave it in a
+pipeline.
+
+Verification belongs in the job that consumes the image, not only in a README. Pin the digest from
+`digests.json`, verify it, then run it: a tag can move, and a digest that was signed last week is
+still the digest that was signed.
+
 ### Attestations
 
 Published images carry an **SBOM and provenance attestation** attached to the artifact itself, not
