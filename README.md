@@ -348,6 +348,22 @@ Builds then use the mirror, so they do not depend on Docker Hub availability or 
 Dockerfile takes a `BASE_IMAGE` build arg that defaults to upstream, so local builds still work
 without authenticating to `ghcr.io`; CI overrides it with the mirror.
 
+**The copy is by digest, not by tag.** The `mirror` job resolves each upstream tag to a digest
+first, mirrors that exact digest (not the tag a second time), and then verifies the mirror
+resolves back to it — failing the run rather than publishing on an unverified copy. This closes
+the one integrity gap the rest of the pipeline doesn't have: 46 actions are SHA-pinned and 10
+downloaded binaries are checksum-verified, but until this check existed the base image itself was
+copied purely by trusting whatever a mutable tag happened to resolve to at copy time, with no
+record of which bytes were actually mirrored. Every publish run records one `{upstream, tag,
+digest}` object per distinct base — into the run summary and into a machine-readable **`bases`
+artifact** (`bases.json`), the mirror-boundary counterpart to `digests.json` above — so "were we
+affected by an upstream compromise during window X" is answerable later without a rebuild.
+
+This is deliberately scoped to the mirror boundary only. The Dockerfiles' `ARG BASE_IMAGE`
+defaults (`python:3.13`, `node:22`, `golang:1`, …) stay tag-based on purpose — that's what lets
+Dependabot propose base bumps and the weekly rebuild pick up upstream patches — freezing those to
+a digest would break the update mechanism this repo depends on.
+
 Make each `mirror-*` package public along with its `ci-*` image. They are byte-identical copies of
 images already public on Docker Hub, so privacy buys nothing — and making them public removes any
 question of whether the build jobs can pull them. If one is left private and a build fails to pull
