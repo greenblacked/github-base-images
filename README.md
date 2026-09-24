@@ -351,13 +351,14 @@ without authenticating to `ghcr.io`; CI overrides it with the mirror.
 **The copy is by digest, not by tag.** The `mirror` job resolves each upstream tag to a digest
 first, mirrors that exact digest (not the tag a second time), and then verifies the mirror
 resolves back to it — failing the run rather than publishing on an unverified copy. This closes
-the one integrity gap the rest of the pipeline doesn't have: 46 actions are SHA-pinned and 10
-downloaded binaries are checksum-verified, but until this check existed the base image itself was
-copied purely by trusting whatever a mutable tag happened to resolve to at copy time, with no
-record of which bytes were actually mirrored. Every publish run records one `{upstream, tag,
-digest}` object per distinct base — into the run summary and into a machine-readable **`bases`
-artifact** (`bases.json`), the mirror-boundary counterpart to `digests.json` above — so "were we
-affected by an upstream compromise during window X" is answerable later without a rebuild.
+the one integrity gap the rest of the pipeline doesn't have: every action is SHA-pinned and every
+downloaded binary — including each lint engine — is checksum-verified, but until this check
+existed the base image itself was copied purely by trusting whatever a mutable tag happened to
+resolve to at copy time, with no record of which bytes were actually mirrored. Every publish run
+records one `{upstream, tag, digest}` object per distinct base — into the run summary and into a
+machine-readable **`bases` artifact** (`bases.json`), the mirror-boundary counterpart to
+`digests.json` above — so "were we affected by an upstream compromise during window X" is
+answerable later without a rebuild.
 
 This is deliberately scoped to the mirror boundary only. The Dockerfiles' `ARG BASE_IMAGE`
 defaults (`python:3.13`, `node:22`, `golang:1`, …) stay tag-based on purpose — that's what lets
