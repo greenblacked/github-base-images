@@ -204,9 +204,9 @@ jobs:
         uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0
 
       # Every other mutable reference in this pipeline gets an integrity check:
-      # 46 actions are pinned by SHA, 10 downloaded binaries are checksum-
-      # verified, 7 lint engines are pinned and hashed. The one mutable
-      # reference that gets none of that is the base image itself -- `docker
+      # actions are pinned by SHA, downloaded binaries are checksum-verified,
+      # lint engines are pinned and hashed. The one mutable reference that
+      # gets none of that is the base image itself -- `docker
       # buildx imagetools create --tag mirror "$upstream"` asks the registry to
       # resolve a floating tag and copies whatever it hands back, with no record
       # of which bytes crossed. If Docker Hub ever served a compromised
@@ -242,6 +242,17 @@ jobs:
       # the outside world; that is where an integrity control belongs, and
       # nowhere else in this repo should "fix" that default to a digest.
       - name: Mirror upstream bases
+        # Explicit, not decorative: GitHub's fallback for a `run:` step with no
+        # `shell:` is `bash -e {0}` -- errexit WITHOUT pipefail. Under that
+        # shell, a failing `docker` inside `resolve_digest` is invisible to
+        # its caller: the function's own exit status is `awk`'s (the last
+        # command in its pipe), which is 0 even when docker failed. Setting
+        # `shell: bash` here opts this step into `bash -eo pipefail {0}`
+        # instead, so a failing `docker` (or a `jq` parse failure in the
+        # producer pipeline below) actually propagates and errexit sees it,
+        # rather than the step going green on empty output. See the `|| true`
+        # comment below for what that buys once pipefail is on.
+        shell: bash
         env:
           IMAGES_JSON: ${{ needs.plan.outputs.images }}
           OWNER: ${{ github.repository_owner }}
@@ -250,6 +261,13 @@ jobs:
           # tag and the mirror after copying -- so "what digest does this ref
           # resolve to" is asked the same way both times and cannot drift into
           # two subtly different parses of `imagetools inspect` output.
+          #
+          # Each call here is one more anonymous pull against whatever
+          # registry it targets -- resolving upstream and verifying the
+          # mirror both count. Against Docker Hub that's roughly double the
+          # anonymous rate-limit exposure of a plain `imagetools create
+          # "$upstream"`; if this step starts 429ing against Docker Hub,
+          # that is why.
           resolve_digest() {
             docker buildx imagetools inspect "$1" | awk '/^Digest:/ {print $2; exit}'
           }
@@ -266,11 +284,16 @@ jobs:
           | while read -r upstream mirror; do
               echo "::group::mirror $upstream -> $mirror"
 
-              # `|| true` on the assignment: `resolve_digest` failing (a
-              # nonzero `docker` exit, the realistic case for an unreachable
-              # or unknown ref) would otherwise trip `errexit` right here,
-              # before the check below ever runs, and this step would fail
-              # with only docker's own message instead of the annotated one.
+              # `|| true` on the assignment: this step runs under `bash -eo
+              # pipefail` (see `shell: bash` above), so a nonzero `docker`
+              # inside `resolve_digest` -- the realistic case for an
+              # unreachable or unknown ref -- now DOES propagate through the
+              # `| awk` pipe to this assignment. Without `|| true` that would
+              # trip `errexit` right here, before the check below ever runs,
+              # and this step would fail with only docker's own message
+              # instead of the annotated one. `[ -z "$digest" ]` is what
+              # actually gates: it also catches `resolve_digest` "succeeding"
+              # with empty output, which a bare exit-code check would miss.
               digest=$(resolve_digest "$upstream" || true)
               if [ -z "$digest" ]; then
                 echo "::error::failed to resolve a digest for $upstream"
@@ -278,15 +301,17 @@ jobs:
               fi
               echo "resolved $upstream -> $digest"
 
-              # Strip the tag, not the registry host: `${upstream%%:*}` cuts at
-              # the FIRST colon, and none of this repo's upstream refs carry a
-              # port number, so for both `debian:bookworm-slim` and
-              # `mcr.microsoft.com/dotnet/sdk:8.0-bookworm-slim` that colon is
-              # the tag separator.
-              repo="${upstream%%:*}"
+              # `imagetools create` accepts `name:tag@digest` directly, with
+              # the digest authoritative over the tag -- verified live: a
+              # tag plus a differing per-platform digest resolves to what the
+              # digest names, not what the tag points at. No need to split
+              # the registry/repo out of "$upstream" first, which sidesteps
+              # a latent bug that splitting would have: a registry with a
+              # port (`registry:5000/foo:tag`) has more than one colon, and
+              # `${upstream%%:*}` cuts at the first one.
               docker buildx imagetools create \
                 --tag "ghcr.io/$OWNER/$mirror" \
-                "$repo@$digest"
+                "$upstream@$digest"
 
               mirrored=$(resolve_digest "ghcr.io/$OWNER/$mirror" || true)
               if [ "$mirrored" != "$digest" ]; then
@@ -313,6 +338,27 @@ jobs:
           # do with, just to re-merge it back down to the same handful of
           # distinct bases this loop already produced.
           jq -s 'sort_by(.upstream)' /tmp/bases.jsonl > bases.json
+
+          # Guard against a silently empty result: an unparseable or empty
+          # IMAGES_JSON makes `jq -r '.[] | ...'` above fail on stderr while
+          # the pipeline it feeds (`| sort -u | while read ...`) still exits
+          # 0 -- the loop just never runs. Nothing upstream of this step
+          # would go red, and `bases.json` would come out as `[]`: a step
+          # that reports success and a record that reports zero bases
+          # actually verified. Not reachable today (the `plan` job always
+          # falls back to building every image when it cannot compute a
+          # subset), but this job's whole point is a trustworthy record, so
+          # it asserts one instead of assuming it: every distinct
+          # upstream/mirror pair named in IMAGES_JSON must have produced
+          # exactly one bases.json entry, and there must be at least one.
+          expected=$(jq -r '.[] | .upstream + " " + .mirror' <<<"$IMAGES_JSON" 2>/dev/null \
+            | sort -u | wc -l | tr -d '[:space:]') || expected=0
+          actual=$(jq 'length' bases.json)
+          if [ "$actual" -eq 0 ] || [ "$actual" -ne "$expected" ]; then
+            echo "::error::bases.json has $actual entries, expected $expected distinct upstream/mirror pairs from IMAGES_JSON -- refusing to publish a bases record that does not account for every base (IMAGES_JSON may have been empty or unparseable)"
+            exit 1
+          fi
+
           jq . bases.json
           {
             echo "### Mirrored bases (this run)"
