@@ -203,24 +203,135 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0
 
+      # Every other mutable reference in this pipeline gets an integrity check:
+      # 46 actions are pinned by SHA, 10 downloaded binaries are checksum-
+      # verified, 7 lint engines are pinned and hashed. The one mutable
+      # reference that gets none of that is the base image itself -- `docker
+      # buildx imagetools create --tag mirror "$upstream"` asks the registry to
+      # resolve a floating tag and copies whatever it hands back, with no record
+      # of which bytes crossed. If Docker Hub ever served a compromised
+      # `debian:bookworm-slim` during some window, this step would mirror it
+      # faithfully, sixteen images would build on it, and nothing here could
+      # later answer "were we affected" -- the exact question the SBOMs
+      # (README, "Security scanning") exist to answer for everything upstream
+      # of this boundary.
+      #
+      # Resolve -> copy-by-digest -> verify closes that gap:
+      #   1. Resolve the tag to a digest ONCE, before copying anything.
+      #   2. Mirror that exact digest, not the tag a second time. Two separate
+      #      tag resolutions (one here, one implicit inside a plain
+      #      `imagetools create "$upstream"`) are two chances for the tag to
+      #      move between them -- a real race, not a theoretical one, and the
+      #      whole point of pinning by digest elsewhere in this repo.
+      #   3. Verify the mirror resolves back to that same digest. A mirror that
+      #      is not the bytes it claims to mirror is worse than no mirror: every
+      #      image downstream would build on unverified content, silently. This
+      #      gates the step, the same posture as the vulnerability and secret
+      #      gates in build-image.yml.
+      #   4. Record {upstream, tag, digest} for every distinct base, so "were we
+      #      affected during window X" is answerable later instead of requiring
+      #      a rebuild or a dig through registry history.
+      #
+      # This is deliberately scoped to the mirror boundary and NOT to the
+      # Dockerfiles' `ARG BASE_IMAGE` defaults (python:3.13, node:22, golang:1,
+      # ...). Those defaults are load-bearing exactly because they float: it is
+      # how Dependabot proposes base bumps and how the weekly rebuild picks up
+      # upstream security patches (see docs/adr/0001-mirror-upstream-bases.md).
+      # Digest-pinning them would freeze security updates, not improve
+      # integrity. The mirror is where bytes actually enter this pipeline from
+      # the outside world; that is where an integrity control belongs, and
+      # nowhere else in this repo should "fix" that default to a digest.
       - name: Mirror upstream bases
         env:
           IMAGES_JSON: ${{ needs.plan.outputs.images }}
           OWNER: ${{ github.repository_owner }}
         run: |
+          # One authoritative resolution helper, reused for both the upstream
+          # tag and the mirror after copying -- so "what digest does this ref
+          # resolve to" is asked the same way both times and cannot drift into
+          # two subtly different parses of `imagetools inspect` output.
+          resolve_digest() {
+            docker buildx imagetools inspect "$1" | awk '/^Digest:/ {print $2; exit}'
+          }
+
           # sort -u because several images share one base: ci-tools, ci-cloud,
           # ci-security and ci-db all build FROM debian:bookworm-slim, and
-          # without this the identical mirror would be re-copied once per
-          # image on every publish run.
+          # without this the identical base would be resolved, copied and
+          # verified once per image instead of once per distinct base, on every
+          # publish run.
+          : > /tmp/bases.jsonl
+
           jq -r '.[] | .upstream + " " + .mirror' <<<"$IMAGES_JSON" \
           | sort -u \
           | while read -r upstream mirror; do
               echo "::group::mirror $upstream -> $mirror"
+
+              # `|| true` on the assignment: `resolve_digest` failing (a
+              # nonzero `docker` exit, the realistic case for an unreachable
+              # or unknown ref) would otherwise trip `errexit` right here,
+              # before the check below ever runs, and this step would fail
+              # with only docker's own message instead of the annotated one.
+              digest=$(resolve_digest "$upstream" || true)
+              if [ -z "$digest" ]; then
+                echo "::error::failed to resolve a digest for $upstream"
+                exit 1
+              fi
+              echo "resolved $upstream -> $digest"
+
+              # Strip the tag, not the registry host: `${upstream%%:*}` cuts at
+              # the FIRST colon, and none of this repo's upstream refs carry a
+              # port number, so for both `debian:bookworm-slim` and
+              # `mcr.microsoft.com/dotnet/sdk:8.0-bookworm-slim` that colon is
+              # the tag separator.
+              repo="${upstream%%:*}"
               docker buildx imagetools create \
                 --tag "ghcr.io/$OWNER/$mirror" \
-                "$upstream"
+                "$repo@$digest"
+
+              mirrored=$(resolve_digest "ghcr.io/$OWNER/$mirror" || true)
+              if [ "$mirrored" != "$digest" ]; then
+                echo "::error::ghcr.io/$OWNER/$mirror resolved to '$mirrored' after mirroring, expected '$digest' -- refusing to build on an unverified mirror"
+                exit 1
+              fi
+              echo "verified ghcr.io/$OWNER/$mirror -> $digest"
+
+              jq -n --arg upstream "$upstream" --arg tag "$mirror" --arg digest "$digest" \
+                '{upstream: $upstream, tag: $tag, digest: $digest}' >> /tmp/bases.jsonl
+
               echo "::endgroup::"
             done
+
+          # One {upstream, tag, digest} record per distinct base -- the
+          # mirror-boundary counterpart to digests.json, which records the same
+          # shape one layer further downstream (per published image, not per
+          # base). A separate artifact rather than folding this into
+          # digests.json: digests.json is assembled by the `digests` job from
+          # every per-image build in the matrix, while every base is already
+          # fully resolved and verified right here, inside this one job, before
+          # the image matrix even starts. Extending digests.json would mean
+          # threading base data through sixteen matrix jobs it has nothing to
+          # do with, just to re-merge it back down to the same handful of
+          # distinct bases this loop already produced.
+          jq -s 'sort_by(.upstream)' /tmp/bases.jsonl > bases.json
+          jq . bases.json
+          {
+            echo "### Mirrored bases (this run)"
+            echo
+            echo "Each base was resolved to a digest, mirrored by that digest (not by tag), and"
+            echo "the mirror verified to resolve back to it."
+            echo
+            echo "| upstream | mirror tag | digest |"
+            echo "|---|---|---|"
+            jq -r '.[] | "| \(.upstream) | \(.tag) | `\(.digest)` |"' bases.json
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload bases.json
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: bases
+          path: bases.json
+          if-no-files-found: error
+          retention-days: 90
 
   # One reusable-workflow call per selected image. Each call fans out into a
   # per-architecture build matrix plus a merge job -- see build-image.yml.
