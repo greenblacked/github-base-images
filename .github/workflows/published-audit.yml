@@ -7,16 +7,22 @@
 # this repository has ever re-checked the artifact a consumer actually pulls
 # afterwards. A package flipped to private, a signature whose identity has
 # drifted (a workflow rename, a ref that stopped being `main`), a rebuild that
-# silently stopped firing, a retired image left behind and rotting outside the
-# weekly rebuild -- none of that fails a build, because none of it happens
-# during one. This is that other half, on a timer of its own.
+# silently stopped firing -- none of that fails a build, because none of it
+# happens during one. This is that other half, on a timer of its own.
+#
+# Deliberately not covered: whether an old, retired image name (one no longer
+# in .github/images.json) is still being served by GHCR. Finding that
+# requires listing every ci-* package this owner has ever published, which is
+# a user-scoped GitHub Packages API that needs a classic PAT with
+# read:packages -- GITHUB_TOKEN cannot call it, and this repository is not
+# adding that credential. The two names this would have caught (ci-go125,
+# ci-rust185) are being deleted at the source instead of instrumented around.
 #
 # Reporting, never gating -- same posture as pin-drift.yml. A stale or
 # unverifiable published image is not a broken build to re-run; it is
 # something a human decides what to do about (re-run the publish, fix a
-# package's visibility, delete an orphan). Failing a workflow that runs on a
-# schedule for a condition nobody caused this week would only train people to
-# ignore it.
+# package's visibility). Failing a workflow that runs on a schedule for a
+# condition nobody caused this week would only train people to ignore it.
 name: Published image audit
 
 on: # zizmor: ignore[dangerous-triggers]
@@ -64,8 +70,7 @@ jobs:
     permissions:
       contents: read
       # Read-only pulls of the published artifacts and their signatures/
-      # attestations, plus (best-effort) listing the owner's packages for the
-      # orphan check below.
+      # attestations.
       packages: read
       # To maintain the single tracking issue.
       issues: write
@@ -95,16 +100,14 @@ jobs:
       - name: Install cosign
         uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
 
-      # Exit 3 means one or more images are unhealthy or an orphan package was
-      # found -- an expected outcome, not a failure, so it is captured instead
-      # of aborting the job. Any other non-zero exit is the checker itself
-      # being broken and is surfaced below.
+      # Exit 3 means one or more images are unhealthy or stale -- an expected
+      # outcome, not a failure, so it is captured instead of aborting the
+      # job. Exit 1 means the checker itself was broken (an attestation or
+      # freshness check that could not be determined at all) and is
+      # surfaced below.
       - name: Check published images
         id: check
         env:
-          # Read by the script for `gh api` (the orphan-package listing) and
-          # for GitHub's own API rate limit.
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           OWNER: ${{ github.repository_owner }}
           REPO_SLUG: ${{ github.repository }}
         run: |
@@ -127,9 +130,9 @@ jobs:
           {
             echo "### Published image audit"
             echo
-            echo "| image | pull | signature | sbom | provenance | age (days) | state |"
-            echo "|---|---|---|---|---|---|---|"
-            jq -r '.images[] | "| \(.image):\(.version) | \(.pull_state) | \(.sig_state) | \(.has_sbom) | \(.has_provenance) | \(.age_days // "—") | \(if .healthy then "ok" else "**ISSUE**" end) |"' report.json
+            echo "| image | pull | signature | sbom | provenance | freshness | age (days) | state |"
+            echo "|---|---|---|---|---|---|---|---|"
+            jq -r '.images[] | "| \(.image):\(.version) | \(.pull_state) | \(.sig_state) | \(.has_sbom) | \(.has_provenance) | \(.freshness_state) | \(.age_days // "—") | \(if .status == "healthy" then "ok" elif .status == "error" then "unknown" else "**ISSUE**" end) |"' report.json
 
             echo
             echo "#### Signature identity mismatches"
@@ -138,7 +141,7 @@ jobs:
             # "verification failed", but what the signature actually says,
             # so a renamed workflow or a ref that is no longer `main` is
             # visible at a glance instead of requiring a manual re-run.
-            sig_fail=$(jq -r '.images[] | select(.sig_state=="fail") | "- **\(.image):\(.version)** carries `\(.sig_identity)`"' report.json)
+            sig_fail=$(jq -r '.images[] | select(.sig_state=="fail") | "- **\(.image):\(.version)** \(.sig_identity)"' report.json)
             [ -n "$sig_fail" ] && echo "$sig_fail" || echo "None."
 
             echo
@@ -148,26 +151,15 @@ jobs:
             [ -n "$pull_fail" ] && echo "$pull_fail" || echo "None."
 
             echo
-            echo "#### Orphan packages (ci-* not in images.json)"
+            echo "#### Checks that could not be completed"
             echo
-            if [ "$(jq -r '.orphans.checked' report.json)" = "true" ]; then
-              orphan_count=$(jq '.orphans.packages | length' report.json)
-              if [ "$orphan_count" -gt 0 ]; then
-                jq -r '.orphans.packages[] | "- `\(.)`"' report.json
-                echo
-                echo "\`ci-rust185\` and \`ci-go125\` are known retired names that may still be served --"
-                echo "they rot outside the weekly rebuild while looking perfectly healthy on their own."
-              else
-                echo "None."
-              fi
-            else
-              echo "Skipped: $(jq -r '.orphans.skip_reason' report.json)"
-              echo
-              echo "Listing a *user's* packages is a user-scoped endpoint; \`GITHUB_TOKEN\` is normally"
-              echo "enough only for packages linked to this repository, not for enumerating everything"
-              echo "the owner has ever published. A PAT with \`read:packages\`, stored as a secret, would"
-              echo "unblock this -- not added here so this workflow keeps working with zero extra setup."
-            fi
+            # A broken checker, not a broken registry: the attestation or
+            # freshness inspect itself failed (network, an unreachable
+            # blob), as opposed to genuinely finding nothing. These do not
+            # count as findings above -- see report.json's top-level
+            # \`failed\` count -- but must not be silently absent either.
+            checker_err=$(jq -r '.images[] | select(.status=="error") | "- **\(.image):\(.version)**: sbom=\(.has_sbom) provenance=\(.has_provenance) freshness=\(.freshness_state) -- \(.attest_detail)\(.freshness_detail)"' report.json)
+            [ -n "$checker_err" ] && echo "$checker_err" || echo "None."
           } > table.md
           cat table.md >> "$GITHUB_STEP_SUMMARY"
 
