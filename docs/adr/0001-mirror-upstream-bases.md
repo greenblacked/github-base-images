@@ -15,8 +15,13 @@ real upstream ref** — CI overrides it with the mirror on `main` only.
 - **Availability and rate limits.** Publish runs must not depend on Docker Hub being up or on its
   anonymous pull quota from shared runner IPs. (MCR, used by `ci-dotnet9`, has no such limits —
   it is mirrored anyway so builds depend on one registry rather than two.)
-- **Digest control.** The mirror fixes the exact base digest a publish builds from, instead of
-  whatever upstream's mutable tag points at mid-run.
+- **Digest control.** The `mirror` job resolves each upstream tag to a digest once, copies that
+  exact digest rather than the tag a second time, and verifies the copy resolves back to the same
+  digest before the run continues — closing the race where resolving and copying a tag can each
+  observe different bytes. Every distinct base's `{upstream, tag, digest}` is recorded into the
+  run summary and into a `bases.json` artifact, so a publish builds from a base whose exact digest
+  is both fixed and known, not merely whatever the tag happened to point at mid-run. See
+  [0003](0003-gates-vs-reports.md) for why an unverified mirror gates the run.
 - **The upstream default is load-bearing twice.** Local builds and PR builds work with no
   `ghcr.io` login, and Dependabot reads that default to propose base bumps — pointing it at the
   mirror would break both.
