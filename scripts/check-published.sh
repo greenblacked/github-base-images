@@ -10,21 +10,37 @@
 # is no longer `main`) -- none of that would fail a build, because none of it
 # happens during one. This script is the other half: it re-derives, from the
 # published artifact alone, the same facts the build already claimed were
-# true the moment it pushed.
+# true the moment it pushed --  pullable, correctly signed by the expected
+# workflow, carrying both SBOM and provenance attestations, and no older than
+# a weekly rebuild plus margin.
 #
-# Assumes docker buildx, cosign, jq and gh are already on PATH -- the calling
-# workflow installs them. Same division of labour as check-pins.sh, which
-# assumes curl and jq are already there.
+# Deliberately out of scope: enumerating every ci-* package this owner has
+# ever published to find ones no longer in images.json. GitHub's Packages
+# listing API needs a classic PAT with read:packages -- GITHUB_TOKEN, an
+# installation token, cannot call it -- and this repository is not adding
+# that credential. A check that can never run in CI is worse than no check:
+# it looks like coverage in the workflow file while providing none. The two
+# retired names this would have caught (ci-go125, ci-rust185) are instead
+# being deleted at the source.
+#
+# Assumes docker buildx, cosign, jq are already on PATH -- the calling
+# workflow installs docker and cosign; jq is already on any GitHub-hosted
+# runner. Same division of labour as check-pins.sh, which assumes curl and jq
+# are already there.
 #
 #   ./scripts/check-published.sh                 # human-readable table
 #   ./scripts/check-published.sh --format json   # machine-readable, for the workflow
 #
 # Exit codes:
-#   0  every image is healthy, current and (if checked) no orphan package
-#   1  a script-level failure -- a broken checker, not a broken registry
-#   2  bad usage
-#   3  one or more images unhealthy or stale, or an orphan package found --
-#      a normal, expected outcome, not an error
+#   0  every image is healthy and current
+#   1  a script-level failure -- a broken checker, not a broken registry: an
+#      image whose attestations or freshness could not be determined at all,
+#      with no confirmed issue elsewhere
+#   2  bad usage, or .github/images.json could not be read at all
+#   3  one or more images unhealthy or stale -- a normal, expected outcome,
+#      not an error. Outranks exit 1: a confirmed problem must still reach
+#      the tracking issue even if some other, unrelated check was itself
+#      broken this run.
 set -euo pipefail
 
 readonly EXIT_ISSUES=3
@@ -75,15 +91,18 @@ case "$format" in
   *) echo "error: --format must be 'table' or 'json', got '$format'" >&2; exit 2 ;;
 esac
 
-for cmd in docker cosign jq gh date awk; do
+for cmd in docker cosign jq date awk; do
   command -v "$cmd" >/dev/null || { echo "error: required command not found: $cmd" >&2; exit 1; }
 done
 
 repo_root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
 cd "$repo_root" || { echo "error: cannot enter repo root" >&2; exit 1; }
 
-owner="${OWNER:-${GITHUB_REPOSITORY%%/*}}"
-owner="${owner:-greenblacked}"
+# Both branches of this default have their own fallback, so neither side ever
+# references an unset variable directly under `set -u` -- OWNER unset AND
+# GITHUB_REPOSITORY unset must not abort the script.
+owner="${OWNER:-${GITHUB_REPOSITORY:-greenblacked/github-base-images}}"
+owner="${owner%%/*}"
 repo_slug="${REPO_SLUG:-${GITHUB_REPOSITORY:-greenblacked/github-base-images}}"
 
 # The identity a signature is expected to carry. Signing happens inside
@@ -92,16 +111,21 @@ repo_slug="${REPO_SLUG:-${GITHUB_REPOSITORY:-greenblacked/github-base-images}}"
 # signing job actually runs, so the caller's name never appears here. Only
 # `.` needs escaping; owner/repo characters are regex-safe.
 identity_regexp="^https://github\\.com/${repo_slug//./\\.}/\\.github/workflows/build-image\\.yml@refs/heads/main\$"
+# Rung 2 of the identity ladder in verify_signature: signed by this
+# repository at all, regardless of which workflow or ref. Same escaping.
+repo_identity_regexp="^https://github\\.com/${repo_slug//./\\.}/"
 
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT INT TERM
 
 : > "$tmp/rows.jsonl"
 issues=0
+failed=0
+checked=0
 
 # --- per-image checks --------------------------------------------------------
 #
-# check_pull sets: pull_state (ok|private|missing|error), digest, inspect_text
+# check_pull sets: pull_state (ok|missing|private|error), digest, inspect_text
 check_pull() {
   local ref="$1"
   if inspect_text=$(docker buildx imagetools inspect "$ref" 2>"$tmp/pull_err.txt"); then
@@ -111,10 +135,18 @@ check_pull() {
   else
     local err; err=$(cat "$tmp/pull_err.txt")
     case "$err" in
-      *401*|*[Uu]nauthorized*|*403*|*denied*|*[Ff]orbidden*)
-        # The single most useful thing this check can surface: several
-        # packages here are known to be private, and that is a deliberate,
-        # unremarkable state -- distinct from one that is simply gone.
+      *"failed to fetch anonymous token"*|*403*)
+        # Verified against live GHCR: this -- not a private package -- is
+        # what a pull of a package that DOES NOT EXIST returns. This used to
+        # be read as "private" and called deliberate and unremarkable; it
+        # was actually classifying deleted packages that way, silently.
+        pull_state=missing ;;
+      *401*|*[Uu]nauthorized*|*denied*|*insufficient_scope*)
+        # A token that authenticated but was refused, as opposed to one that
+        # could not even be issued (above) -- the shape of a package that
+        # exists but is genuinely access-restricted from this token. Still
+        # unhealthy below: a consumer without special access could not pull
+        # it either, so "private" is a diagnosis, not a pass.
         pull_state=private ;;
       *404*|*"not found"*|*"manifest unknown"*|*"name unknown"*)
         pull_state=missing ;;
@@ -124,78 +156,161 @@ check_pull() {
     digest=""
     pull_detail=$(tr '\n' ' ' <<<"$err" | cut -c1-300)
   fi
+  return 0
 }
 
-# verify_signature sets: sig_state (ok|fail|skipped), sig_identity
+# verify_signature sets: sig_state (ok|fail|skipped), sig_identity -- a
+# description of which identity-ladder rung matched, never a raw certificate
+# `Subject` field.
+#
+# cosign-installer v4.1.2 installs cosign v3.0.6, whose default
+# --new-bundle-format=true makes `cosign verify` return signatures as OCI
+# referrers in sigstore bundle format. On that path `transformOutput` wraps
+# the result with `static.NewAttestation(p)`, which carries no certificate
+# chain -- `Cert()` returns nil, and `PrintVerification`'s json branch only
+# ever sets `.optional.Subject` when a cert is present. There is no
+# certificate identity in this JSON to read, on any image this repository
+# has ever published, or ever will on this code path.
+#
+# Pass/fail is unaffected by any of that: the rung-1 call below is what
+# decides sig_state, and --certificate-identity-regexp is enforced inside
+# `cosign verify` itself (co.Identities), a real cryptographic check. Rungs 2
+# and 3 run only to explain a rung-1 failure -- re-verifying with
+# successively looser identity patterns and reporting which one matched,
+# instead of reading a field that cannot be populated.
 verify_signature() {
-  local digest_ref="$1" strict_out diag_out
-  if strict_out=$(cosign verify \
+  local digest_ref="$1"
+
+  if cosign verify \
         --certificate-oidc-issuer "$COSIGN_ISSUER" \
         --certificate-identity-regexp "$identity_regexp" \
-        --output json "$digest_ref" 2>"$tmp/verify_err.txt"); then
+        --output json "$digest_ref" >/dev/null 2>"$tmp/verify_err.txt"; then
     sig_state=ok
-    sig_identity=$(jq -r '.[0].optional.Subject // "unknown"' <<<"$strict_out" 2>/dev/null || echo unknown)
-  else
-    sig_state=fail
-    # The strict call above only ever says pass/fail -- a mismatched identity
-    # is indistinguishable from no signature at all. Re-run with the same
-    # issuer but no identity constraint purely to learn what identity the
-    # signature actually carries, so a renamed workflow or a wrong ref shows
-    # up as a diagnosis instead of a bare failure.
-    if diag_out=$(cosign verify \
-          --certificate-oidc-issuer "$COSIGN_ISSUER" \
-          --certificate-identity-regexp '.*' \
-          --output json "$digest_ref" 2>>"$tmp/verify_err.txt"); then
-      sig_identity=$(jq -r '.[0].optional.Subject // "unknown"' <<<"$diag_out" 2>/dev/null || echo unknown)
-    else
-      sig_identity="none: $(tr '\n' ' ' <"$tmp/verify_err.txt" | cut -c1-300)"
-    fi
+    sig_identity="rung 1/3: matches the expected identity (${repo_slug}, build-image.yml@refs/heads/main)"
+    return 0
   fi
+  sig_state=fail
+
+  if cosign verify \
+        --certificate-oidc-issuer "$COSIGN_ISSUER" \
+        --certificate-identity-regexp "$repo_identity_regexp" \
+        --output json "$digest_ref" >/dev/null 2>>"$tmp/verify_err.txt"; then
+    sig_identity="rung 2/3: signed by ${repo_slug}, but not the expected workflow/ref (a renamed workflow, or a ref that is not refs/heads/main)"
+    return 0
+  fi
+
+  if cosign verify \
+        --certificate-oidc-issuer "$COSIGN_ISSUER" \
+        --certificate-identity-regexp '.*' \
+        --output json "$digest_ref" >/dev/null 2>>"$tmp/verify_err.txt"; then
+    sig_identity="rung 3/3: signed under the GitHub Actions OIDC issuer, but not by ${repo_slug} at all"
+    return 0
+  fi
+
+  # No rung matched under this issuer at all: no valid signature. Prefer
+  # cosign's own `Error:` line over whatever precedes it -- v3.0.6 routinely
+  # writes a `WARNING:` line first, which is what used to be captured here
+  # instead of the actual error.
+  local err_text err_line
+  err_text=$(<"$tmp/verify_err.txt")
+  err_line=$(printf '%s\n' "$err_text" | grep -m1 '^Error:' || true)
+  if [ -n "$err_line" ]; then
+    sig_identity="no valid signature: $(printf '%s' "$err_line" | cut -c1-300)"
+  else
+    sig_identity="no valid signature: $(printf '%s' "$err_text" | tr '\n' ' ' | cut -c1-300)"
+  fi
+  return 0
 }
 
-# attestations sets: has_sbom, has_provenance (true|false)
+# attestations sets: has_sbom, has_provenance (each "true"/"false" -- present
+# or genuinely absent -- or "unknown" when the checker itself could not
+# tell), and attest_detail (the stderr from whichever inspect call failed,
+# kept rather than discarded).
 check_attestations() {
   local digest_ref="$1" sbom_json provenance_json
-  sbom_json=$(docker buildx imagetools inspect --format '{{json .SBOM}}' "$digest_ref" 2>/dev/null || true)
-  provenance_json=$(docker buildx imagetools inspect --format '{{json .Provenance}}' "$digest_ref" 2>/dev/null || true)
-  has_sbom=false; has_provenance=false
-  # Not a bare `&&` chain: under `set -e`, a chain ending in an assignment
-  # that never runs (because an earlier test failed) makes this function's
-  # own return status non-zero, which aborts the script the moment it is
-  # called as a plain statement -- an `if` always returns zero when its
-  # condition is false, so it is the only safe shape here.
-  if [ -n "$sbom_json" ] && [ "$sbom_json" != "null" ] && [ "$sbom_json" != "{}" ]; then
-    has_sbom=true
+  has_sbom=false; has_provenance=false; attest_detail=""
+
+  # buildx only ever fails this command for a real reason -- a blob it
+  # cannot reach, a network error, a bad ref. A genuinely missing
+  # attestation is not a failure at all: buildx's result.SBOM()/Provenance()
+  # only insert a platform key when an attestation manifest exists, so the
+  # command exits 0 and prints `{}` (or `null`) when there simply is none.
+  # Success and failure are therefore handled in separate branches below,
+  # rather than folded together with `2>/dev/null || true`, which used to
+  # make both cases look identical -- an unreachable registry reported as
+  # "no attestations" instead of "could not check".
+  if sbom_json=$(docker buildx imagetools inspect --format '{{json .SBOM}}' "$digest_ref" 2>"$tmp/sbom_err.txt"); then
+    if [ -n "$sbom_json" ] && [ "$sbom_json" != "null" ] && [ "$sbom_json" != "{}" ]; then
+      has_sbom=true
+    fi
+  else
+    has_sbom=unknown
+    attest_detail="${attest_detail}SBOM inspect failed: $(tr '\n' ' ' <"$tmp/sbom_err.txt" | cut -c1-200)  "
   fi
-  if [ -n "$provenance_json" ] && [ "$provenance_json" != "null" ] && [ "$provenance_json" != "{}" ]; then
-    has_provenance=true
+
+  if provenance_json=$(docker buildx imagetools inspect --format '{{json .Provenance}}' "$digest_ref" 2>"$tmp/provenance_err.txt"); then
+    if [ -n "$provenance_json" ] && [ "$provenance_json" != "null" ] && [ "$provenance_json" != "{}" ]; then
+      has_provenance=true
+    fi
+  else
+    has_provenance=unknown
+    attest_detail="${attest_detail}Provenance inspect failed: $(tr '\n' ' ' <"$tmp/provenance_err.txt" | cut -c1-200)"
   fi
+  return 0
 }
 
-# freshness sets: created (RFC3339 or empty), age_days (int or empty)
+# freshness sets: created (RFC3339 or empty), age_days (int or empty),
+# freshness_state (ok|stale|unknown) and freshness_detail. "unknown" is a
+# distinct state everywhere it is used below -- it must never be read as a
+# pass, which is what an undetermined age used to become once `stale`
+# defaulted to false regardless of why age_days came back empty.
 check_freshness() {
   local digest_ref="$1" image_json
-  image_json=$(docker buildx imagetools inspect --format '{{json .Image}}' "$digest_ref" 2>/dev/null || true)
-  created=""
-  if [ -n "$image_json" ] && [ "$image_json" != "null" ]; then
-    # Multi-platform images key this by platform; single-platform ones do
-    # not. Try linux/amd64 first, then fall back to whatever the first entry
-    # is, so this does not depend on which shape buildx happens to return.
-    created=$(jq -r '
-        if has("linux/amd64") then .["linux/amd64"].created
-        elif has("created") then .created
-        else (to_entries[0].value.created // empty)
-        end // empty' <<<"$image_json" 2>/dev/null || true)
+  created=""; age_days=""; freshness_state=unknown; freshness_detail=""
+
+  if ! image_json=$(docker buildx imagetools inspect --format '{{json .Image}}' "$digest_ref" 2>"$tmp/image_err.txt"); then
+    freshness_detail="buildx inspect failed: $(tr '\n' ' ' <"$tmp/image_err.txt" | cut -c1-200)"
+    return 0
   fi
-  age_days=""
-  if [ -n "$created" ]; then
-    local created_epoch now_epoch
-    created_epoch=$(date -u -d "$created" +%s 2>/dev/null || true)
-    if [ -n "$created_epoch" ]; then
-      now_epoch=$(date -u +%s)
-      age_days=$(( (now_epoch - created_epoch) / 86400 ))
-    fi
+  if [ -z "$image_json" ] || [ "$image_json" = "null" ]; then
+    freshness_detail="empty .Image output from buildx"
+    return 0
   fi
+
+  # `.Image` is normally an object keyed by platform (or a single config for
+  # a single-platform image), but jq's `has()` throws (exit 5) if it is ever
+  # handed something else. Guard the type first, so a surprising shape is a
+  # normal "could not determine" outcome rather than a crash the caller has
+  # to survive with `|| true` -- which is what silently turned this failure
+  # into an empty, passing `age_days` before.
+  if ! created=$(jq -r '
+      if type != "object" then empty
+      elif has("linux/amd64") then .["linux/amd64"].created
+      elif has("created") then .created
+      else (to_entries[0].value.created // empty)
+      end // empty' <<<"$image_json" 2>"$tmp/image_jq_err.txt"); then
+    freshness_detail="could not parse .Image JSON: $(tr '\n' ' ' <"$tmp/image_jq_err.txt" | cut -c1-200)"
+    created=""
+    return 0
+  fi
+  if [ -z "$created" ]; then
+    freshness_detail="no creation timestamp in .Image output"
+    return 0
+  fi
+
+  local created_epoch now_epoch
+  if ! created_epoch=$(date -u -d "$created" +%s 2>"$tmp/date_err.txt"); then
+    freshness_detail="unparsable creation timestamp '$created': $(tr '\n' ' ' <"$tmp/date_err.txt" | cut -c1-200)"
+    return 0
+  fi
+  now_epoch=$(date -u +%s)
+  age_days=$(( (now_epoch - created_epoch) / 86400 ))
+  if [ "$age_days" -gt "$MAX_AGE_DAYS" ]; then
+    freshness_state=stale
+  else
+    freshness_state=ok
+  fi
+  return 0
 }
 
 audit_image() {
@@ -206,8 +321,9 @@ audit_image() {
   check_pull "$ref"
 
   sig_state=skipped; sig_identity=""
-  has_sbom=false; has_provenance=false
-  created=""; age_days=""
+  has_sbom=false; has_provenance=false; attest_detail=""
+  created=""; age_days=""; freshness_state=unknown
+  freshness_detail="not checked: image could not be pulled"
 
   if [ "$pull_state" = ok ]; then
     digest_ref="ghcr.io/${owner}/${image}@${digest}"
@@ -216,20 +332,42 @@ audit_image() {
     check_freshness "$digest_ref"
   fi
 
-  local stale=false
-  if [ -n "$age_days" ] && [ "$age_days" -gt "$MAX_AGE_DAYS" ]; then
-    stale=true
+  # A row is "issue" when some dimension is definitively, observably broken
+  # -- a real registry-side fact, worth a tracking issue. It is "error" when
+  # a dimension could not be determined at all -- a broken checker, not a
+  # broken registry (see check_attestations/check_freshness above) -- and
+  # that must never silently read as healthy either. "issue" outranks
+  # "error": a real, confirmed problem on one dimension must not be hidden
+  # behind an unrelated checker hiccup on another dimension of the same
+  # image.
+  local has_issue=false has_unknown=false
+
+  [ "$pull_state" = ok ] || has_issue=true
+  [ "$sig_state" = ok ] || has_issue=true
+
+  if [ "$has_sbom" = unknown ] || [ "$has_provenance" = unknown ]; then
+    has_unknown=true
+  elif [ "$has_sbom" != true ] || [ "$has_provenance" != true ]; then
+    has_issue=true
   fi
 
-  local healthy=true
-  [ "$pull_state" = ok ] || healthy=false
-  [ "$sig_state" = ok ] || healthy=false
-  { [ "$has_sbom" = true ] && [ "$has_provenance" = true ]; } || healthy=false
-  [ "$stale" = false ] || healthy=false
+  case "$freshness_state" in
+    ok) ;;
+    stale) has_issue=true ;;
+    unknown) has_unknown=true ;;
+  esac
 
-  if [ "$healthy" = false ]; then
+  local status healthy
+  if [ "$has_issue" = true ]; then
+    status=issue; healthy=false
     issues=$((issues + 1))
-    log info "$ref: unhealthy (pull=$pull_state sig=$sig_state sbom=$has_sbom provenance=$has_provenance stale=$stale)"
+    log info "$ref: unhealthy (pull=$pull_state sig=$sig_state sbom=$has_sbom provenance=$has_provenance freshness=$freshness_state)"
+  elif [ "$has_unknown" = true ]; then
+    status=error; healthy=false
+    failed=$((failed + 1))
+    log info "$ref: could not fully audit (sbom=$has_sbom provenance=$has_provenance freshness=$freshness_state) -- ${attest_detail}${freshness_detail}"
+  else
+    status=healthy; healthy=true
   fi
 
   jq -nc \
@@ -237,87 +375,60 @@ audit_image() {
     --arg pull_state "$pull_state" --arg pull_detail "${pull_detail:-}" \
     --arg digest "${digest:-}" \
     --arg sig_state "$sig_state" --arg sig_identity "$sig_identity" \
-    --argjson has_sbom "$has_sbom" --argjson has_provenance "$has_provenance" \
+    --arg has_sbom "$has_sbom" --arg has_provenance "$has_provenance" --arg attest_detail "${attest_detail:-}" \
     --arg created "$created" \
-    --argjson age_days "${age_days:-null}" --argjson stale "$stale" \
-    --argjson healthy "$healthy" \
+    --argjson age_days "${age_days:-null}" --arg freshness_state "$freshness_state" \
+    --arg freshness_detail "${freshness_detail:-}" \
+    --arg status "$status" --argjson healthy "$healthy" \
     '{image:$image, version:$version, ref:$ref, pull_state:$pull_state, pull_detail:$pull_detail,
       digest:$digest, sig_state:$sig_state, sig_identity:$sig_identity,
-      has_sbom:$has_sbom, has_provenance:$has_provenance,
-      created:$created, age_days:$age_days, stale:$stale, healthy:$healthy}' \
+      has_sbom:$has_sbom, has_provenance:$has_provenance, attest_detail:$attest_detail,
+      created:$created, age_days:$age_days, freshness_state:$freshness_state, freshness_detail:$freshness_detail,
+      status:$status, healthy:$healthy}' \
     >> "$tmp/rows.jsonl"
-}
-
-# --- orphan reconciliation ---------------------------------------------------
-#
-# Lists container packages owned by $owner and flags any ci-* package that is
-# not in images.json. This is the check most likely to be denied outright:
-# listing a USER's packages is a user-scoped endpoint, and GITHUB_TOKEN's
-# packages:read is normally enough only for packages linked to the calling
-# repository, not for enumerating everything the owner has ever published.
-# When that is the case this is skipped, loudly, rather than silently
-# reporting zero orphans as if none existed.
-orphan_checked=false
-orphan_skip_reason=""
-orphans_json='[]'
-
-check_orphans() {
-  local raw
-  if ! raw=$(gh api "/users/${owner}/packages?package_type=container&per_page=100" --paginate 2>"$tmp/orphan_err.txt"); then
-    orphan_skip_reason="cannot list packages for user $owner: $(tr '\n' ' ' <"$tmp/orphan_err.txt" | cut -c1-300)"
-    log info "orphan check skipped: $orphan_skip_reason"
-    return 0
-  fi
-  # gh --paginate on an array endpoint concatenates one JSON array per page;
-  # slurp and flatten so multi-page responses collapse to one list either way.
-  if ! raw=$(jq -c -s 'add // []' <<<"$raw" 2>"$tmp/orphan_err.txt"); then
-    orphan_skip_reason="unexpected response listing packages for $owner: $(tr '\n' ' ' <"$tmp/orphan_err.txt" | cut -c1-300)"
-    log info "orphan check skipped: $orphan_skip_reason"
-    return 0
-  fi
-
-  orphan_checked=true
-  orphans_json=$(jq -c --argjson known "$(jq -c '[.[].image]' .github/images.json)" '
-      [.[] | select(.name | test("^ci-")) | select(.name as $n | $known | index($n) | not) | .name]
-    ' <<<"$raw")
-  log info "orphan check: $(jq 'length' <<<"$orphans_json") ci-* package(s) not in images.json"
 }
 
 # --- main --------------------------------------------------------------------
 while IFS=$'\t' read -r image version; do
   [ -n "$image" ] || continue
+  checked=$((checked + 1))
   audit_image "$image" "$version"
 done < <(jq -r '.[] | [.image, .version] | @tsv' .github/images.json)
 
-check_orphans
-orphan_count=$(jq 'length' <<<"$orphans_json")
-[ "$orphan_count" -gt 0 ] && issues=$((issues + 1))
+# A jq failure reading .github/images.json (malformed JSON, wrong shape) is
+# invisible to `set -eo pipefail` inside a `< <(...)` process substitution --
+# the loop above would simply run zero times and this would otherwise report
+# "every published image is healthy" having checked nothing at all. Mirrors
+# the same assertion in check-pins.sh.
+if [ "$checked" -eq 0 ]; then
+  echo "error: no images parsed from .github/images.json -- malformed file or jq failure" >&2
+  exit 2
+fi
 
 if [ "$format" = json ]; then
   jq -s \
     --argjson issues "$issues" \
-    --argjson orphan_checked "$orphan_checked" \
-    --arg orphan_skip_reason "$orphan_skip_reason" \
-    --argjson orphans "$orphans_json" \
-    '{issues:$issues, images:., orphans:{checked:$orphan_checked, skip_reason:$orphan_skip_reason, packages:$orphans}}' \
+    --argjson failed "$failed" \
+    '{issues:$issues, failed:$failed, images:.}' \
     "$tmp/rows.jsonl"
 else
-  printf '%-14s %-14s %-8s %-8s %-6s %-6s %-7s %s\n' IMAGE VERSION PULL SIG SBOM PROV STALE AGE_D
-  jq -r '[.image,.version,.pull_state,.sig_state,.has_sbom,.has_provenance,.stale,(.age_days // "?")] | @tsv' "$tmp/rows.jsonl" \
-    | while IFS=$'\t' read -r i v p s sb pr st ad; do
-        printf '%-14s %-14s %-8s %-8s %-6s %-6s %-7s %s\n' "$i" "$v" "$p" "$s" "$sb" "$pr" "$st" "$ad"
+  printf '%-14s %-14s %-8s %-8s %-6s %-6s %-9s %-7s %s\n' IMAGE VERSION PULL SIG SBOM PROV FRESH STATUS AGE_D
+  jq -r '[.image,.version,.pull_state,.sig_state,.has_sbom,.has_provenance,.freshness_state,.status,(.age_days // "?")] | @tsv' "$tmp/rows.jsonl" \
+    | while IFS=$'\t' read -r i v p s sb pr fr st ad; do
+        printf '%-14s %-14s %-8s %-8s %-6s %-6s %-9s %-7s %s\n' "$i" "$v" "$p" "$s" "$sb" "$pr" "$fr" "$st" "$ad"
       done
   echo
-  if [ "$orphan_checked" = true ]; then
-    echo "orphan packages not in images.json: ${orphan_count}"
-    [ "$orphan_count" -gt 0 ] && jq -r '.[]' <<<"$orphans_json" | sed 's/^/  - /'
-  else
-    echo "orphan check skipped: $orphan_skip_reason"
-  fi
-  echo
-  printf 'issues=%d\n' "$issues"
+  printf 'issues=%d failed=%d\n' "$issues" "$failed"
 fi
 
-[ "$issues" -gt 0 ] && { log info "$issues issue(s) found"; exit "$EXIT_ISSUES"; }
+if [ "$issues" -gt 0 ]; then
+  log info "$issues issue(s) found"
+  [ "$failed" -gt 0 ] && log info "additionally, $failed check(s) could not be determined (a broken checker, not counted as a registry issue)"
+  exit "$EXIT_ISSUES"
+fi
+if [ "$failed" -gt 0 ]; then
+  log error "$failed check(s) could not be determined -- treating this run as a broken checker, not a clean audit"
+  exit 1
+fi
 log info "every published image is healthy"
 exit 0
