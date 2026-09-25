@@ -348,6 +348,23 @@ Builds then use the mirror, so they do not depend on Docker Hub availability or 
 Dockerfile takes a `BASE_IMAGE` build arg that defaults to upstream, so local builds still work
 without authenticating to `ghcr.io`; CI overrides it with the mirror.
 
+**The copy is by digest, not by tag.** The `mirror` job resolves each upstream tag to a digest
+first, mirrors that exact digest (not the tag a second time), and then verifies the mirror
+resolves back to it — failing the run rather than publishing on an unverified copy. This closes
+the one integrity gap the rest of the pipeline doesn't have: every action is SHA-pinned and every
+downloaded binary — including each lint engine — is checksum-verified, but until this check
+existed the base image itself was copied purely by trusting whatever a mutable tag happened to
+resolve to at copy time, with no record of which bytes were actually mirrored. Every publish run
+records one `{upstream, tag, digest}` object per distinct base — into the run summary and into a
+machine-readable **`bases` artifact** (`bases.json`), the mirror-boundary counterpart to
+`digests.json` above — so "were we affected by an upstream compromise during window X" is
+answerable later without a rebuild.
+
+This is deliberately scoped to the mirror boundary only. The Dockerfiles' `ARG BASE_IMAGE`
+defaults (`python:3.13`, `node:22`, `golang:1`, …) stay tag-based on purpose — that's what lets
+Dependabot propose base bumps and the weekly rebuild pick up upstream patches — freezing those to
+a digest would break the update mechanism this repo depends on.
+
 Make each `mirror-*` package public along with its `ci-*` image. They are byte-identical copies of
 images already public on Docker Hub, so privacy buys nothing — and making them public removes any
 question of whether the build jobs can pull them. If one is left private and a build fails to pull
@@ -456,6 +473,44 @@ findings, misconfiguration and licences are all reported at full severity, but o
 summary and the `security-report-<image>-<arch>` artifact. If you need a standing inventory of
 accepted risk rather than a duplicate of the exit code, widen the SARIF step's scope beyond the
 gate's — that is a deliberate choice about alert volume, not an oversight.
+
+### Verifying a signature
+
+Every published manifest list is signed with keyless cosign — no key to distribute, no key to
+leak. The identity in the certificate is the workflow that built it, and checking that identity is
+the whole point: a signature you never verify protects nobody, and until now this README did not
+say how.
+
+```bash
+cosign verify \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+  --certificate-identity-regexp \
+    '^https://github\.com/greenblacked/github-base-images/\.github/workflows/build-image\.yml@refs/heads/main$' \
+  ghcr.io/greenblacked/ci-tools:bookworm-v1
+```
+
+**Do not drop the identity flags.** `cosign verify` without them checks only that *somebody*
+signed the image, which any attacker with a Sigstore account can also do. The pair above is what
+ties the artifact to this repository's `main`.
+
+The identity is `build-image.yml`, not `build-and-push.yml`. Signing happens inside the reusable
+workflow, and a reusable workflow signs under its own path — a common surprise, and the usual
+reason a first `cosign verify` fails. If yours does, print what the signature actually claims
+rather than guessing:
+
+```bash
+cosign verify --insecure-ignore-tlog=false \
+  --certificate-identity-regexp '.*' \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+  ghcr.io/greenblacked/ci-tools:bookworm-v1 2>&1 | head
+```
+
+That accepts any identity, so it is a diagnostic, **not** a verification — never leave it in a
+pipeline.
+
+Verification belongs in the job that consumes the image, not only in a README. Pin the digest from
+`digests.json`, verify it, then run it: a tag can move, and a digest that was signed last week is
+still the digest that was signed.
 
 ### Attestations
 
