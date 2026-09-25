@@ -49,6 +49,67 @@ A gate is only honest if going red always means an action *this repo* can take:
 - A mirror-verify failure blocks the `image` job entirely (it depends on `mirror`), so a bad
   mirror never reaches a build the way an unfixed library finding is allowed to.
 
+## The SARIF report is not the gate with the pipes swapped
+
+For a while the vulnerability SARIF step (uploaded to the Security tab) carried the same flags as
+the gate: `ignore-unfixed`, `severity: HIGH,CRITICAL`, `vuln-type: os`. The intent was "the same
+scope, just as a browsable report instead of an exit code." That reasoning was wrong on both what
+it would contain and what it actually did contain.
+
+**What it would contain, if the flags worked as written:** a SARIF step whose scope is identical
+to the gate's can only ever report exactly what the gate is simultaneously failing on. On any
+build that reaches the SARIF step at all, the gate has already passed with zero matching findings
+— so the report is, by construction, empty every time it runs. That is not a report; it is the
+gate's exit code rendered a second, more expensive way.
+
+**What it actually contained, because of a flag that was never set:** trivy-action's SARIF
+handling silently discards `severity:` unless `limit-severities-for-sarif: true` is also passed —
+that input has no default, and the step didn't set it. From the action's `entrypoint.sh`:
+
+```sh
+# Handle SARIF
+if [ "${TRIVY_FORMAT:-}" = "sarif" ]; then
+  if [ "${INPUT_LIMIT_SEVERITIES_FOR_SARIF:-false,,}" != "true" ]; then
+    echo "Building SARIF report with all severities"
+    unset TRIVY_SEVERITY
+  else
+    echo "Building SARIF report"
+  fi
+fi
+```
+
+So the SARIF step's real scope was never "same as the gate." It was: all severities (UNKNOWN
+through CRITICAL), OS packages only, fixed-only. The `severity: HIGH,CRITICAL` line was dead
+input the whole time. **Any SARIF-format trivy-action step that also passes `severity:` needs
+`limit-severities-for-sarif: true` next to it, or the severity filter does nothing** — this is
+easy to get wrong because the input is silently accepted either way; nothing errors, nothing
+warns, the step just quietly ships more than intended.
+
+What actually made the report near-empty in practice wasn't the (non-functional) severity match
+with the gate — it was `ignore-unfixed` on an image whose build had just run `apt-get upgrade`.
+"Fixed" means an updated package exists; the build already installed it. What survives that is
+overwhelmingly *unfixed* CVEs, which `ignore-unfixed` excludes by definition. The one filter that
+was load-bearing for "the Security tab is empty" was never the one intended as the primary filter.
+
+**Decision:** the SARIF step now diverges from the gate on purpose, to carry the accepted risk the
+gate deliberately tolerates rather than duplicate its exit code:
+
+- Drops `ignore-unfixed` — unfixed HIGH/CRITICAL OS CVEs are the real, accepted risk in these
+  images and belong in the Security tab, not only in the full-severity job artifact.
+- Drops `vuln-type: os` — library findings (the runtime's own bundled `pip`/`npm`/`gem` packages)
+  are included. The gate excludes them for the same reason as always (not fixable from this repo);
+  that is the argument *for* reporting them, not for keeping them out of the one view built for
+  browsing findings over time.
+- Sets `limit-severities-for-sarif: true` alongside `severity: HIGH,CRITICAL`, so the severity
+  filter this time actually takes effect. Given the widening above, the alternative (every
+  severity) would be a large volume increase across every image/architecture upload category, most
+  of it not worth a human's attention. UNKNOWN/LOW/MEDIUM findings still exist — in the JSON and
+  table report artifacts, which run with no filters at all — just not in the triaged view.
+
+The gate itself is unchanged: `ignore-unfixed`, `severity: HIGH,CRITICAL`, `vuln-type: os`. Nothing
+above should ever be read as loosening or widening what blocks a publish — only what gets reported
+once a publish already succeeded.
+
 ## Revisit if
 
 An image ever vendors third-party libraries directly (library findings would become actionable),
