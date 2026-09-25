@@ -210,10 +210,28 @@ jobs:
           output: sbom-${{ inputs.image }}-${{ matrix.arch }}.cdx.json
           exit-code: '0'
 
-      # Same scope as the gate below, emitted as SARIF so findings land in the
-      # repository's Security tab instead of only inside a build log. `category`
-      # must be unique per image and architecture or each upload overwrites the
-      # previous one.
+      # Deliberately WIDER than the gate below, so this is the standing
+      # inventory of accepted risk rather than a near-duplicate of the exit
+      # code. Two differences from the gate, both intentional:
+      #   - no `ignore-unfixed`: on an image whose build just ran
+      #     `apt-get upgrade`, "fixed" and "already applied" are the same
+      #     set, so a fixed-only report is close to a guarantee of an empty
+      #     one. What is left is overwhelmingly unfixed CVEs -- exactly the
+      #     accepted risk worth a standing record.
+      #   - no `vuln-type`, so library findings (the runtime's own bundled
+      #     deps -- npm, pip, gem packages baked into the upstream image) are
+      #     included too. The gate excludes them because they are not
+      #     fixable from this repo; that is the same argument for reporting
+      #     them, not for hiding them. The action's default is `os,library`
+      #     (see its action.yaml), so omitting the input is enough.
+      #
+      # `limit-severities-for-sarif: true` is NOT optional decoration --
+      # without it, `severity:` below is silently discarded for SARIF output.
+      # trivy-action's entrypoint unsets TRIVY_SEVERITY whenever the format is
+      # sarif unless this flag is explicitly true (the input has no default),
+      # so a SARIF step that only sets `severity:` actually ships every
+      # severity, UNKNOWN and LOW included. `category` must be unique per
+      # image and architecture or each upload overwrites the previous one.
       - name: Vulnerability report (SARIF)
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
@@ -222,9 +240,8 @@ jobs:
           format: sarif
           output: trivy-${{ inputs.image }}-${{ matrix.arch }}.sarif
           exit-code: '0'
-          ignore-unfixed: true
+          limit-severities-for-sarif: true
           severity: HIGH,CRITICAL
-          vuln-type: os
 
       # continue-on-error: code scanning upload must never be the reason an
       # image fails to publish.
