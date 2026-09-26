@@ -688,27 +688,6 @@ jobs:
             exit 1
           fi
 
-      # One {image, version, digest} object per image, aggregated by the
-      # caller's `digests` job into a machine-readable digests.json -- the
-      # automatable form of the "pin this digest" advice below.
-      - name: Export digest manifest
-        env:
-          IMAGE: ${{ inputs.image }}
-          VERSION: ${{ inputs.version }}
-          DIGEST: ${{ steps.resolve.outputs.digest }}
-        run: |
-          jq -n --arg image "$IMAGE" --arg version "$VERSION" --arg digest "$DIGEST" \
-            '{image: $image, version: $version, digest: $digest}' \
-            > "digest-manifest-$IMAGE.json"
-
-      - name: Upload digest manifest
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: digest-manifest-${{ inputs.image }}
-          path: digest-manifest-*.json
-          if-no-files-found: error
-          retention-days: 90
-
       - name: Report digest and platforms
         env:
           REPO: ghcr.io/${{ github.repository_owner }}/${{ inputs.image }}
@@ -739,3 +718,30 @@ jobs:
             echo "$inspect"
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
+
+      # One {image, version, digest} object per image, aggregated by the
+      # caller's `digests` job into a machine-readable digests.json -- the
+      # automatable form of the "pin this digest" advice above.
+      #
+      # LAST on purpose, after every check this job makes: signing, both
+      # verifications, the attestation and the both-platforms assertion. The
+      # caller's `digests` job runs even when an image failed (!cancelled()),
+      # so a manifest must only exist for an index that passed everything --
+      # an upload before a failing check would put that index in digests.json.
+      - name: Export digest manifest
+        env:
+          IMAGE: ${{ inputs.image }}
+          VERSION: ${{ inputs.version }}
+          DIGEST: ${{ steps.resolve.outputs.digest }}
+        run: |
+          jq -n --arg image "$IMAGE" --arg version "$VERSION" --arg digest "$DIGEST" \
+            '{image: $image, version: $version, digest: $digest}' \
+            > "digest-manifest-$IMAGE.json"
+
+      - name: Upload digest manifest
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: digest-manifest-${{ inputs.image }}
+          path: digest-manifest-*.json
+          if-no-files-found: error
+          retention-days: 90

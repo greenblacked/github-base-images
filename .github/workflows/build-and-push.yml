@@ -424,8 +424,10 @@ jobs:
   # success()). A failed image must not cost every OTHER image its entry: the
   # report-only OSV job failing, or one image's gate, used to skip this job
   # for the whole run. What gets aggregated is still only what was actually
-  # published and verified -- the merge job uploads its manifest after the
-  # post-sign verification, so an image that failed it has no manifest here.
+  # published and verified -- the merge job uploads its manifest as its last
+  # step, after signing, both verifications, the attestation and the
+  # both-platforms assertion, so an image that failed any of them has no
+  # manifest here.
   # The run stays red either way; the summary says how many of the planned
   # images made it, so a partial set is visible rather than silent.
   digests:
