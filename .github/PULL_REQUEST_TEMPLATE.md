@@ -21,8 +21,8 @@
 - [ ] New tools are asserted in the image's `test.sh` — `--no-install-recommends` is exactly how
       one silently goes missing
 - [ ] Nothing project-specific (dependencies, source, credentials) is baked in
-- [ ] For a new image: executable `test.sh`, both `paths:` filters, mirror step, and a Dependabot
-      entry — see [Adding another image](../README.md#adding-another-image)
+- [ ] For a new image: executable `test.sh`, an `images.json` entry, and a Dependabot entry —
+      see [Adding another image](../README.md#adding-another-image)
 
 ## Verification
 
