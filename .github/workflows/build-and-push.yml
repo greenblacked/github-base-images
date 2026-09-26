@@ -419,9 +419,18 @@ jobs:
   # digests out of run summaries by hand. Publish runs only -- PR runs skip the
   # merge jobs, so there is nothing to aggregate. Covers whatever subset this
   # run built; a full-rebuild run yields the complete set.
+  #
+  # Runs even when some `image` call failed (`!cancelled()`, not the implicit
+  # success()). A failed image must not cost every OTHER image its entry: the
+  # report-only OSV job failing, or one image's gate, used to skip this job
+  # for the whole run. What gets aggregated is still only what was actually
+  # published and verified -- the merge job uploads its manifest after the
+  # post-sign verification, so an image that failed it has no manifest here.
+  # The run stays red either way; the summary says how many of the planned
+  # images made it, so a partial set is visible rather than silent.
   digests:
-    needs: image
-    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    needs: [plan, image]
+    if: ${{ !cancelled() && needs.image.result != 'skipped' && github.event_name != 'pull_request' && github.ref == 'refs/heads/main' }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
@@ -435,16 +444,42 @@ jobs:
           merge-multiple: true
 
       - name: Assemble digests.json
+        env:
+          PLANNED_IMAGES: ${{ needs.plan.outputs.images }}
+          IMAGE_RESULT: ${{ needs.image.result }}
         run: |
-          jq -s 'sort_by(.image)' manifests/digest-manifest-*.json > digests.json
+          # nullglob: with no manifests at all, an unexpanded pattern would
+          # reach jq as a literal filename and fail with a confusing error.
+          shopt -s nullglob
+          manifests=(manifests/digest-manifest-*.json)
+          planned=$(jq 'length' <<<"$PLANNED_IMAGES")
+          if [ "${#manifests[@]}" -eq 0 ]; then
+            echo "::error::no digest manifests to aggregate: 0 of $planned planned images were published and verified"
+            exit 1
+          fi
+
+          jq -s 'sort_by(.image)' "${manifests[@]}" > digests.json
           jq . digests.json
+          aggregated=$(jq 'length' digests.json)
+          missing=$(jq -rn --argjson planned "$PLANNED_IMAGES" --slurpfile got digests.json \
+            '[$planned[].image] - [$got[0][].image] | join(", ")')
+
           {
             echo "### Published digests (this run)"
+            echo
+            echo "Aggregated **$aggregated of $planned** planned images (image jobs: $IMAGE_RESULT)."
+            if [ -n "$missing" ]; then
+              echo
+              echo "Not in digests.json -- not published, or failed post-sign verification: $missing"
+            fi
             echo
             echo "| image | version | digest |"
             echo "|---|---|---|"
             jq -r '.[] | "| \(.image) | \(.version) | `\(.digest)` |"' digests.json
           } >> "$GITHUB_STEP_SUMMARY"
+          if [ -n "$missing" ]; then
+            echo "::warning::digests.json covers $aggregated of $planned planned images; missing: $missing"
+          fi
 
       - name: Upload digests.json
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
