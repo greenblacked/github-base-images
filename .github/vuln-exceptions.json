@@ -6,7 +6,10 @@
     "installed": "70.3.0",
     "reason": "setuptools is vendored inside pip 26.2.1 (pip/_vendor), which azure-cli's bundled Python ships, and pip's vendor.txt still pins setuptools==70.3.0, on main as well as in the latest release.",
     "upstream": "https://github.com/pypa/pip/blob/main/src/pip/_vendor/vendor.txt",
-    "expires": "2026-10-26"
+    "expires": "2026-10-26",
+    "purls": [
+      "pkg:pypi/setuptools@70.3.0"
+    ]
   },
   {
     "image": "ci-cloud",
@@ -39,7 +42,10 @@
     "installed": "1.1.2",
     "reason": "msgpack is vendored inside pip 26.2.1 (pip/_vendor), which azure-cli's bundled Python ships, and no released pip vendors the fixed msgpack 1.2.1 yet; the bump exists only on pip main.",
     "upstream": "https://github.com/pypa/pip/blob/main/news/msgpack.vendor.rst",
-    "expires": "2026-10-26"
+    "expires": "2026-10-26",
+    "purls": [
+      "pkg:pypi/msgpack@1.1.2"
+    ]
   },
   {
     "image": "ci-db",
@@ -185,7 +191,10 @@
     "installed": "70.3.0",
     "reason": "setuptools is vendored inside pip 26.2.1 (pip/_vendor) in the upstream python:3.13 image, and pip's vendor.txt still pins setuptools==70.3.0, on main as well as in the latest release.",
     "upstream": "https://github.com/pypa/pip/blob/main/src/pip/_vendor/vendor.txt",
-    "expires": "2026-10-26"
+    "expires": "2026-10-26",
+    "purls": [
+      "pkg:pypi/setuptools@70.3.0"
+    ]
   },
   {
     "image": "ci-python313",
@@ -194,7 +203,10 @@
     "installed": "1.1.2",
     "reason": "msgpack is vendored inside pip 26.2.1 (pip/_vendor) in the upstream python:3.13 image, and no released pip vendors the fixed msgpack 1.2.1 yet; the bump exists only on pip main.",
     "upstream": "https://github.com/pypa/pip/blob/main/news/msgpack.vendor.rst",
-    "expires": "2026-10-26"
+    "expires": "2026-10-26",
+    "purls": [
+      "pkg:pypi/msgpack@1.1.2"
+    ]
   },
   {
     "image": "ci-python314",
@@ -203,7 +215,10 @@
     "installed": "70.3.0",
     "reason": "setuptools is vendored inside pip 26.2.1 (pip/_vendor) in the upstream python:3.14 image, and pip's vendor.txt still pins setuptools==70.3.0, on main as well as in the latest release.",
     "upstream": "https://github.com/pypa/pip/blob/main/src/pip/_vendor/vendor.txt",
-    "expires": "2026-10-26"
+    "expires": "2026-10-26",
+    "purls": [
+      "pkg:pypi/setuptools@70.3.0"
+    ]
   },
   {
     "image": "ci-python314",
@@ -212,18 +227,9 @@
     "installed": "1.1.2",
     "reason": "msgpack is vendored inside pip 26.2.1 (pip/_vendor) in the upstream python:3.14 image, and no released pip vendors the fixed msgpack 1.2.1 yet; the bump exists only on pip main.",
     "upstream": "https://github.com/pypa/pip/blob/main/news/msgpack.vendor.rst",
-    "expires": "2026-10-26"
-  },
-  {
-    "image": "ci-ruby40",
-    "id": "CVE-2026-33210",
-    "package": "json",
-    "installed": "2.18.0",
-    "reason": "Stale default-gem metadata only: json 2.19.9 is installed and is what require loads (test.sh asserts); Ruby 4.0 still ships json 2.18.0 as a default gem.",
-    "upstream": "https://github.com/ruby/ruby/blob/master/ext/json/lib/json/version.rb",
     "expires": "2026-10-26",
-    "paths": [
-      "usr/local/lib/ruby/gems/4.0.0/specifications/default/json-2.18.0.gemspec"
+    "purls": [
+      "pkg:pypi/msgpack@1.1.2"
     ]
   },
   {

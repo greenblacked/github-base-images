@@ -67,19 +67,21 @@ other finding in them as well.
 
 So the gate takes **exceptions** from `.github/vuln-exceptions.json`, under these rules:
 
-- **Only where no released artifact contains the fix**, or, the one other case, where the fix is
-  already installed and the finding is on stale metadata the image has to keep (Ruby's default
-  gemspec for `json` in `ci-ruby40`, which RubyGems needs to activate the newer gem), with the
-  image's `test.sh` asserting that the fixed version is the one that loads. Never for "a fix
-  exists but the pin has not been bumped yet", and never for "a patched upstream image exists but
-  has not been rebuilt": those are this repository's to fix, and the gate is right to be red.
+- **Only where no released artifact contains the fix.** Never for "a fix exists but the pin has
+  not been bumped yet", and never for "a patched upstream image exists but has not been rebuilt":
+  those are this repository's to fix, and the gate is right to be red.
 - **Per image and per id.** Each entry names one image and one CVE or GHSA id exactly as Trivy
   prints it. `build-image.yml` turns only that image's entries into the Trivy ignore file for that
-  image's gate, so an exception can never excuse the same id in another image. An entry can carry
-  `paths` (the Trivy target or package path, such as `usr/local/bin/migrate`) to narrow it
-  further: the same id in any other file of the same image still fails. Paths are used wherever
-  Trivy reports a stable one, and left out only where it does not (packages read from pip's own
-  SBOM are reported under the aggregate `Python` target with no usable path).
+  image's gate, so an exception can never excuse the same id in another image.
+- **Per package, too.** Within the image, every entry is narrowed by `paths`, `purls` or both, and
+  `scripts/lint.sh` rejects one with neither, because an id alone would be excused in every
+  package of the image. `paths` lists the Trivy target or package path (such as
+  `usr/local/bin/migrate`), written out in full, with no leading `/` and no glob characters: the
+  same id in any other file of the same image still fails. Where Trivy reports no usable path
+  (packages vendored inside pip appear under the aggregate `Python` target), `purls` names the
+  package and its exact installed version as Trivy's PURL for the finding
+  (`pkg:pypi/msgpack@1.1.2`): the same id in another package, or in another version of the same
+  one, still fails. When both are given, a finding must match both.
 - **Ninety days at most.** Each entry has an `expires` date, which `scripts/lint.sh` rejects if it
   is more than 90 days away. It becomes the ignore file's `expired_at`, and from that date Trivy
   stops applying the entry: the image goes red again and someone has to look, then remove the
@@ -88,9 +90,9 @@ So the gate takes **exceptions** from `.github/vuln-exceptions.json`, under thes
   gate is the signal.
 - **Always visible.** The gate step prints the exceptions it applied to the log and the job
   summary. The vulnerability reports, SARIF and SBOM never use them, so an excepted finding still
-  appears in *Security → Code scanning*. The alerts report lists every excepted alert in an
-  *Active exceptions* section and every expired entry as a reminder; the first never fails it,
-  and the second excuses nothing.
+  appears in *Security → Code scanning*. The alerts report applies the same image, id, path and
+  package-version matching, lists every excepted alert in an *Active exceptions* section and every
+  expired entry as a reminder; the first never fails it, and the second excuses nothing.
 
 Every entry also says why the fix cannot be taken here (`reason`) and where to watch for it
 (`upstream`), so renewing one is a decision made with the evidence in front of the reviewer, not a

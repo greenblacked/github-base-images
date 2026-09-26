@@ -190,6 +190,11 @@ note "images.json cross-check"
 # --- duplicates, and no expiry more than 90 days out, so an exception cannot
 # --- be parked and forgotten. Renewing one is a new PR with a new date.
 # ---
+# --- Every entry must also be narrowed to `paths` (literal Trivy paths: no
+# --- leading "/", no glob characters) and/or `purls` (pkg:<type>/<name>@<version>
+# --- as Trivy prints it). An entry with neither would excuse its id in every
+# --- package of the image, which is not what an exception is for.
+# ---
 # --- An entry that has already expired is a warning, not a failure: the gate
 # --- itself turns that image red again, which is the intended signal, and an
 # --- expiry date passing must not break lint for every unrelated PR. "Expired"
@@ -231,10 +236,24 @@ note "vuln-exceptions.json"
             | "\($at): expires \($e.expires) is not a valid YYYY-MM-DD date" ),
           ( select(($e.expires | valid_date) and $e.expires > $limit)
             | "\($at): expires \($e.expires) is more than 90 days after today (\($today)); the latest allowed is \($limit)" ),
+          ( select(($e | has("paths") | not) and ($e | has("purls") | not))
+            | "\($at): needs \"paths\" or \"purls\" (or both); an entry with neither would excuse the id in every package of the image" ),
           ( select($e | has("paths"))
             | select(($e.paths | type) != "array" or ($e.paths | length) == 0
                      or any($e.paths[]; text | not))
-            | "\($at): paths, when present, must be a non-empty array of non-empty strings" )
+            | "\($at): paths, when present, must be a non-empty array of non-empty strings" ),
+          ( select(($e.paths | type) == "array")
+            | $e.paths[] | strings
+            | select(startswith("/") or test("[*?\\[]"))
+            | "\($at): path \(tojson) must be written as Trivy reports it: no leading \"/\" and no glob characters (*, ?, [)" ),
+          ( select($e | has("purls"))
+            | select(($e.purls | type) != "array" or ($e.purls | length) == 0
+                     or any($e.purls[]; text | not))
+            | "\($at): purls, when present, must be a non-empty array of non-empty strings" ),
+          ( select(($e.purls | type) == "array")
+            | $e.purls[] | strings
+            | select(test("^pkg:[a-z]+/[^@\\s]+@[^\\s]+$") | not)
+            | "\($at): purl \(tojson) is not pkg:<type>/<name>@<version>, the form Trivy prints (e.g. pkg:pypi/msgpack@1.1.2)" )
         end
     ' "$exc"); then
     echo "error: could not check $exc"

@@ -302,6 +302,14 @@ jobs:
       # without it, so the SARIF, the job summary and the artifact still show
       # an excepted finding in full.
       #
+      # Within the image, every entry is narrowed further by `paths` (the file
+      # or target Trivy reports, written out in full: no leading `/` and no
+      # glob characters, so each names exactly one path) and/or `purls` (the
+      # package and exact version, matched against the PURL Trivy gives the
+      # finding), so it cannot excuse the same id in another package. An
+      # entry with neither would excuse the id anywhere in the image, so it is
+      # malformed here rather than applied.
+      #
       # `expires` becomes Trivy's `expired_at`, written as an unquoted YAML
       # date because Trivy decodes it into a time.Time. Trivy stops applying
       # an entry from 00:00 UTC on that date, so the gate goes red again on its
@@ -332,11 +340,13 @@ jobs:
             def valid_date: type == "string"
               and test("^[0-9]{4}-[0-9]{2}-[0-9]{2}$")
               and ((try (strptime("%Y-%m-%d") | mktime | strftime("%Y-%m-%d")) catch null) == .);
+            def list_of(f): type == "array" and length > 0 and all(.[]; text and f);
             def well_formed:
               (.id | text) and (.id | test("^(CVE-[0-9]{4}-[0-9]+|GHSA-[a-z0-9]{4}-[a-z0-9]{4}-[a-z0-9]{4})$"))
-              and (.reason | text) and (.upstream | text) and (.expires | valid_date)
-              and ((has("paths") | not)
-                   or ((.paths | type) == "array" and (.paths | length) > 0 and all(.paths[]; text)));
+              and (.package | text) and (.reason | text) and (.upstream | text) and (.expires | valid_date)
+              and (has("paths") or has("purls"))
+              and ((has("paths") | not) or (.paths | list_of(startswith("/") or test("[*?\\[]") | not)))
+              and ((has("purls") | not) or (.purls | list_of(test("^pkg:[a-z]+/[^@\\s]+@[^\\s]+$"))));
             if type != "array" then error("not a JSON array") else . end
             | map(select(type == "object" and .image == $img))
             | if all(.[]; well_formed) | not
@@ -346,7 +356,8 @@ jobs:
                 (.[] | "  - id: \(.id | @json)",
                        "    statement: \("\(.reason) (\(.upstream))" | @json)",
                        "    expired_at: \(.expires)",
-                       (if has("paths") then "    paths:", (.paths[] | "      - \(@json)") else empty end))
+                       (if has("paths") then "    paths:", (.paths[] | "      - \(@json)") else empty end),
+                       (if has("purls") then "    purls:", (.purls[] | "      - \(@json)") else empty end))
               end' "$src" > "$file" || rc=$?
           if [ "$rc" -ne 0 ]; then
             echo "::error::could not build the exception list for $IMAGE from $src (jq exit $rc) -- the gate will not run without knowing what it excuses"

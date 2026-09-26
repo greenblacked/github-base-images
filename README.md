@@ -496,9 +496,9 @@ attached to the job summary, and uploaded as a **`security-report-<image>-<arch>
     findings, report-only until then, now gate.
   - The one way past it is an **expiring exception** in `.github/vuln-exceptions.json`, for a
     finding whose fixed version is in no released artifact yet (a module compiled into the latest
-    upstream release binary, a package vendored inside pip). Exceptions are per image and per
-    CVE, last 90 days at most, and are printed in the gate step's log and summary; the reports
-    and SARIF above never use them. See [Vulnerability exceptions](#vulnerability-exceptions).
+    upstream release binary, a package vendored inside pip). Exceptions are per image, per CVE
+    and per path or package version, last 90 days at most, and are printed in the gate step's
+    log and summary; the reports and SARIF above never use them. See [Vulnerability exceptions](#vulnerability-exceptions).
 - **Secret scan** — **gates at any severity**. A baked-in credential in a public CI image is
   always fixable from this repo, with no upstream to wait on, so there is no excuse for shipping
   one.
@@ -587,12 +587,9 @@ Four things about it are less obvious than they look:
 purpose ([ADR 0006](docs/adr/0006-gate-on-fixable-library-vulnerabilities.md#exceptions-expiring-per-image-per-id)).
 An entry is for a finding whose advisory names a fixed version that **no released artifact
 contains yet**: a Go module compiled into the latest release of a binary the image installs, a
-package vendored inside the upstream image's pip, a package inside the newest .NET SDK. The one
-other case is a finding on stale metadata only: the fixed version is installed and is what loads
-(the image's `test.sh` asserts it), but a record of the old one has to stay, like Ruby's default
-`json` gemspec in `ci-ruby40`. It is never for "a fix exists and nobody has bumped the pin", nor
-for "upstream has shipped a patched image and this one has not been rebuilt" — those get fixed,
-not excepted.
+package vendored inside the upstream image's pip, a package inside the newest .NET SDK. It is
+never for "a fix exists and nobody has bumped the pin", nor for "upstream has shipped a patched
+image and this one has not been rebuilt" — those get fixed, not excepted.
 
 JSON has no comments, so the file's format lives here. It is an array of entries:
 
@@ -616,18 +613,24 @@ JSON has no comments, so the file's format lives here. It is an array of entries
   watch for it (a release page, a tracking issue, a vendoring file).
 - `expires` is `YYYY-MM-DD`, at most 90 days from the day it is written. From that date the entry
   no longer applies — Trivy's `expired_at` semantics — and the image goes red again.
-- `paths` is optional: the Trivy target (`usr/local/bin/migrate`) or package path (a
-  `.deps.json`, `…dist-info/METADATA` or `.gemspec` file) the entry is limited to. Use it whenever
-  the gate table, its *Report Summary* or the JSON report shows a stable path; leave it out only
-  when Trivy reports none (pip's vendored packages appear under the aggregate `Python` target).
+- Every entry needs `paths`, `purls` or both, so it is limited to one package rather than the id
+  anywhere in the image. When both are given, a finding must match both.
+- `paths` is the Trivy target (`usr/local/bin/migrate`) or package path (a `.deps.json`,
+  `…dist-info/METADATA` or `.gemspec` file) the entry is limited to, written out in full as Trivy
+  reports it: no leading `/`, no glob characters. Use it whenever the gate table, its *Report
+  Summary* or the JSON report shows a stable path.
+- `purls` is for findings with no usable path (pip's vendored packages appear under the aggregate
+  `Python` target): the package's PURL as Trivy prints it in the JSON report's `PkgIdentifier`,
+  `pkg:<type>/<name>@<version>`, for example `["pkg:pypi/msgpack@1.1.2"]`. It pins the exact
+  installed version, so the entry stops applying when the package changes.
 
 **Adding one.** Take the ids from the failing gate step's table — all of them, both
 architectures — and check that no release of the thing that bundles them carries the fix yet.
 Add one entry per image and id, then run `./scripts/lint.sh`, which checks every field, rejects
-an unknown image, a malformed id or date, a duplicate, or an expiry more than 90 days out. A
-change to the file rebuilds exactly the images whose entries changed, on the pull request and
-again on `main`, and each gate step prints the Trivy ignore file it was given in its log and job
-summary.
+an unknown image, a malformed id, date, path or PURL, an entry with neither `paths` nor `purls`, a
+duplicate, or an expiry more than 90 days out. A change to the file rebuilds exactly the images
+whose entries changed, on the pull request and again on `main`, and each gate step prints the
+Trivy ignore file it was given in its log and job summary.
 
 **When one expires.** The image fails its gate again, `build-image.yml` warns about the expired
 entry by name, lint warns (without failing), and the alerts report lists it under *Expired
@@ -853,11 +856,12 @@ means the last build of that image failed its gate and the published image is ol
 image has not been rebuilt since the fix appeared. A HIGH/CRITICAL Dependabot alert with a patched
 version is the same thing for the repository's own dependencies. Unfixed findings are accepted risk
 waiting on upstream and never fail it; stale categories never fail it either. Nor does an alert
-covered by an active exception — the same image and CVE the gate is skipping — though it is listed,
-and counted separately in the summary; an expired entry excuses nothing. It also fails, rather than
-reporting zero, whenever it could not look: an API call that failed, Dependabot alerts switched off
-for the repository (turn them on under *Settings → Code security*), input that does not parse (the
-exceptions file included), or an alert whose fixability it cannot read.
+covered by an active exception — the same image, CVE and path or package version the gate is
+skipping — though it is listed, and counted separately in the summary; an expired entry excuses
+nothing. It also fails, rather than reporting zero, whenever it could not look: an API call that
+failed, Dependabot alerts switched off for the repository (turn them on under *Settings → Code
+security*), input that does not parse (the exceptions file included), or an alert whose fixability
+it cannot read.
 
 ```bash
 ./scripts/alerts-report.sh code-scanning.json dependabot.json .github/images.json \

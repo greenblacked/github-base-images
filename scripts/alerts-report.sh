@@ -35,14 +35,27 @@
 # .github/vuln-exceptions.json, the same list the vulnerability gate turns
 # into its Trivy ignore file: expiring, per-image, per-CVE entries for a
 # finding whose fixed version exists in no released artifact yet
-# (docs/adr/0006). A fixable HIGH/CRITICAL Trivy alert whose image and rule
-# id match an entry that has not expired is "excepted": listed in its own
-# section, counted separately, and never sets the exit code -- the report
-# agrees with the gate instead of failing on what the gate lets through.
-# "Not expired" means `expires` is after today (UTC), the same boundary Trivy
-# applies to `expired_at`: from that date on, the entry excuses nothing here
-# either, and the report lists it as expired so it gets removed or renewed.
-# Matching is on image and id only; the `paths` scoping is the gate's.
+# (docs/adr/0006). A fixable HIGH/CRITICAL Trivy alert that an entry
+# covers is "excepted": listed in its own section, counted separately, and
+# never sets the exit code -- the report agrees with the gate instead of
+# failing on what the gate lets through. An entry covers an alert only when
+# all of these hold, which is the same narrowing the gate's Trivy ignore file
+# applies:
+#   - the alert's image and rule id are the entry's `image` and `id`;
+#   - the entry has not expired: `expires` is after today (UTC), the same
+#     boundary Trivy applies to `expired_at`. From that date on the entry
+#     excuses nothing here either, and the report lists it as expired so it
+#     gets removed or renewed;
+#   - if the entry has `paths`: the alert's location is one of them. Trivy's
+#     SARIF puts the package path, or the target when there is none, in the
+#     result's location, which the API returns as
+#     most_recent_instance.location.path;
+#   - if the entry has `purls`: the alert's `Package:` and `Installed
+#     Version:` lines equal the name and version of one of them.
+# An entry with neither `paths` nor `purls` covers nothing (scripts/lint.sh
+# rejects one). Where the report and the gate could still disagree -- a
+# package name Trivy normalises in the PURL but not in the `Package:` line --
+# the report is the stricter of the two, so it fails rather than excuses.
 #
 # GitHub's secret-scanning alerts are NOT read. No GITHUB_TOKEN permission
 # grants that API, and this repository adds no PAT or app credential to reach
@@ -180,14 +193,22 @@ if ! jq -s -e '
     else (map(select(
         ([.image, .id, .package, .installed, .reason, .upstream] | all(text) | not)
         or (.expires | valid_date | not)
-        or (has("paths") and ((.paths | type) != "array" or any(.paths[]; text | not)))))
+        or (has("paths") and ((.paths | type) != "array"
+                              or any(.paths[]; (text | not) or startswith("/") or test("[*?\\[]"))))
+        or (has("purls") and ((.purls | type) != "array"
+                              or any(.purls[]; (text | not) or (test("^pkg:[a-z]+/[^@\\s]+@[^\\s]+$") | not))))))
       | if length > 0
-        then error("\(length) entr\(if length == 1 then "y" else "ies" end) missing a field or with a bad date or paths, first: \(.[0] | tojson | .[:200])")
+        then error("\(length) entr\(if length == 1 then "y" else "ies" end) missing a field or with a bad date, paths or purls, first: \(.[0] | tojson | .[:200])")
         else true end)
     end' "$exc_file" > /dev/null 2> "$tmp/exc.err"; then
   die "exceptions file $exc_file is not usable: $(tr '\n' ' ' < "$tmp/exc.err" | cut -c1-400)"
 fi
-jq -c --arg today "$today" 'map(. + {active: (.expires > $today)})' "$exc_file" > "$tmp/exc.json"
+# `pkgs` is each purl split into the name and version the alert's message
+# lines are compared with; the shape was validated above.
+jq -c --arg today "$today" '
+  map(. + {active: (.expires > $today),
+           pkgs: [(.purls // [])[] | capture("^pkg:[a-z]+/(?<name>[^@]+)@(?<version>.+)$")]})' \
+  "$exc_file" > "$tmp/exc.json"
 
 # --- normalise ----------------------------------------------------------------
 #
@@ -212,6 +233,12 @@ jq -c --arg today "$today" 'map(. + {active: (.expires > $today)})' "$exc_file" 
 jq --slurpfile images "$tmp/images.json" --slurpfile exc "$tmp/exc.json" '
   def field($k): [ split("\n")[] | select(startswith($k + ":"))
                    | ltrimstr($k + ":") | gsub("^\\s+|\\s+$"; "") ];
+  # Whether exception entry `.` covers normalised alert $a (see the header).
+  def covers($a):
+    .active and .image == $a.image and .id == $a.rule
+    and (has("paths") or has("purls"))
+    and ((has("paths") | not) or any(.paths[]; . == $a.path))
+    and ((has("purls") | not) or any(.pkgs[]; .name == $a.pkg and .version == $a.installed));
   $images[0] as $current
   | map(
       ((.most_recent_instance.category // "") | sub("/+$"; "")) as $cat
@@ -237,6 +264,7 @@ jq --slurpfile images "$tmp/images.json" --slurpfile exc "$tmp/exc.json" '
           osv: (($tl | startswith("osv")) or (($m.osv // "") != "")),
           pkg: (($msg | field("Package"))[0] // ""),
           installed: (($msg | field("Installed Version"))[0] // ""),
+          path: (.most_recent_instance.location.path // ""),
           fixed_line: ($fixed | length > 0),
           fixed: ($fixed[0] // "")
         }
@@ -244,11 +272,11 @@ jq --slurpfile images "$tmp/images.json" --slurpfile exc "$tmp/exc.json" '
           and any($current[]; . as $i | ($cat | ltrimstr("osv-")) | startswith($i)))
       | .trivy_image = (.trivy and .kind == "image" and (.osv | not))
       | .fixable = (.trivy_image and .fixed != "")
-      # An active exception for this image and id: the gate skips it, so
+      # An active exception that covers this alert: the gate skips it, so
       # this report lists it without failing on it.
       | . as $a
       | .exception = (if .fixable and (.sev == "critical" or .sev == "high")
-                      then first($exc[0][] | select(.active and .image == $a.image and .id == $a.rule)) // null
+                      then first($exc[0][] | select(covers($a))) // null
                       else null end)
       | .excepted = (.exception != null)
       | .gating = (.fixable and (.sev == "critical" or .sev == "high") and (.excepted | not))
@@ -358,9 +386,9 @@ cat > "$f" <<'EOF'
   for the repository's own dependencies: merge or make the bump.
 - **Excepted** alerts are fixable HIGH/CRITICAL findings where the fixed version exists in no
   released artifact yet (for example a module compiled into an upstream release binary), covered by
-  an unexpired entry in `.github/vuln-exceptions.json`. The gate skips exactly these, per image and
-  per id, until the entry expires; they are listed here so they stay visible, and do not fail the
-  report. An expired entry excuses nothing.
+  an unexpired entry in `.github/vuln-exceptions.json`. The gate skips exactly these, per image, id
+  and path or package version, until the entry expires; they are listed here so they stay visible,
+  and do not fail the report. An expired entry excuses nothing.
 - **Stale** categories belong to images no longer in `images.json`. Nothing uploads to them any
   more, so their alerts never close on their own.
 - Code-scanning alerts reflect each category's **last upload**, not today's vulnerability
