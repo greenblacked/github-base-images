@@ -13,7 +13,9 @@
 # Unlike pin-drift.yml and published-audit.yml, this one FAILS on a finding:
 # a fixable HIGH/CRITICAL alert is exactly what the vulnerability gate exists
 # to keep out of a published image (docs/adr/0006), so one being open is a
-# broken promise, not a drift report. Unfixed findings never fail it.
+# broken promise, not a drift report. Unfixed findings never fail it, and
+# neither does one under an active entry in .github/vuln-exceptions.json,
+# which the gate skips too; the report lists those in their own section.
 #
 # GitHub's own secret-scanning alerts are deliberately not fetched: no
 # GITHUB_TOKEN permission grants that API, and this repository adds no PAT or
@@ -116,7 +118,10 @@ jobs:
           fi
 
       # 0 clean, 3 fixable HIGH/CRITICAL alerts open (listed in the report),
-      # anything else a report that could not be trusted. The script writes
+      # anything else a report that could not be trusted. A fixable alert
+      # covered by an unexpired entry in .github/vuln-exceptions.json -- the
+      # same list the vulnerability gate skips -- is listed as excepted and
+      # does not count; an expired entry excuses nothing. The script writes
       # the step summary itself, so a red run explains itself on its summary
       # page. No pipe on the script's line: the default shell is `bash -e
       # {0}`, errexit without pipefail, and `script | tee` would report tee's
@@ -125,7 +130,8 @@ jobs:
         run: |
           rc=0
           ./scripts/alerts-report.sh code-scanning.json dependabot.json \
-            .github/images.json report.md > summary.txt || rc=$?
+            .github/images.json .github/vuln-exceptions.json report.md \
+            > summary.txt || rc=$?
           cat summary.txt
           case "$rc" in
             0) ;;

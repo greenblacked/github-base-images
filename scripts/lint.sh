@@ -181,7 +181,93 @@ note "images.json cross-check"
   done
 } || fail=1
 
-# --- 5. zizmor, best-effort and non-gating -- the same posture as CI, where
+# --- 5. vuln-exceptions.json: the vulnerability gate's expiring, per-image,
+# --- per-CVE exceptions (docs/adr/0006). build-image.yml and
+# --- scripts/alerts-report.sh each re-check the fields they depend on and
+# --- refuse to run on a malformed entry; this is where a bad entry is caught
+# --- before it reaches either, and where the rules that only matter at review
+# --- time are enforced: a real image, an id in the form Trivy prints, no
+# --- duplicates, and no expiry more than 90 days out, so an exception cannot
+# --- be parked and forgotten. Renewing one is a new PR with a new date.
+# ---
+# --- An entry that has already expired is a warning, not a failure: the gate
+# --- itself turns that image red again, which is the intended signal, and an
+# --- expiry date passing must not break lint for every unrelated PR. "Expired"
+# --- starts ON the `expires` date, the same boundary Trivy applies to the
+# --- `expired_at` it is turned into.
+# ---
+# --- A subshell rather than the { } used above, so an `exit 1` here fails
+# --- this check without skipping the rest of the battery.
+note "vuln-exceptions.json"
+(
+  exc=.github/vuln-exceptions.json
+  today=$(date -u +%Y-%m-%d)
+  # errexit is off in here (this is the left side of `||`), so every jq call
+  # checks its own status: a file that is not JSON must fail, not pass empty.
+  if ! jq -e 'type == "array"' "$exc" >/dev/null; then
+    echo "error: $exc is not a JSON array"
+    exit 1
+  fi
+  if ! problems=$(jq -r --slurpfile images .github/images.json --arg today "$today" '
+      def text: type == "string" and length > 0;
+      def valid_date: type == "string"
+        and test("^[0-9]{4}-[0-9]{2}-[0-9]{2}$")
+        and ((try (strptime("%Y-%m-%d") | mktime | strftime("%Y-%m-%d")) catch null) == .);
+      ($images[0] | map(.image)) as $known
+      | ($today | strptime("%Y-%m-%d") | mktime + 90 * 86400 | strftime("%Y-%m-%d")) as $limit
+      | to_entries[]
+      | .key as $n | .value as $e
+      | "entry \($n) (\($e.image? // "?") \($e.id? // "?"))" as $at
+      | if ($e | type) != "object" then "\($at): not an object"
+        else
+          ( ["image", "id", "package", "installed", "reason", "upstream", "expires"][]
+            | select(($e[.] | text) | not) | "\($at): missing or empty \"\(.)\"" ),
+          ( select(($e.image | text) and (any($known[]; . == $e.image) | not))
+            | "\($at): image is not in .github/images.json" ),
+          ( select(($e.id | text)
+                   and ($e.id | test("^(CVE-[0-9]{4}-[0-9]+|GHSA-[a-z0-9]{4}-[a-z0-9]{4}-[a-z0-9]{4})$") | not))
+            | "\($at): id is not a CVE-YYYY-N or GHSA-xxxx-xxxx-xxxx id as Trivy prints it" ),
+          ( select(($e.expires | text) and ($e.expires | valid_date | not))
+            | "\($at): expires \($e.expires) is not a valid YYYY-MM-DD date" ),
+          ( select(($e.expires | valid_date) and $e.expires > $limit)
+            | "\($at): expires \($e.expires) is more than 90 days after today (\($today)); the latest allowed is \($limit)" ),
+          ( select($e | has("paths"))
+            | select(($e.paths | type) != "array" or ($e.paths | length) == 0
+                     or any($e.paths[]; text | not))
+            | "\($at): paths, when present, must be a non-empty array of non-empty strings" )
+        end
+    ' "$exc"); then
+    echo "error: could not check $exc"
+    exit 1
+  fi
+  if ! dups=$(jq -r '[.[] | select(type == "object") | "\(.image) \(.id)"] | group_by(.)[]
+                     | select(length > 1) | "\(.[0]) appears \(length) times"' "$exc"); then
+    echo "error: could not check $exc for duplicates"
+    exit 1
+  fi
+  if [ -n "$dups" ]; then
+    while IFS= read -r line; do
+      problems="${problems}${problems:+$'\n'}duplicate (image, id): $line"
+    done <<< "$dups"
+  fi
+  if [ -n "$problems" ]; then
+    while IFS= read -r line; do echo "error: $exc: $line"; done <<< "$problems"
+    exit 1
+  fi
+  if ! expired=$(jq -r --arg today "$today" \
+      '.[] | select(.expires <= $today) | "\(.image) \(.id) (expires \(.expires))"' "$exc"); then
+    echo "error: could not check $exc for expired entries"
+    exit 1
+  fi
+  if [ -n "$expired" ]; then
+    while IFS= read -r line; do
+      echo "warning: $exc: expired, so the gate fails on it again -- remove or renew it: $line"
+    done <<< "$expired"
+  fi
+  echo "$(jq length "$exc") exception(s) checked"
+) || fail=1
+
+# --- 6. zizmor, best-effort and non-gating -- the same posture as CI, where
 # --- its findings surface through code scanning rather than a red job.
 note "zizmor (best-effort, reported not gating)"
 if command -v zizmor >/dev/null; then

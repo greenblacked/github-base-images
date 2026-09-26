@@ -288,6 +288,110 @@ jobs:
             sbom-${{ inputs.image }}-${{ matrix.arch }}.cdx.json
           retention-days: 90
 
+      # Expiring, per-image, per-CVE exceptions to the gate below, read from
+      # .github/vuln-exceptions.json. They exist for one case only: a finding
+      # whose advisory names a fixed version that no released artifact
+      # contains yet (a module compiled into an upstream release binary, a
+      # package vendored inside pip), so there is nothing this repo could bump
+      # or rebuild to. docs/adr/0006 has the rules.
+      #
+      # Generated here, per image, rather than committed as a Trivy ignore
+      # file, so an exception for one image can never excuse the same CVE in
+      # another, and so the list printed below is exactly what this gate run
+      # skips. Only the gate reads it: every report above has already run
+      # without it, so the SARIF, the job summary and the artifact still show
+      # an excepted finding in full.
+      #
+      # `expires` becomes Trivy's `expired_at`, written as an unquoted YAML
+      # date because Trivy decodes it into a time.Time. Trivy stops applying
+      # an entry from 00:00 UTC on that date, so the gate goes red again on its
+      # own without anyone having to remember -- that is the point, and the
+      # warning below only says so out loud. Every string is JSON-quoted with
+      # jq's @json, which is also a valid YAML double-quoted scalar, so no
+      # reason text can break the file or add entries to it.
+      #
+      # A jq failure fails the step, and so the job: an exception list that
+      # could not be read must never silently become "no exceptions", nor a
+      # half-written file.
+      - name: Vulnerability exceptions (${{ matrix.arch }})
+        id: exceptions
+        env:
+          IMAGE: ${{ inputs.image }}
+          ARCH: ${{ matrix.arch }}
+        run: |
+          src=.github/vuln-exceptions.json
+          file="trivy-exceptions-$IMAGE-$ARCH.yaml"
+          today=$(date -u +%Y-%m-%d)
+
+          # Re-checks the fields this step depends on for this image's entries
+          # (scripts/lint.sh checks the whole file): a malformed entry is an
+          # error here, never an entry quietly dropped or written half-formed.
+          rc=0
+          jq -r --arg img "$IMAGE" '
+            def text: type == "string" and length > 0;
+            def valid_date: type == "string"
+              and test("^[0-9]{4}-[0-9]{2}-[0-9]{2}$")
+              and ((try (strptime("%Y-%m-%d") | mktime | strftime("%Y-%m-%d")) catch null) == .);
+            def well_formed:
+              (.id | text) and (.id | test("^(CVE-[0-9]{4}-[0-9]+|GHSA-[a-z0-9]{4}-[a-z0-9]{4}-[a-z0-9]{4})$"))
+              and (.reason | text) and (.upstream | text) and (.expires | valid_date)
+              and ((has("paths") | not)
+                   or ((.paths | type) == "array" and (.paths | length) > 0 and all(.paths[]; text)));
+            if type != "array" then error("not a JSON array") else . end
+            | map(select(type == "object" and .image == $img))
+            | if all(.[]; well_formed) | not
+              then error("an entry for \($img) is malformed; run scripts/lint.sh") else . end
+            | if length == 0 then empty else
+                "vulnerabilities:",
+                (.[] | "  - id: \(.id | @json)",
+                       "    statement: \("\(.reason) (\(.upstream))" | @json)",
+                       "    expired_at: \(.expires)",
+                       (if has("paths") then "    paths:", (.paths[] | "      - \(@json)") else empty end))
+              end' "$src" > "$file" || rc=$?
+          if [ "$rc" -ne 0 ]; then
+            echo "::error::could not build the exception list for $IMAGE from $src (jq exit $rc) -- the gate will not run without knowing what it excuses"
+            exit 1
+          fi
+
+          rc=0
+          count=$(jq --arg img "$IMAGE" '[.[] | select(.image == $img)] | length' "$src") || rc=$?
+          # String comparison is date comparison for validated YYYY-MM-DD.
+          # `<=`, not `<`: on the expiry date itself Trivy already skips it.
+          expired=$(jq -r --arg img "$IMAGE" --arg today "$today" \
+            '.[] | select(.image == $img and .expires <= $today) | "\(.id) (\(.package), expires \(.expires))"' "$src") || rc=$?
+          if [ "$rc" -ne 0 ]; then
+            echo "::error::could not read $src (jq exit $rc)"
+            exit 1
+          fi
+
+          if [ "$count" -eq 0 ]; then
+            rm -f "$file"
+            echo "No vulnerability exceptions for $IMAGE; the gate runs with none."
+            echo "file=" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          # Expired entries stay in the file -- Trivy skips them by itself --
+          # so the log still shows what used to be excused and why.
+          while IFS= read -r line; do
+            if [ -n "$line" ]; then
+              echo "::warning::vulnerability exception for $IMAGE has expired and no longer applies, so the gate fails on it again: $line. Remove or renew it in $src."
+            fi
+          done <<< "$expired"
+
+          echo "$count vulnerability exception(s) for $IMAGE, passed to the gate as $file:"
+          cat "$file"
+          {
+            echo "### Vulnerability exceptions: $IMAGE ($ARCH)"
+            echo
+            echo "$count finding(s) the vulnerability gate does not fail on, from \`$src\`. Expired entries are listed but no longer applied. The reports above still include every one of them."
+            echo
+            echo '```yaml'
+            cat "$file"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          echo "file=$file" >> "$GITHUB_OUTPUT"
+
       # The gate: any fixable HIGH/CRITICAL finding, in OS packages AND in
       # libraries and binaries (Go binaries, npm, pip, gem, jar, ...). See
       # docs/adr/0006 for why libraries moved from report-only to gating.
@@ -310,6 +414,11 @@ jobs:
       # the scope would silently become whatever the action defaults to --
       # which happens to be os,library today, and is exactly why the scope is
       # stated here rather than inherited.
+      #
+      # `trivyignores` is the one exception file generated above, or empty
+      # when this image has none. The pinned action accepts exactly one YAML
+      # ignore file and errors on a path that does not exist, which is why an
+      # image with no exceptions gets an empty input rather than an empty file.
       - name: Vulnerability gate (${{ matrix.arch }})
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
@@ -320,6 +429,7 @@ jobs:
           ignore-unfixed: true
           severity: HIGH,CRITICAL
           vuln-type: os,library
+          trivyignores: ${{ steps.exceptions.outputs.file }}
 
       # A baked-in credential in a public CI image is always fixable from this
       # repo, so it gates at any severity -- not only HIGH/CRITICAL, and with

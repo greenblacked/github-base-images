@@ -73,11 +73,11 @@ check "no gems baked in"           '[ -z "$(ls -A "${GEM_HOME:-/usr/local/bundle
 
 check "no compiler baked in"       '! command -v gcc && ! command -v cc'
 
-# json is replaced in the Dockerfile (CVE-2026-33210 in the default 2.18.0):
-# require must load the patched version, and the stale default gemspec that
-# the vulnerability scan keys on must be gone.
-check "json is >= 2.19.2"          'ruby -rjson -e "exit(Gem::Version.new(JSON::VERSION) >= Gem::Version.new(\"2.19.2\") ? 0 : 1)"'
-check "no default json gemspec"    '[ -z "$(ls "$(ruby -e "print Gem.default_specifications_dir")"/json-*.gemspec 2>/dev/null)" ]'
+# json is upgraded in the Dockerfile (CVE-2026-33210 in the default 2.18.0).
+# What matters is the code that loads, not what is on disk: `require "json"`
+# must activate the patched gem, and parsing must work through it.
+check "json loads >= 2.19.2"       'ruby -rjson -e "exit(Gem::Version.new(JSON::VERSION) >= Gem::Version.new(\"2.19.2\") ? 0 : 1)"'
+check "json parses"                'ruby -rjson -e "exit(JSON.parse(%q({\"a\":[1]}))[\"a\"] == [1] ? 0 : 1)"'
 
 if [ "$failed" -ne 0 ]; then
   echo "FAIL: one or more checks failed for $IMAGE" >&2

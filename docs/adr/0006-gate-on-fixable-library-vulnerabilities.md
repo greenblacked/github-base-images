@@ -55,6 +55,47 @@ GitHub's secret-scanning alerts are not part of that report. No `GITHUB_TOKEN` p
 them, and this repository adds no personal access token or app credential to reach them; the
 report says so and links to the page instead of implying it checked.
 
+### Exceptions: expiring, per image, per id
+
+`ignore-unfixed` trusts the advisory's "fixed version". Usually that is the whole story, but not
+always: an advisory can name a fixed version of a module that no released artifact this repo could
+install contains yet. Go modules compiled into an upstream release binary (`migrate` in `ci-db`,
+the scanners in `ci-security`), packages vendored inside pip in the Python images, NuGet packages
+inside the .NET SDK, cryptography bundled with the Azure CLI: the gate is red, and
+nothing in this repository can turn it green. Muting the gate for those images would hide every
+other finding in them as well.
+
+So the gate takes **exceptions** from `.github/vuln-exceptions.json`, under these rules:
+
+- **Only where no released artifact contains the fix**, or, the one other case, where the fix is
+  already installed and the finding is on stale metadata the image has to keep (Ruby's default
+  gemspec for `json` in `ci-ruby40`, which RubyGems needs to activate the newer gem), with the
+  image's `test.sh` asserting that the fixed version is the one that loads. Never for "a fix
+  exists but the pin has not been bumped yet", and never for "a patched upstream image exists but
+  has not been rebuilt": those are this repository's to fix, and the gate is right to be red.
+- **Per image and per id.** Each entry names one image and one CVE or GHSA id exactly as Trivy
+  prints it. `build-image.yml` turns only that image's entries into the Trivy ignore file for that
+  image's gate, so an exception can never excuse the same id in another image. An entry can carry
+  `paths` (the Trivy target or package path, such as `usr/local/bin/migrate`) to narrow it
+  further: the same id in any other file of the same image still fails. Paths are used wherever
+  Trivy reports a stable one, and left out only where it does not (packages read from pip's own
+  SBOM are reported under the aggregate `Python` target with no usable path).
+- **Ninety days at most.** Each entry has an `expires` date, which `scripts/lint.sh` rejects if it
+  is more than 90 days away. It becomes the ignore file's `expired_at`, and from that date Trivy
+  stops applying the entry: the image goes red again and someone has to look, then remove the
+  entry because the fix shipped or renew it with a new date because it still has not. Lint only
+  warns about an expired entry, so a date passing never fails an unrelated pull request; the red
+  gate is the signal.
+- **Always visible.** The gate step prints the exceptions it applied to the log and the job
+  summary. The vulnerability reports, SARIF and SBOM never use them, so an excepted finding still
+  appears in *Security → Code scanning*. The alerts report lists every excepted alert in an
+  *Active exceptions* section and every expired entry as a reminder; the first never fails it,
+  and the second excuses nothing.
+
+Every entry also says why the fix cannot be taken here (`reason`) and where to watch for it
+(`upstream`), so renewing one is a decision made with the evidence in front of the reviewer, not a
+date bump.
+
 ## Consequences
 
 - A green publish now means no fixable HIGH/CRITICAL vulnerability in the image's OS packages
@@ -70,6 +111,9 @@ report says so and links to the page instead of implying it checked.
   `alerts-report.yml` and in the calling job in `build-and-push.yml` (reusable-workflow
   permissions are the intersection). The actionlint version `scripts/lint.sh` pins predates that
   scope, so `.github/actionlint.yaml` ignores that one message in those two files.
+- An exception is a standing cost with a date on it. Each one lapses within 90 days and turns its
+  image red again, so the list cannot quietly grow into a second, unreviewed gate configuration;
+  the price is a renewal pull request for every finding whose upstream is slow.
 - The OSV scan stays report-only. It is a second opinion on packages the Trivy gate already
   judges, through a source-package mapping this repo maintains (0003).
 

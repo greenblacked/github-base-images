@@ -12,7 +12,7 @@
 # This script answers those from the two APIs' output alone, so it runs in CI
 # and offline against saved files alike.
 #
-#   ./scripts/alerts-report.sh <code-scanning.json> <dependabot.json> <images.json> <report.md>
+#   ./scripts/alerts-report.sh <code-scanning.json> <dependabot.json> <images.json> <exceptions.json> <report.md>
 #
 # The two alert files are the concatenated output of
 #   gh api --paginate "repos/<owner>/<repo>/code-scanning/alerts?state=open&ref=refs/heads/main&per_page=100"
@@ -31,6 +31,19 @@
 #     same rule applied to the repository's own dependencies.
 # Either way it is something to act on, which is why it sets the exit code.
 #
+# Except when an active exception covers it. <exceptions.json> is
+# .github/vuln-exceptions.json, the same list the vulnerability gate turns
+# into its Trivy ignore file: expiring, per-image, per-CVE entries for a
+# finding whose fixed version exists in no released artifact yet
+# (docs/adr/0006). A fixable HIGH/CRITICAL Trivy alert whose image and rule
+# id match an entry that has not expired is "excepted": listed in its own
+# section, counted separately, and never sets the exit code -- the report
+# agrees with the gate instead of failing on what the gate lets through.
+# "Not expired" means `expires` is after today (UTC), the same boundary Trivy
+# applies to `expired_at`: from that date on, the entry excuses nothing here
+# either, and the report lists it as expired so it gets removed or renewed.
+# Matching is on image and id only; the `paths` scoping is the gate's.
+#
 # GitHub's secret-scanning alerts are NOT read. No GITHUB_TOKEN permission
 # grants that API, and this repository adds no PAT or app credential to reach
 # it. The report says so in its own section, with what does cover secrets,
@@ -38,15 +51,17 @@
 #
 # Exit codes:
 #   0  report written; no fixable HIGH/CRITICAL Trivy alert in any image that
-#      is still in images.json, and no fixable HIGH/CRITICAL Dependabot alert
+#      is still in images.json (other than ones an active exception covers),
+#      and no fixable HIGH/CRITICAL Dependabot alert
 #   1  no trustworthy report: unreadable or malformed input (not JSON, not an
 #      array of alert objects, no JSON value at all), images.json unreadable,
-#      or an alert whose fixability could not be decided (a Trivy alert in a
-#      current image with no `Fixed Version:` line; a Dependabot alert with no
-#      `security_vulnerability`). In that last case the report IS written,
-#      with the undecidable alerts listed, but the run must not read as clean
-#      -- a parser that stopped matching would otherwise report "nothing
-#      fixable" for every alert it failed to read.
+#      an exceptions file that is not one array of complete entries with
+#      valid dates, or an alert whose fixability could not be decided (a
+#      Trivy alert in a current image with no `Fixed Version:` line; a
+#      Dependabot alert with no `security_vulnerability`). In that last case
+#      the report IS written, with the undecidable alerts listed, but the run
+#      must not read as clean -- a parser that stopped matching would
+#      otherwise report "nothing fixable" for every alert it failed to read.
 #   2  usage
 #   3  report written; one or more fixable HIGH/CRITICAL alerts, listed in the
 #      report. Outranks 1, the same precedence as check-published.sh: a
@@ -71,29 +86,31 @@ readonly TOP_N=25
 
 usage() {
   cat <<'EOF'
-usage: alerts-report.sh <code-scanning.json> <dependabot.json> <images.json> <report.md>
+usage: alerts-report.sh <code-scanning.json> <dependabot.json> <images.json> <exceptions.json> <report.md>
 
   code-scanning.json  open code-scanning alerts on main, one or more
                       concatenated JSON arrays (`gh api --paginate` output)
   dependabot.json     open Dependabot alerts, in the same form
   images.json         the repository's .github/images.json
+  exceptions.json     the repository's .github/vuln-exceptions.json
+                      (`[]` for none)
   report.md           where to write the Markdown report
 
 Appends the report to $GITHUB_STEP_SUMMARY when that is set. Reads
 GITHUB_REPOSITORY and GITHUB_SERVER_URL, when set, for links.
 
 Exit: 0 clean, 1 unreadable input or undecidable alerts, 2 usage,
-      3 fixable HIGH/CRITICAL alerts.
+      3 fixable HIGH/CRITICAL alerts not covered by an active exception.
 EOF
 }
 
 die() { printf 'error: %s\n' "$*" >&2; exit 1; }
 
-if [ $# -ne 4 ]; then
+if [ $# -ne 5 ]; then
   usage >&2
   exit 2
 fi
-cs_file="$1" dep_file="$2" images_file="$3" report_file="$4"
+cs_file="$1" dep_file="$2" images_file="$3" exc_file="$4" report_file="$5"
 
 command -v jq >/dev/null || die "required command not found: jq"
 
@@ -105,7 +122,7 @@ trap 'rm -rf "$tmp"' EXIT INT TERM
 # halfway.
 trap 'printf "error: alerts-report.sh failed at line %s -- no trustworthy report\n" "$LINENO" >&2; exit 1' ERR
 
-for f in "$cs_file" "$dep_file" "$images_file"; do
+for f in "$cs_file" "$dep_file" "$images_file" "$exc_file"; do
   if [ ! -f "$f" ] || [ ! -r "$f" ]; then die "cannot read input file: $f"; fi
 done
 
@@ -142,6 +159,36 @@ if ! jq -e 'type == "array" and length > 0
 fi
 jq -c '[.[].image]' "$images_file" > "$tmp/images.json"
 
+# Exceptions: one JSON array, possibly empty, of complete entries. Checked as
+# strictly as the alert inputs, because a half-read exception list fails in
+# the dangerous direction: a malformed entry the report skipped would turn an
+# excepted alert back into a failure (noisy but safe), while one it misread --
+# a date that parsed as something else -- could excuse an alert the gate no
+# longer excuses. So anything short of well-formed is exit 1. The date check
+# round-trips through strptime/strftime, which rejects 2026-02-31 as well as
+# 2026-2-5. scripts/lint.sh checks the rest (known image, id shape, the
+# 90-day limit, duplicates); none of that changes what this report may trust.
+today=$(date -u +%Y-%m-%d)
+if ! jq -s -e '
+    def text: type == "string" and length > 0;
+    def valid_date: type == "string"
+      and test("^[0-9]{4}-[0-9]{2}-[0-9]{2}$")
+      and ((try (strptime("%Y-%m-%d") | mktime | strftime("%Y-%m-%d")) catch null) == .);
+    if length != 1 then error("expected exactly one JSON value, got \(length)") else .[0] end
+    | if type != "array" then error("not a JSON array")
+    elif any(.[]; type != "object") then error("not every element is an object")
+    else (map(select(
+        ([.image, .id, .package, .installed, .reason, .upstream] | all(text) | not)
+        or (.expires | valid_date | not)
+        or (has("paths") and ((.paths | type) != "array" or any(.paths[]; text | not)))))
+      | if length > 0
+        then error("\(length) entr\(if length == 1 then "y" else "ies" end) missing a field or with a bad date or paths, first: \(.[0] | tojson | .[:200])")
+        else true end)
+    end' "$exc_file" > /dev/null 2> "$tmp/exc.err"; then
+  die "exceptions file $exc_file is not usable: $(tr '\n' ' ' < "$tmp/exc.err" | cut -c1-400)"
+fi
+jq -c --arg today "$today" 'map(. + {active: (.expires > $today)})' "$exc_file" > "$tmp/exc.json"
+
 # --- normalise ----------------------------------------------------------------
 #
 # One flat record per alert, so every section below is a query over the same
@@ -162,7 +209,7 @@ jq -c '[.[].image]' "$images_file" > "$tmp/images.json"
 # OSV alerts are counted per image but never judged fixable: osv-scanner's
 # SARIF (build-image.yml's `osv` job) is a second opinion, reported only, and
 # its message carries no fixed version in a form worth depending on.
-jq --slurpfile images "$tmp/images.json" '
+jq --slurpfile images "$tmp/images.json" --slurpfile exc "$tmp/exc.json" '
   def field($k): [ split("\n")[] | select(startswith($k + ":"))
                    | ltrimstr($k + ":") | gsub("^\\s+|\\s+$"; "") ];
   $images[0] as $current
@@ -197,7 +244,14 @@ jq --slurpfile images "$tmp/images.json" '
           and any($current[]; . as $i | ($cat | ltrimstr("osv-")) | startswith($i)))
       | .trivy_image = (.trivy and .kind == "image" and (.osv | not))
       | .fixable = (.trivy_image and .fixed != "")
-      | .gating = (.fixable and (.sev == "critical" or .sev == "high"))
+      # An active exception for this image and id: the gate skips it, so
+      # this report lists it without failing on it.
+      | . as $a
+      | .exception = (if .fixable and (.sev == "critical" or .sev == "high")
+                      then first($exc[0][] | select(.active and .image == $a.image and .id == $a.rule)) // null
+                      else null end)
+      | .excepted = (.exception != null)
+      | .gating = (.fixable and (.sev == "critical" or .sev == "high") and (.excepted | not))
       # Undecidable: this report cannot tell whether the alert should fail it.
       # Each case is a shape change that would otherwise read as "nothing
       # fixable" -- a check passing because it failed to look.
@@ -240,6 +294,8 @@ n_image=$(count 'map(select(.kind == "image")) | length')
 n_stale=$(count 'map(select(.kind == "stale")) | length')
 n_repo=$(count 'map(select(.kind == "repo")) | length')
 n_fixable=$(count 'map(select(.gating)) | length')
+n_excepted=$(count 'map(select(.excepted)) | length')
+n_exc_expired=$(jq 'map(select(.active | not)) | length' "$tmp/exc.json")
 n_undecided=$(count 'map(select(.undecidable)) | length')
 d_total=$(dcount 'length')
 d_fixable=$(dcount 'map(select(.gating)) | length')
@@ -275,7 +331,10 @@ section
   echo "Sources: [code scanning]($repo_url/security/code-scanning), [Dependabot]($repo_url/security/dependabot)."
   echo
   echo "- **$total** open code-scanning alerts: **$n_image** in current images, **$n_stale** in stale categories, **$n_repo** repository-level."
-  echo "- **$n_fixable** fixable HIGH/CRITICAL Trivy alerts in current images."
+  echo "- **$n_fixable** fixable HIGH/CRITICAL Trivy alerts in current images, not counting **$n_excepted** covered by an active exception."
+  if [ "$n_exc_expired" -gt 0 ]; then
+    echo "- **$n_exc_expired** expired entries in \`.github/vuln-exceptions.json\` to remove or renew."
+  fi
   echo "- **$d_total** open Dependabot alerts, **$d_fixable** of them fixable HIGH/CRITICAL."
   echo "- GitHub secret-scanning alerts: **not read** (no token permission covers them; see below)."
   if [ $((n_undecided + d_undecided)) -gt 0 ]; then
@@ -297,6 +356,11 @@ cat > "$f" <<'EOF'
   since the fix appeared. The fix is a bumped pin in the image's `Dockerfile.ci`, or a rebuild that
   picks up the upstream patch release. A fixable HIGH/CRITICAL Dependabot alert is the same thing
   for the repository's own dependencies: merge or make the bump.
+- **Excepted** alerts are fixable HIGH/CRITICAL findings where the fixed version exists in no
+  released artifact yet (for example a module compiled into an upstream release binary), covered by
+  an unexpired entry in `.github/vuln-exceptions.json`. The gate skips exactly these, per image and
+  per id, until the entry expires; they are listed here so they stay visible, and do not fail the
+  report. An expired entry excuses nothing.
 - **Stale** categories belong to images no longer in `images.json`. Nothing uploads to them any
   more, so their alerts never close on their own.
 - Code-scanning alerts reflect each category's **last upload**, not today's vulnerability
@@ -328,14 +392,14 @@ section
   echo
   echo "Every image in \`images.json\`, including those with no alerts at all."
   echo
-  echo "| image | Trivy critical | Trivy high | fixable H/C | OSV | archs with alerts |"
-  echo "|---|---:|---:|---:|---:|---|"
+  echo "| image | Trivy critical | Trivy high | fixable H/C | excepted | OSV | archs with alerts |"
+  echo "|---|---:|---:|---:|---:|---:|---|"
   jq -r --slurpfile images "$tmp/images.json" "$JQ_LIB"'
     . as $all
     | $images[0][] as $img
     | [ $all[] | select(.kind == "image" and .image == $img) ] as $a
     | ($a | map(select(.trivy_image))) as $t
-    | "| \($img | cell) | \($t | map(select(.sev == "critical")) | length) | \($t | map(select(.sev == "high")) | length) | \($a | map(select(.gating)) | length) | \($a | map(select(.osv)) | length) | \($a | map(.arch) | unique | join(", ") | if . == "" then "—" else . end) |"
+    | "| \($img | cell) | \($t | map(select(.sev == "critical")) | length) | \($t | map(select(.sev == "high")) | length) | \($a | map(select(.gating)) | length) | \($a | map(select(.excepted)) | length) | \($a | map(select(.osv)) | length) | \($a | map(.arch) | unique | join(", ") | if . == "" then "—" else . end) |"
   ' "$tmp/norm.json"
 } > "$f"
 
@@ -354,6 +418,43 @@ section
       | sort_by(.image, .arch, (.sev | sevrank), .pkg, .rule)[]
       | "| \(.image | cell) | \(.arch | cell) | \(.pkg | cell) | \(.installed | cell) | \(.fixed | cell) | \(.rule | cell) | \(.sev) | \(link) |"
     ' "$tmp/norm.json"
+  fi
+} > "$f"
+
+section
+{
+  echo
+  echo "### Active exceptions"
+  echo
+  echo "Fixable HIGH/CRITICAL Trivy alerts covered by an unexpired entry in"
+  echo "\`.github/vuln-exceptions.json\`. The gate does not fail on these until the entry expires, and"
+  echo "neither does this report."
+  echo
+  if [ "$n_excepted" -eq 0 ]; then
+    echo "None."
+  else
+    echo "| CVE | package | image | arch | installed | fixed | expires | reason | alert |"
+    echo "|---|---|---|---|---|---|---|---|---|"
+    jq -r "$JQ_LIB"'
+      map(select(.excepted))
+      | sort_by(.exception.expires, .image, .arch, .rule)[]
+      | "| \(.rule | cell) | \(.pkg | cell) | \(.image | cell) | \(.arch | cell) | \(.installed | cell) | \(.fixed | cell) | \(.exception.expires | cell) | \(.exception.reason | cell) [upstream](\(.exception.upstream | cell)) | \(link) |"
+    ' "$tmp/norm.json"
+  fi
+  if [ "$n_exc_expired" -gt 0 ]; then
+    echo
+    echo "#### Expired exceptions"
+    echo
+    echo "These entries no longer excuse anything, here or in the gate. Remove each one, or renew it"
+    echo "with a new \`expires\` if its fix is still in no released artifact."
+    echo
+    echo "| CVE | package | image | expired | reason |"
+    echo "|---|---|---|---|---|"
+    jq -r "$JQ_LIB"'
+      map(select(.active | not))
+      | sort_by(.expires, .image, .id)[]
+      | "| \(.id | cell) | \(.package | cell) | \(.image | cell) | \(.expires | cell) | \(.reason | cell) [upstream](\(.upstream | cell)) |"
+    ' "$tmp/exc.json"
   fi
 } > "$f"
 
@@ -538,9 +639,9 @@ if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then
     || printf 'warning: could not append to GITHUB_STEP_SUMMARY\n' >&2
 fi
 
-printf 'alerts-report: code scanning %d open (%d image, %d stale, %d repo-level), %d fixable HIGH/CRITICAL; Dependabot %d open, %d fixable HIGH/CRITICAL; %d undecidable -> %s\n' \
-  "$total" "$n_image" "$n_stale" "$n_repo" "$n_fixable" "$d_total" "$d_fixable" \
-  "$((n_undecided + d_undecided))" "$report_file"
+printf 'alerts-report: code scanning %d open (%d image, %d stale, %d repo-level), %d fixable HIGH/CRITICAL, %d excepted; Dependabot %d open, %d fixable HIGH/CRITICAL; %d undecidable; %d expired exceptions -> %s\n' \
+  "$total" "$n_image" "$n_stale" "$n_repo" "$n_fixable" "$n_excepted" "$d_total" "$d_fixable" \
+  "$((n_undecided + d_undecided))" "$n_exc_expired" "$report_file"
 
 if [ $((n_fixable + d_fixable)) -gt 0 ]; then
   exit "$EXIT_FIXABLE"

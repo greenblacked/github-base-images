@@ -27,6 +27,8 @@ on:
       - '.github/workflows/build-and-push.yml'
       - '.github/workflows/build-image.yml'
       - '.github/images.json'
+      # Only the images whose entries changed; see the plan job.
+      - '.github/vuln-exceptions.json'
       - 'scripts/check-published.sh'
       - 'scripts/osv-scan-sbom.sh'
   # PRs run the full lint -> build -> smoke test -> scan pipeline, but every
@@ -127,6 +129,27 @@ jobs:
           fi
 
           dirs=$(grep -oE '^ci-[^/]+' <<<"$changed" | sort -u) || true
+
+          # An exception change re-runs the gate of exactly the images whose
+          # entries differ, added or removed or edited, so a PR that adds or
+          # renews one shows that image's gate going green (or not), and the
+          # merge publishes it instead of leaving it for the weekly rebuild.
+          # Every other image is untouched by the change, and rebuilding all of
+          # them would make each renewal a full republish. The file not existing
+          # at the base counts as `[]`; anything that cannot be compared is a
+          # full rebuild, never a silent "nothing changed".
+          if grep -qx '\.github/vuln-exceptions\.json' <<<"$changed"; then
+            base=${range%%.*}
+            old=$(git show "$base:.github/vuln-exceptions.json" 2>/dev/null) || old='[]'
+            if ! exc_images=$(jq -rn --argjson old "$old" --slurpfile new .github/vuln-exceptions.json '
+                ($new[0] | if type == "array" then . else error("not an array") end) as $new
+                | ($old + $new | map(.image) | unique)[]
+                | . as $i
+                | select(($old | map(select(.image == $i)) | sort) != ($new | map(select(.image == $i)) | sort))'); then
+              select_all "vulnerability exceptions changed and could not be compared"
+            fi
+            dirs=$(printf '%s\n%s\n' "$dirs" "$exc_images" | sed '/^$/d' | sort -u)
+          fi
           subset=$(jq -c --arg dirs "$dirs" \
             '[.[] | select(.image as $i | $dirs | split("\n") | index($i))]' \
             .github/images.json)
