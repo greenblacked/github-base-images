@@ -1,6 +1,6 @@
 # 0003 — Security gates block only what this repo can fix
 
-**Status:** accepted
+**Status:** accepted; the part about library vulnerabilities is superseded by [0006](0006-gate-on-fixable-library-vulnerabilities.md)
 
 ## Decision
 
@@ -12,6 +12,12 @@ same digest (see [0001](0001-mirror-upstream-bases.md), "Digest control"). Every
 library vulnerabilities, Dockerfile misconfiguration, license findings, the zizmor workflow audit,
 the git-history secret scan, the OSV scan of the SBOM — is **reported**: printed to logs, kept as
 90-day artifacts, and uploaded to code scanning, but never red.
+
+> **Superseded in part by [0006](0006-gate-on-fixable-library-vulnerabilities.md):** the
+> vulnerability gate now also covers fixable HIGH/CRITICAL findings in libraries and binaries
+> (`vuln-type: os,library`), and a CI report fails on fixable alerts still open. Unfixed findings
+> are still reported, not gated. This record is left as written, as the reasoning for first drawing
+> the line at OS packages.
 
 Two further gates sit either side of publishing rather than in front of it:
 

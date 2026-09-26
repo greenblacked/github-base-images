@@ -38,6 +38,7 @@ echo "Testing $IMAGE"
 # not just exist -- a wrong-arch binary passes `test -x` and fails here, and
 # gcloud additionally fails if its Python interpreter is missing.
 check "gcloud is present"          'gcloud version'
+check "gcloud uses system python"  '[ ! -e /opt/google-cloud-sdk/platform/bundledpythonunix ] && gcloud info --format="value(basic.python_location)" | grep -qx /usr/bin/python3'
 check "gsutil is present"          'gsutil version'
 check "az is present"              'az version'
 check "kubectl is present"         'kubectl version --client'
