@@ -90,6 +90,10 @@ trap 'rm -rf "$tmp"' EXIT INT TERM
 #
 # The pinned value is read from the file rather than duplicated here, so this
 # script cannot disagree with what actually builds.
+#
+# kubectl and composer are each pinned in two Dockerfiles (ci-tools/ci-cloud,
+# ci-php84/ci-php85) but listed once: scripts/lint.sh fails if the copies ever
+# differ, so checking one checks both.
 readonly PINS='
 terraform  | ci-tools/Dockerfile.ci               | TERRAFORM_VERSION  | hashicorp | terraform
 kubectl    | ci-tools/Dockerfile.ci               | KUBECTL_VERSION    | k8s       | -

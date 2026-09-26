@@ -161,3 +161,40 @@ updates:
       interval: weekly
     cooldown:
       default-days: 7
+
+  # Base lives on mcr.microsoft.com; Dependabot handles non-Hub registries.
+  - package-ecosystem: docker
+    directory: /ci-dotnet10
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+
+  - package-ecosystem: docker
+    directory: /ci-java25
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+
+  - package-ecosystem: docker
+    directory: /ci-python314
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+
+  # Does not track COMPOSER_VERSION -- that is a plain ARG, like the ci-tools pins.
+  - package-ecosystem: docker
+    directory: /ci-php85
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+
+  - package-ecosystem: docker
+    directory: /ci-ruby40
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7

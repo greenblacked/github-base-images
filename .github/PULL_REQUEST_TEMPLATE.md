@@ -11,7 +11,7 @@
 
 <!-- Delete whichever does not apply. -->
 
-- [ ] No change to image contents — rebuild only (tag stays `bookworm-v1`)
+- [ ] No change to image contents — rebuild only (tag stays as is, e.g. `bookworm-v1`)
 - [ ] Contents changed (a tool added or removed) — the version tag needs bumping to `v2`
 
 ## Checklist

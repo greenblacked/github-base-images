@@ -9,7 +9,7 @@
 #   - push / pull_request  -> only the images whose directories changed, unless
 #     the pipeline itself (this file, build-image.yml, images.json) changed, in
 #     which case everything runs. A one-line fix to ci-ruby34 no longer
-#     rebuilds nine images and moves `latest` on all of them.
+#     rebuilds every image and moves `latest` on all of them.
 #   - schedule / dispatch  -> everything, always. The weekly rebuild is the
 #     security-update mechanism and must never be narrowed.
 #
@@ -211,8 +211,8 @@ jobs:
       # resolve a floating tag and copies whatever it hands back, with no record
       # of which bytes crossed. If Docker Hub ever served a compromised
       # `debian:bookworm-slim` during some window, this step would mirror it
-      # faithfully, sixteen images would build on it, and nothing here could
-      # later answer "were we affected" -- the exact question the SBOMs
+      # faithfully, every image based on it would be built from it, and nothing
+      # here could later answer "were we affected" -- the exact question the SBOMs
       # (README, "Security scanning") exist to answer for everything upstream
       # of this boundary.
       #
@@ -334,7 +334,7 @@ jobs:
           # every per-image build in the matrix, while every base is already
           # fully resolved and verified right here, inside this one job, before
           # the image matrix even starts. Extending digests.json would mean
-          # threading base data through sixteen matrix jobs it has nothing to
+          # threading base data through every matrix job, which it has nothing to
           # do with, just to re-merge it back down to the same handful of
           # distinct bases this loop already produced.
           jq -s 'sort_by(.upstream)' /tmp/bases.jsonl > bases.json
