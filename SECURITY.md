@@ -20,7 +20,9 @@ In scope:
   at any severity, so anything that ships is a real escape.
 - A fixable HIGH/CRITICAL OS-package vulnerability that the build gate should have caught.
 - A supply-chain problem with how images are built or published — an unexpected base, a tag
-  pointing at a digest this repo did not build.
+  pointing at a digest this repo did not build, or a published digest whose cosign signature or
+  GitHub attestation does not verify under the identity the README documents. The pipeline checks
+  both right after signing, so one that does not verify is a real escape.
 
 Out of scope:
 
