@@ -176,7 +176,7 @@ jobs:
 
       # Lints the Dockerfile's build instructions (missing USER, ADD vs COPY,
       # ...). Best-practice guidance rather than exploitable findings, so it is
-      # reported, not gating -- same treatment as library vulnerabilities.
+      # reported, not gating -- same treatment as unfixed vulnerabilities.
       - name: Misconfiguration report (table)
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
@@ -212,18 +212,16 @@ jobs:
 
       # Deliberately WIDER than the gate below, so this is the standing
       # inventory of accepted risk rather than a near-duplicate of the exit
-      # code. Two differences from the gate, both intentional:
+      # code. The one difference from the gate is intentional:
       #   - no `ignore-unfixed`: on an image whose build just ran
       #     `apt-get upgrade`, "fixed" and "already applied" are the same
       #     set, so a fixed-only report is close to a guarantee of an empty
-      #     one. What is left is overwhelmingly unfixed CVEs -- exactly the
-      #     accepted risk worth a standing record.
-      #   - no `vuln-type`, so library findings (the runtime's own bundled
-      #     deps -- npm, pip, gem packages baked into the upstream image) are
-      #     included too. The gate excludes them because they are not
-      #     fixable from this repo; that is the same argument for reporting
-      #     them, not for hiding them. The action's default is `os,library`
-      #     (see its action.yaml), so omitting the input is enough.
+      #     one. What is left is overwhelmingly unfixed CVEs -- OS packages
+      #     and the runtime's own bundled npm, pip and gem packages alike --
+      #     exactly the accepted risk worth a standing record.
+      # Both cover OS packages and libraries: the gate says `os,library`
+      # explicitly, and this step omits `vuln-type`, whose default in the
+      # action (see its action.yaml) is the same `os,library`.
       #
       # `limit-severities-for-sarif: true` is NOT optional decoration --
       # without it, `severity:` below is silently discarded for SARIF output.
@@ -290,16 +288,28 @@ jobs:
             sbom-${{ inputs.image }}-${{ matrix.arch }}.cdx.json
           retention-days: 90
 
-      # The gate. OS packages only: library findings are the runtime's own
-      # bundled dependencies, shipped inside the upstream image and not fixable
-      # from this repo -- they are reported above instead. `ignore-unfixed`
-      # keeps this actionable: red always means a rebuild picks up a fix.
+      # The gate: any fixable HIGH/CRITICAL finding, in OS packages AND in
+      # libraries and binaries (Go binaries, npm, pip, gem, jar, ...). See
+      # docs/adr/0006 for why libraries moved from report-only to gating.
+      #
+      # `ignore-unfixed` is what keeps red honest: it always means there is a
+      # version to move to. For a library finding that version comes one of
+      # two ways. In a tool this repo installs and pins (a Dockerfile.ci
+      # `ARG *_VERSION`), the fix is bumping the pin. In the upstream runtime
+      # image (the npm, pip or gem packages it bundles), the fix is the
+      # upstream's patch release, which the weekly rebuild and Dependabot's
+      # base-image bumps pick up. The second means an image can stay red
+      # until upstream ships a patched image; that is accepted, in exchange
+      # for never publishing a known-fixable HIGH/CRITICAL. Unfixed findings
+      # never gate -- they are reported above.
       #
       # `vuln-type`, not `pkg-types`. The Trivy CLI renamed this flag, but the
       # action still exposes it under the old name (its own source says "TODO:
       # rename to pkg-types"). An unrecognized input is silently dropped by
-      # Actions rather than erroring, so `pkg-types` here would scan os+library
-      # and fail the gate on the runtime's bundled deps.
+      # Actions rather than erroring, so `pkg-types` here would be ignored and
+      # the scope would silently become whatever the action defaults to --
+      # which happens to be os,library today, and is exactly why the scope is
+      # stated here rather than inherited.
       - name: Vulnerability gate (${{ matrix.arch }})
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
@@ -309,10 +319,11 @@ jobs:
           exit-code: '1'
           ignore-unfixed: true
           severity: HIGH,CRITICAL
-          vuln-type: os
+          vuln-type: os,library
 
       # A baked-in credential in a public CI image is always fixable from this
-      # repo, so unlike library vulns it gates -- at any severity.
+      # repo, so it gates at any severity -- not only HIGH/CRITICAL, and with
+      # no "unfixed" carve-out, because there is no upstream to wait on.
       - name: Secret gate (${{ matrix.arch }})
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:

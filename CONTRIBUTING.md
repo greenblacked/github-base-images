@@ -126,5 +126,5 @@ verification for the AWS CLI would remove it from this list properly, and is the
 
 Explain *why* in the commit body, not just what. This repository's comments and history lean
 heavily on recording the reasoning behind a constraint, because most of the surprising decisions
-here (why browsers are not baked in, why library vulnerabilities do not gate, why builds are native
+here (why browsers are not baked in, why only fixable vulnerabilities gate, why builds are native
 rather than QEMU) are non-obvious and get re-litigated otherwise.

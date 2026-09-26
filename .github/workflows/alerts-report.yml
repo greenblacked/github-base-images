@@ -1,0 +1,154 @@
+# One readable report over every open security alert on main: code scanning
+# (Trivy and OSV per image and architecture, plus the repository-level tools)
+# and Dependabot. The analysis lives in scripts/alerts-report.sh, which runs
+# offline against saved API output; this workflow only fetches and hands over.
+#
+# Why it exists: Security -> Code scanning holds thousands of alerts across
+# forty-odd upload categories, and at that volume the list says "how many"
+# and nothing useful. The report says which images carry what, which alerts
+# already have a fix (the ones that should never have shipped), which CVEs
+# sit in a shared base, and which categories belong to images that no longer
+# exist.
+#
+# Unlike pin-drift.yml and published-audit.yml, this one FAILS on a finding:
+# a fixable HIGH/CRITICAL alert is exactly what the vulnerability gate exists
+# to keep out of a published image (docs/adr/0006), so one being open is a
+# broken promise, not a drift report. Unfixed findings never fail it.
+#
+# GitHub's own secret-scanning alerts are deliberately not fetched: no
+# GITHUB_TOKEN permission grants that API, and this repository adds no PAT or
+# app credential. The report says so in its own section instead of implying
+# the check ran.
+name: Security alerts report
+
+on:
+  # Called by build-and-push.yml after a publish run, so the report reflects
+  # the SARIF that run just uploaded.
+  workflow_call:
+  workflow_dispatch:
+  schedule:
+    # Tuesdays 08:23 UTC: after the Monday rebuild (04:17), security.yml
+    # (05:41) and pin-drift (07:41), and after the Tuesday published-image
+    # audit (06:30), so it reads settled state and contends with none of them.
+    # Independent of build-and-push.yml on purpose: a week with no publish
+    # still gets a report, and a new advisory against an unchanged image or
+    # dependency still gets seen.
+    #
+    # GitHub disables scheduled workflows after 60 days without repository
+    # activity, silently. If the last run here is old, trigger it manually.
+    - cron: '23 8 * * 2'
+
+# No workflow-level `concurrency:`. Inside a called workflow, `github.workflow`
+# is the CALLER's name, so the usual `${{ github.workflow }}-${{ github.ref }}`
+# group would be build-and-push.yml's own group, and the call would queue
+# behind the very run that made it. The job only reads, so parallel runs are
+# harmless.
+
+# Default-deny; the job below states what it actually needs.
+permissions: {}
+
+jobs:
+  report:
+    name: Security alerts report
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      # Read code-scanning alerts.
+      security-events: read
+      # Read Dependabot alerts. `security-events` does NOT cover them on
+      # github.com; GitHub's GITHUB_TOKEN scope table sends Dependabot alerts
+      # to this separate, read-only permission. A caller must grant it too:
+      # reusable-workflow permissions are the intersection of both. actionlint
+      # 1.7.10 predates the scope, hence the one narrow ignore in
+      # .github/actionlint.yaml.
+      vulnerability-alerts: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # Nothing here runs a git operation after checkout, so leaving
+          # credentials in .git/config is pure exposure (zizmor: artipacked).
+          persist-credentials: false
+
+      # Any failure here fails the job. The failure this workflow must never
+      # have is "zero alerts" because the fetch did not happen: a 403, a
+      # rate limit or a page that failed half-way would otherwise hand the
+      # script an empty or partial list and a clean report. `gh api
+      # --paginate` prints one JSON array per page; the script merges them.
+      - name: Fetch code-scanning alerts
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: |
+          rc=0
+          gh api --paginate \
+            "repos/$REPO/code-scanning/alerts?state=open&ref=refs/heads/main&per_page=100" \
+            > code-scanning.json || rc=$?
+          if [ "$rc" -ne 0 ]; then
+            echo "::error::could not read code-scanning alerts (gh api exit $rc) -- not a clean report"
+            exit 1
+          fi
+
+      # Same contract as above. 403/404 is called out separately because it
+      # has a fix outside this repository's files: Dependabot alerts are off
+      # for the repository (Settings -> Code security), or the token was not
+      # granted `vulnerability-alerts: read`. It is still a failure, never a
+      # skip -- "Dependabot is off" and "Dependabot found nothing" must not
+      # look the same.
+      - name: Fetch Dependabot alerts
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: |
+          rc=0
+          gh api --paginate \
+            "repos/$REPO/dependabot/alerts?state=open&per_page=100" \
+            > dependabot.json 2> dependabot.err || rc=$?
+          cat dependabot.err >&2
+          if [ "$rc" -ne 0 ]; then
+            if grep -qE 'HTTP 40[34]' dependabot.err; then
+              echo "::error::could not read Dependabot alerts (HTTP 403/404) -- not a clean report. Enable Dependabot alerts under Settings -> Code security, and check that this job's token has vulnerability-alerts: read (a calling workflow must grant it too)."
+            else
+              echo "::error::could not read Dependabot alerts (gh api exit $rc) -- not a clean report"
+            fi
+            exit 1
+          fi
+
+      # 0 clean, 3 fixable HIGH/CRITICAL alerts open (listed in the report),
+      # anything else a report that could not be trusted. The script writes
+      # the step summary itself, so a red run explains itself on its summary
+      # page. No pipe on the script's line: the default shell is `bash -e
+      # {0}`, errexit without pipefail, and `script | tee` would report tee's
+      # exit status instead of the script's.
+      - name: Build report
+        run: |
+          rc=0
+          ./scripts/alerts-report.sh code-scanning.json dependabot.json \
+            .github/images.json report.md > summary.txt || rc=$?
+          cat summary.txt
+          case "$rc" in
+            0) ;;
+            3)
+              echo "::error::fixable HIGH/CRITICAL alerts are open -- $(cat summary.txt). They are listed in this run's summary and in report.md (artifact code-scanning-report)."
+              exit 1 ;;
+            *)
+              echo "::error::alerts-report.sh exited $rc -- no trustworthy report"
+              exit 1 ;;
+          esac
+
+      # always(): the raw API output is most useful exactly when the fetch or
+      # the report failed. warn, not error, on missing files, so a fetch that
+      # failed before writing anything does not bury its own error under an
+      # upload one.
+      - name: Upload report
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: code-scanning-report
+          path: |
+            code-scanning.json
+            dependabot.json
+            report.md
+          if-no-files-found: warn
+          retention-days: 90

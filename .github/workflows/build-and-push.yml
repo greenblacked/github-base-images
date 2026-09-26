@@ -490,3 +490,34 @@ jobs:
           path: digests.json
           if-no-files-found: error
           retention-days: 90
+
+  # The security alerts report (alerts-report.yml), run once this run's
+  # images have been built, scanned and published, so it reads the SARIF they
+  # just uploaded. It does read that: upload-sarif waits for GitHub to finish
+  # processing an upload before the step completes (`wait-for-processing`
+  # defaults to true), and `image` completes only after every job inside it,
+  # the OSV job included.
+  #
+  # `!cancelled()` for the same reason as `digests`: a failed image is exactly
+  # when the report is worth having. And like `digests`, not when `image`
+  # never ran (lint or plan failed): that run already says what broke, and a
+  # report of state it did not touch would only add a second red job. Publish runs only -- a PR's uploads are
+  # not on refs/heads/main, which is what the report reads.
+  #
+  # Neither alerts-report.yml nor scripts/alerts-report.sh is in this file's
+  # `paths:` filters or in the plan's full-rebuild list, on purpose. They do
+  # not change any image, so a change to them must not rebuild and republish
+  # every image, and adding them to `paths:` alone would do exactly that: a
+  # diff with no image directory in it falls through to the plan's
+  # full-rebuild fallback. alerts-report.yml has its own workflow_dispatch to
+  # run a change right away, and its own weekly schedule.
+  alerts:
+    needs: [image, digests]
+    if: ${{ !cancelled() && needs.image.result != 'skipped' && github.event_name != 'pull_request' && github.ref == 'refs/heads/main' }}
+    permissions:
+      contents: read
+      security-events: read
+      # Dependabot alerts. Called-workflow permissions are the intersection
+      # of this grant and the called job's, so both must name it.
+      vulnerability-alerts: read
+    uses: ./.github/workflows/alerts-report.yml
