@@ -72,15 +72,23 @@ A gate is only honest if going red always means an action *this repo* can take:
   config); only the first is success. That matters here more than usual, because the tool's own
   failure mode is a well-formed SARIF with zero results — exactly an empty report posing as a
   clean scan — so the wrapper deletes the SARIF whenever the scan did not complete. It runs as its
-  own job after `build`, not inside it: an OSV outage turns the run red without holding a security
-  rebuild back from publishing.
+  own job after `build`, not inside it: an OSV outage turns the run red, but neither publishing
+  nor the `digests.json` aggregate is blocked by it (`digests` runs on `!cancelled()` and
+  aggregates every manifest that was published).
+
+  What reaches code scanning is filtered the same way as the Trivy SARIF: `security-severity`
+  >= 7.0. Findings whose rule has no score at all are uploaded too — an unscored finding is not a
+  low one, and dropping it would be exactly the silent narrowing this section argues against. The
+  unfiltered SARIF is the 90-day artifact, and the job summary counts kept, dropped and unscored.
 
   One more reason it is only a report: as produced, Trivy's SBOM matches nothing in OSV's Debian
   data — the purl carries the point release (`debian-12.15`, where OSV files under `Debian:12`)
   and names binary packages (`libc6`) where OSV keys by source (`glibc`). The scan normalises a
   copy of the SBOM first (see `scripts/osv-scan-sbom.sh`); on `debian:bookworm-slim` that took it
-  from 0 findings to 109. A mapping this repo maintains is a mapping that can drift, which is a
-  reason to watch its output, not to gate on it.
+  from 0 findings to 98. A mapping this repo maintains is a mapping that can drift, which is a
+  reason to watch its output, not to gate on it — and a reason for the one tripwire it does have:
+  if none of an SBOM's Debian packages carries Trivy's source-name property any more, the scan
+  fails rather than falling back to binary names.
 
 ## Consequences
 
@@ -94,9 +102,12 @@ A gate is only honest if going red always means an action *this repo* can take:
 - A green publish run additionally means the published index verified — cosign identity, both
   buildx attestations, and the GitHub attestation — against the registry, in that run. The
   scheduled audit still exists for everything that can change *after* a run.
-- *Security → Code scanning* gains an `osv-<image>-<arch>` category per image and architecture.
-  Unlike the Trivy SARIF it carries every severity OSV reports (`osv-scanner scan` v2.6.0 has no
-  severity-filter flag), so expect it to be the larger of the two.
+- *Security → Code scanning* gains an `osv-<image>-<arch>` category per image and architecture,
+  HIGH/CRITICAL plus unscored. `osv-scanner scan` v2.6.0 has no severity flag, so the filter is
+  applied to its SARIF afterwards, with `rules[]` left intact. On `debian:bookworm-slim` that is
+  42 of 98 findings uploaded (36 scored >= 7.0, 6 unscored), 56 kept only in the artifact.
+- A run where some image failed is red, but `digests.json` still covers every image that
+  published and verified, and says how many of the planned images that is.
 
 ## The SARIF report is not the gate with the pipes swapped
 
@@ -170,5 +181,7 @@ above has stopped holding and the gate needs a different remedy, not a quieter o
 
 For the OSV report: if OSV's Debian ecosystem or Trivy's purls change shape (a point release OSV
 does recognise, source names in the purl), the normalisation in `scripts/osv-scan-sbom.sh` should
-shrink rather than grow — and a sudden drop to zero findings on a Debian image is the symptom to
-look for, since that is what the unnormalised SBOM produced.
+shrink rather than grow. The symptom to look for is a sharp drop in a Debian image's findings,
+not necessarily to zero: the distro fix alone left bookworm-slim at 27 of 98, and a partial loss
+of Trivy's source-package properties would land somewhere in between — the input counts in the
+job summary (mapped by source name vs by binary name) are where that shows first.

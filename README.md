@@ -167,7 +167,9 @@ jq -r '.[] | select(.image == "ci-node22") | .digest' digests.json
 ```
 
 A change-detection run's `digests.json` covers only the images that run rebuilt; a weekly or
-manually dispatched run always covers all of them.
+manually dispatched run always covers all of them. A run in which some image failed still
+aggregates the ones that published and verified — its summary says how many of the planned images
+that is — but the run is red, so the `status=success` query above will not pick it.
 
 ### Locally
 
@@ -490,24 +492,33 @@ summary or the `security-report-<image>-<arch>` artifact, which run with no filt
 produced — no second image scan — and uploads the result to the Security tab under its own
 `osv-<image>-<arch>` category, next to Trivy's. OSV aggregates the Debian and Ubuntu security
 trackers alongside the npm, PyPI, RubyGems and Go advisories, so it is a different database
-looking at the same packages. **Reported, not gating**, and it carries every severity OSV
-reports, so expect it to be the larger of the two views.
+looking at the same packages. **Reported, not gating.** Like the Trivy SARIF, the upload is
+limited to HIGH/CRITICAL (`security-severity` >= 7.0) — plus every finding OSV gives no score at
+all, which are kept rather than silently dropped. The unfiltered report, every severity, is the
+`osv-report-<image>-<arch>` artifact; the job summary gives the kept / dropped / unscored counts.
 
-Two things about it are less obvious than they look:
+Three things about it are less obvious than they look:
 
 - **It fails when it could not look.** Findings are success. A scan that did not complete — the
   OSV database unreachable, no packages read from the SBOM, the binary not running — turns the
   job red, and its SARIF is deleted rather than uploaded. osv-scanner writes a valid, zero-result
   SARIF even when it could not reach its database; uploading that would be an empty report posing
-  as a clean one. Being its own job, an outage there never holds up a publish.
+  as a clean one. Being its own job, an outage there never holds up a publish or the
+  `digests.json` aggregate — the run goes red, and that is all.
 - **The SBOM is normalised first.** As Trivy writes it, it matches nothing in OSV's Debian data:
   the purl says `distro=debian-12.15` where OSV files under `Debian:12`, and it names binary
   packages (`libc6`) where OSV keys by source (`glibc`). `scripts/osv-scan-sbom.sh` rewrites a
   copy from the source-package properties Trivy records; on `debian:bookworm-slim` that is the
-  difference between 0 findings and 109. The SBOM artifact itself is untouched.
+  difference between 0 findings and 98. The SBOM artifact itself is untouched. If those
+  properties ever stop appearing (a Trivy rename), the scan fails instead of quietly falling back
+  to binary names; the summary shows how many packages were mapped each way.
+- **Alerts stay put between runs.** osv-scanner fingerprints each finding by vulnerability,
+  package *and file path*, so the normalised copy is always written to the same path
+  (`/tmp/osv-scan-sbom/<sbom name>`) and the displayed location is rewritten to the SBOM's name.
+  A per-run temp path would have closed and reopened every alert on every build.
 
 ```bash
-./scripts/osv-scan-sbom.sh sbom-ci-tools-amd64.cdx.json osv.sarif   # the same scan, locally
+./scripts/osv-scan-sbom.sh sbom-ci-tools-amd64.cdx.json full.sarif upload.sarif   # locally
 ```
 
 ### Verifying a signature

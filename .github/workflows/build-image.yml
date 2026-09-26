@@ -378,8 +378,8 @@ jobs:
   # needs only `build`, so an OSV outage turns the run red without holding a
   # security rebuild back from publishing. Inside `build`, the same failure
   # would have blocked every push behind someone else's API. (The caller's
-  # `image` job still reports failure, so that run's digests.json aggregate
-  # is skipped -- the same as for any other failed image.)
+  # `image` job still reports failure, so the run is red; its `digests` job
+  # runs regardless and aggregates every manifest that was published.)
   #
   # All the exit-code handling lives in scripts/osv-scan-sbom.sh, where it can
   # be run locally; see its header for why the SBOM is normalised first (as
@@ -433,8 +433,14 @@ jobs:
 
       # No `|| true`, no continue-on-error: the script exits 0 for a completed
       # scan with or without findings and 1 for a scan that did not complete,
-      # and deletes the SARIF in that case -- osv-scanner writes a valid,
+      # and deletes both SARIFs in that case -- osv-scanner writes a valid,
       # zero-result SARIF even when it could not reach its database.
+      #
+      # Two outputs: the full SARIF (every severity) is the 90-day artifact;
+      # the upload SARIF is what code scanning gets -- security-severity
+      # >= 7.0 plus every unscored finding, the same readability trade as the
+      # Trivy SARIF. The script writes the kept/dropped/unscored counts and
+      # its input mapping counts to the step summary itself.
       #
       # And no pipe on the script's line. This step runs under GitHub's
       # default `bash -e {0}` -- errexit WITHOUT pipefail -- so
@@ -444,9 +450,8 @@ jobs:
           IMAGE: ${{ inputs.image }}
           ARCH: ${{ matrix.arch }}
         run: |
-          ./scripts/osv-scan-sbom.sh "reports/sbom-$IMAGE-$ARCH.cdx.json" "osv-$IMAGE-$ARCH.sarif"
-          results=$(jq '[.runs[].results[]?] | length' "osv-$IMAGE-$ARCH.sarif")
-          echo "OSV ($ARCH): $results finding(s), reported to code scanning as osv-$IMAGE-$ARCH -- not gating" >> "$GITHUB_STEP_SUMMARY"
+          ./scripts/osv-scan-sbom.sh "reports/sbom-$IMAGE-$ARCH.cdx.json" \
+            "osv-$IMAGE-$ARCH.sarif" "osv-upload-$IMAGE-$ARCH.sarif"
 
       # continue-on-error, like every SARIF upload here: code scanning must
       # never be what turns a run red. No `if: always()`, unlike the Trivy
@@ -456,9 +461,11 @@ jobs:
         continue-on-error: true
         uses: github/codeql-action/upload-sarif@b96794f015dfd88f77b49b1c93e0fa7110f94c63 # v4.38.0
         with:
-          sarif_file: osv-${{ inputs.image }}-${{ matrix.arch }}.sarif
+          sarif_file: osv-upload-${{ inputs.image }}-${{ matrix.arch }}.sarif
           category: osv-${{ inputs.image }}-${{ matrix.arch }}
 
+      # The UNFILTERED report: every severity, including what the upload
+      # above leaves out.
       - name: Upload OSV report
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
@@ -645,19 +652,39 @@ jobs:
       # attested, pinned to the same identity cosign is: this reusable
       # workflow on refs/heads/main, for this repository. Any non-zero exit --
       # no attestation found, wrong signer, or gh unable to ask -- fails.
+      #
+      # Bounded retry: this reads GitHub's attestations API seconds after the
+      # step above wrote to it, and nothing documents that read as
+      # immediately consistent. A lag there must not turn a good publish red,
+      # so up to 5 attempts, 15s apart (about a minute in all). It retries
+      # only; the last failure still fails the step, and every failed attempt
+      # is logged as a warning, so a check that needed retries is visible.
       - name: Verify GitHub attestation
         env:
           GH_TOKEN: ${{ github.token }}
           REF: ghcr.io/${{ github.repository_owner }}/${{ inputs.image }}@${{ steps.resolve.outputs.digest }}
           REPO_SLUG: ${{ github.repository }}
         run: |
-          rc=0
-          gh attestation verify "oci://$REF" \
-            --repo "$REPO_SLUG" \
-            --cert-identity "https://github.com/$REPO_SLUG/.github/workflows/build-image.yml@refs/heads/main" \
-            || rc=$?
+          attempts=5
+          delay=15
+          rc=1
+          for attempt in $(seq 1 "$attempts"); do
+            rc=0
+            gh attestation verify "oci://$REF" \
+              --repo "$REPO_SLUG" \
+              --cert-identity "https://github.com/$REPO_SLUG/.github/workflows/build-image.yml@refs/heads/main" \
+              || rc=$?
+            if [ "$rc" -eq 0 ]; then
+              echo "verified on attempt $attempt of $attempts"
+              break
+            fi
+            echo "::warning::gh attestation verify attempt $attempt of $attempts failed for $REF (exit $rc)"
+            if [ "$attempt" -lt "$attempts" ]; then
+              sleep "$delay"
+            fi
+          done
           if [ "$rc" -ne 0 ]; then
-            echo "::error::gh attestation verify failed for $REF (exit $rc) -- no attestation from build-image.yml@refs/heads/main could be verified"
+            echo "::error::gh attestation verify failed for $REF after $attempts attempts (last exit $rc) -- no attestation from build-image.yml@refs/heads/main could be verified"
             exit 1
           fi
 
