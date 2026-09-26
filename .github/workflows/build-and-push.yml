@@ -7,9 +7,10 @@
 #
 # Which images run:
 #   - push / pull_request  -> only the images whose directories changed, unless
-#     the pipeline itself (this file, build-image.yml, images.json) changed, in
-#     which case everything runs. A one-line fix to ci-ruby34 no longer
-#     rebuilds nine images and moves `latest` on all of them.
+#     the pipeline itself (this file, build-image.yml, images.json, or the two
+#     scripts build-image.yml runs) changed, in which case everything runs. A
+#     one-line fix to ci-ruby34 no longer rebuilds nine images and moves
+#     `latest` on all of them.
 #   - schedule / dispatch  -> everything, always. The weekly rebuild is the
 #     security-update mechanism and must never be narrowed.
 #
@@ -26,6 +27,8 @@ on:
       - '.github/workflows/build-and-push.yml'
       - '.github/workflows/build-image.yml'
       - '.github/images.json'
+      - 'scripts/check-published.sh'
+      - 'scripts/osv-scan-sbom.sh'
   # PRs run the full lint -> build -> smoke test -> scan pipeline, but every
   # step that writes to the registry is skipped: PR builds use the upstream
   # base instead of the mirror, and nothing is pushed or tagged. A green PR run
@@ -37,6 +40,8 @@ on:
       - '.github/workflows/build-and-push.yml'
       - '.github/workflows/build-image.yml'
       - '.github/images.json'
+      - 'scripts/check-published.sh'
+      - 'scripts/osv-scan-sbom.sh'
   schedule:
     # Weekly rebuild: re-mirrors the upstream bases, picks up security updates,
     # and re-runs the vulnerability scan.
@@ -116,8 +121,9 @@ jobs:
             select_all "diff against $range failed"
           fi
 
-          # A change to the pipeline itself invalidates every image.
-          if grep -qE '^\.github/(workflows/(build-and-push|build-image)\.yml|images\.json)$' <<<"$changed"; then
+          # A change to the pipeline itself invalidates every image. The two
+          # scripts count as pipeline: build-image.yml runs them on every image.
+          if grep -qE '^(\.github/(workflows/(build-and-push|build-image)\.yml|images\.json)|scripts/(check-published|osv-scan-sbom)\.sh)$' <<<"$changed"; then
             select_all "pipeline definition changed"
           fi
 
@@ -398,6 +404,9 @@ jobs:
       # For the merge job's keyless cosign signing -- the called workflow's
       # permissions are intersected with this grant.
       id-token: write
+      # For the merge job's GitHub build provenance attestation, on the same
+      # intersection rule.
+      attestations: write
     uses: ./.github/workflows/build-image.yml
     with:
       image: ${{ matrix.image }}
