@@ -89,8 +89,9 @@ A gate is only honest if going red always means an action *this repo* can take:
   contains; a container runs the host's kernel. Left in, they would bury everything else in the
   Security tab. The exclusion is counted in the summary, the findings stay in the artifact, and it
   switches itself off when any other package from `linux` is present. It depends on osv-scanner
-  naming the package in each result's message, so when it applies, a result that does not parse
-  fails the scan instead of letting the exclusion silently match nothing.
+  naming the package in each result's message, so when it applies, the scan fails if a result
+  does not parse or if no result at all is a kernel finding (Debian always has open kernel CVEs),
+  rather than letting the exclusion silently stop matching.
 
   One more reason it is only a report: as produced, Trivy's SBOM matches nothing in OSV's Debian
   data — the purl carries the point release (`debian-12.15`, where OSV files under `Debian:12`)

@@ -46,10 +46,13 @@
 # counted in the summary.
 #
 # osv-scanner v2.6.0 names a result's package only in its message text
-# ("Package 'linux@6.1.187-1' is vulnerable to '...'"). When the exclusion
-# applies, every result must parse that way; if one does not, the script
-# fails rather than let a format change make the exclusion quietly match
-# nothing.
+# ("Package 'linux@6.1.187-1' is vulnerable to '...'"), with no ecosystem, so
+# the match is on the bare name `linux`. When the exclusion applies, two
+# tripwires stop it from going inert unnoticed: every result must parse that
+# way, and at least one must be a kernel finding. Debian always carries open
+# kernel CVEs, so a headers-only image with none means the names no longer
+# match (a message format change that still parses, say), and the script
+# fails rather than upload the flood again without a word.
 #
 # Why the SBOM is rewritten before scanning
 # -----------------------------------------
@@ -302,7 +305,7 @@ mv "$out.tmp" "$out"
 sev_map='([(.tool.driver.rules // [])[] | {key: .id, value: (.properties["security-severity"] // null)}] | from_entries)'
 # The package a result is about: the source package after normalisation, so
 # `linux` for linux-libc-dev. null when the message does not parse.
-pkg_of='(((.message.text // "") | capture("^Package '"'"'(?<p>.+)@[^@'"'"']*'"'"' is vulnerable to '"'"'") | .p) // null)'
+pkg_of='(((.message.text // "") | capture("^Package '"'"'(?<p>[^'"'"']+)@[^@'"'"']*'"'"' is vulnerable to '"'"'") | .p) // null)'
 
 if [ "$headers_only" = true ]; then
   unparsed=$(jq "[.runs[].results[] | select($pkg_of == null)] | length" "$out")
@@ -331,6 +334,10 @@ tally=$(jq -r --argjson t "$SEVERITY_THRESHOLD" --argjson hdr "$headers_only" "
      (map(select(. == \"kernel\")) | length)]
   | @tsv" "$out")
 read -r total kept dropped unscored kernel <<<"$tally"
+if [ "$headers_only" = true ] && [ "$kernel" -eq 0 ]; then
+  echo "error: linux-libc-dev is in '$sbom' but none of the $total result(s) in '$out' parsed as a finding on the linux source -- Debian always has open kernel CVEs, so the kernel-header exclusion is no longer matching (an osv-scanner output change?)" >&2
+  exit 1
+fi
 uploaded=$(jq '[.runs[].results[]] | length' "$upload")
 
 # Two independent jq programs must agree on what was kept; if they do not, the
