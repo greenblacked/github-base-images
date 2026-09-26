@@ -82,6 +82,16 @@ A gate is only honest if going red always means an action *this repo* can take:
   low one, and dropping it would be exactly the silent narrowing this section argues against. The
   unfiltered SARIF is the 90-day artifact, and the job summary counts kept, dropped and unscored.
 
+  One exclusion applies on top of the severity filter: findings on Debian's `linux` source package,
+  when `linux-libc-dev` (the kernel's userspace headers, pulled in by `libc6-dev`) is the only
+  package built from it. OSV files every kernel CVE under that source, which put about 2,000
+  alerts per architecture on ci-go, ci-php84 and ci-php85, none of them about code the image
+  contains; a container runs the host's kernel. Left in, they would bury everything else in the
+  Security tab. The exclusion is counted in the summary, the findings stay in the artifact, and it
+  switches itself off when any other package from `linux` is present. It depends on osv-scanner
+  naming the package in each result's message, so when it applies, a result that does not parse
+  fails the scan instead of letting the exclusion silently match nothing.
+
   One more reason it is only a report: as produced, Trivy's SBOM matches nothing in OSV's Debian
   data — the purl carries the point release (`debian-12.15`, where OSV files under `Debian:12`)
   and names binary packages (`libc6`) where OSV keys by source (`glibc`). The scan normalises a

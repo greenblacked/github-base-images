@@ -25,8 +25,31 @@
 #                 trade as the Trivy SARIF (ADR 0003), but an unscored finding
 #                 is not a low one -- dropping those would be a silent
 #                 narrowing, so they are kept and counted separately.
-# Counts (kept / dropped / unscored) go to stdout and, in Actions, to the step
-# summary, so a scan that filtered down to nothing says so.
+#                 One exclusion on top: kernel findings on an image whose only
+#                 package from the `linux` source is linux-libc-dev (see below).
+# Counts (kept / dropped / unscored / kernel) go to stdout and, in Actions, to
+# the step summary, so a scan that filtered down to nothing says so.
+#
+# Why kernel findings are kept out of the upload
+# ----------------------------------------------
+# Images that keep a compiler toolchain (libc6-dev, via build-essential or
+# PHPIZE_DEPS: ci-go, ci-php84, ci-php85) carry linux-libc-dev -- the kernel's
+# userspace API headers, built from Debian's `linux` source package. OSV files
+# every kernel CVE under that source, so after the source-name mapping below
+# each of those images reported roughly 2,000 kernel findings per
+# architecture, against a package that contains no kernel code: a container
+# runs the host's kernel, never one from its image. The upload therefore drops
+# findings on the `linux` source, but only when linux-libc-dev is the ONLY
+# binary package from that source in the SBOM. Anything else from it
+# (linux-image-*, linux-perf, bpftool, usbip) is real kernel-built code, and
+# then nothing is excluded. Excluded findings stay in full.sarif and are
+# counted in the summary.
+#
+# osv-scanner v2.6.0 names a result's package only in its message text
+# ("Package 'linux@6.1.187-1' is vulnerable to '...'"). When the exclusion
+# applies, every result must parse that way; if one does not, the script
+# fails rather than let a format change make the exclusion quietly match
+# nothing.
 #
 # Why the SBOM is rewritten before scanning
 # -----------------------------------------
@@ -174,6 +197,20 @@ if [ "$deb_total" -gt 0 ] && [ "$deb_src" -eq 0 ]; then
   exit 1
 fi
 
+# --- kernel headers: which binaries come from the `linux` source? ------------
+linux_bins=$(jq -r '
+  [.components[]? | select(.purl // "" | startswith("pkg:deb/"))
+   | select(([(.properties // [])[] | select(.name == "aquasecurity:trivy:SrcName") | .value][0] // .name) == "linux")
+   | .name] | unique | join(" ")' "$sbom") || { echo "error: could not read components from '$sbom'" >&2; exit 1; }
+if [ "$linux_bins" = "linux-libc-dev" ]; then
+  headers_only=true
+else
+  headers_only=false
+  if [ -n "$linux_bins" ]; then
+    summary "OSV: packages from the linux source other than linux-libc-dev ($linux_bins) -- kernel findings are NOT excluded from the upload"
+  fi
+fi
+
 # --- normalise ---------------------------------------------------------------
 if ! jq '
   def prop($n): [(.properties // [])[] | select(.name == "aquasecurity:trivy:" + $n) | .value][0];
@@ -263,31 +300,50 @@ mv "$out.tmp" "$out"
 # security-severity that is present but not a number makes tonumber fail, and
 # with it this script: an unreadable score is not silently read as "low".
 sev_map='([(.tool.driver.rules // [])[] | {key: .id, value: (.properties["security-severity"] // null)}] | from_entries)'
-jq --argjson t "$SEVERITY_THRESHOLD" "
+# The package a result is about: the source package after normalisation, so
+# `linux` for linux-libc-dev. null when the message does not parse.
+pkg_of='(((.message.text // "") | capture("^Package '"'"'(?<p>.+)@[^@'"'"']*'"'"' is vulnerable to '"'"'") | .p) // null)'
+
+if [ "$headers_only" = true ]; then
+  unparsed=$(jq "[.runs[].results[] | select($pkg_of == null)] | length" "$out")
+  if [ "$unparsed" -ne 0 ]; then
+    echo "error: $unparsed result(s) in '$out' do not name their package as \"Package '<name>@<version>' is vulnerable to ...\" -- the linux-libc-dev exclusion cannot tell kernel findings apart (an osv-scanner output change?)" >&2
+    exit 1
+  fi
+fi
+
+jq --argjson t "$SEVERITY_THRESHOLD" --argjson hdr "$headers_only" "
   .runs |= map($sev_map as \$sev
-    | .results |= map(select((\$sev[.ruleId]) as \$s | \$s == null or ((\$s | tonumber) >= \$t))))
+    | .results |= map(select(
+        (\$hdr and $pkg_of == \"linux\") | not)
+      | select((\$sev[.ruleId]) as \$s | \$s == null or ((\$s | tonumber) >= \$t))))
 " "$out" > "$upload"
 
 # A command substitution, not `read < <(jq ...)`: errexit cannot see a failure
 # inside a process substitution, and empty counts would sail through below.
-tally=$(jq -r --argjson t "$SEVERITY_THRESHOLD" "
+tally=$(jq -r --argjson t "$SEVERITY_THRESHOLD" --argjson hdr "$headers_only" "
   [.runs[] | $sev_map as \$sev | .results[]
    | (\$sev[.ruleId]) as \$s
-   | if \$s == null then \"unscored\" elif (\$s | tonumber) >= \$t then \"kept\" else \"dropped\" end]
+   | if \$hdr and $pkg_of == \"linux\" then \"kernel\"
+     elif \$s == null then \"unscored\" elif (\$s | tonumber) >= \$t then \"kept\" else \"dropped\" end]
   | [length, (map(select(. == \"kept\")) | length),
-     (map(select(. == \"dropped\")) | length), (map(select(. == \"unscored\")) | length)]
+     (map(select(. == \"dropped\")) | length), (map(select(. == \"unscored\")) | length),
+     (map(select(. == \"kernel\")) | length)]
   | @tsv" "$out")
-read -r total kept dropped unscored <<<"$tally"
+read -r total kept dropped unscored kernel <<<"$tally"
 uploaded=$(jq '[.runs[].results[]] | length' "$upload")
 
 # Two independent jq programs must agree on what was kept; if they do not, the
 # filter is not doing what its counts claim.
-if [ "$uploaded" -ne $((kept + unscored)) ] || [ "$total" -ne $((kept + dropped + unscored)) ]; then
-  echo "error: SARIF filter disagrees with its own counts (total=$total kept=$kept dropped=$dropped unscored=$unscored uploaded=$uploaded)" >&2
+if [ "$uploaded" -ne $((kept + unscored)) ] || [ "$total" -ne $((kept + dropped + unscored + kernel)) ]; then
+  echo "error: SARIF filter disagrees with its own counts (total=$total kept=$kept dropped=$dropped unscored=$unscored kernel=$kernel uploaded=$uploaded)" >&2
   exit 1
 fi
 
 summary "OSV scan of $base: osv-scanner exit $rc, $total finding(s) in $(basename -- "$out") (all severities); uploading $uploaded to code scanning = $kept with security-severity >= $SEVERITY_THRESHOLD + $unscored with no score (kept, not dropped); $dropped below $SEVERITY_THRESHOLD kept only in the artifact"
+if [ "$kernel" -gt 0 ]; then
+  summary "OSV: $kernel kernel finding(s) on the linux source, whose only package here is linux-libc-dev (kernel headers; a container runs the host's kernel), kept only in the artifact"
+fi
 if [ "$total" -gt 0 ] && [ "$uploaded" -eq 0 ]; then
-  summary "OSV: every finding scored below $SEVERITY_THRESHOLD, so the code-scanning upload is empty by the filter, not by the scan -- all $total are in the artifact"
+  summary "OSV: every finding was scored below $SEVERITY_THRESHOLD or excluded as a kernel-header finding, so the code-scanning upload is empty by the filter, not by the scan -- all $total are in the artifact"
 fi

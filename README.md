@@ -538,7 +538,7 @@ limited to HIGH/CRITICAL (`security-severity` >= 7.0) — plus every finding OSV
 all, which are kept rather than silently dropped. The unfiltered report, every severity, is the
 `osv-report-<image>-<arch>` artifact; the job summary gives the kept / dropped / unscored counts.
 
-Three things about it are less obvious than they look:
+Four things about it are less obvious than they look:
 
 - **It fails when it could not look.** Findings are success. A scan that did not complete — the
   OSV database unreachable, no packages read from the SBOM, the binary not running — turns the
@@ -557,6 +557,13 @@ Three things about it are less obvious than they look:
   package *and file path*, so the normalised copy is always written to the same path
   (`/tmp/osv-scan-sbom/<sbom name>`) and the displayed location is rewritten to the SBOM's name.
   A per-run temp path would have closed and reopened every alert on every build.
+- **Kernel findings on kernel headers stay out of the Security tab.** Images that keep a C
+  toolchain (ci-go, ci-php84, ci-php85) carry `linux-libc-dev`, the kernel's userspace headers,
+  and OSV files every kernel CVE under its source package `linux`: about 2,000 alerts per image
+  and architecture, against a package with no kernel code in it. A container runs the host's
+  kernel. When `linux-libc-dev` is the only package from that source, those findings are left out
+  of the upload and counted in the summary. They stay in the artifact. If anything else from the
+  `linux` source is present, nothing is left out.
 
 ```bash
 ./scripts/osv-scan-sbom.sh sbom-ci-tools-amd64.cdx.json full.sarif upload.sarif   # locally
