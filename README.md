@@ -462,17 +462,28 @@ under a `<image>-<arch>` category, so findings are browsable and diffable over t
 buried in a build log. The upload is `continue-on-error` — code scanning must never be the reason
 an image fails to publish.
 
-**Expect that view to be empty, and read it as good news.** The SARIF is scanned with the *same*
-filter as the gate — `ignore-unfixed`, HIGH/CRITICAL, OS packages only — so it can only ever
-contain findings the gate is simultaneously blocking on. When it has contents the build has
-already failed and nothing was published. A green pipeline and an empty *Code scanning* view are
-the same fact stated twice.
+**Its scope is deliberately wider than the gate's, so expect this view to be non-empty.** The gate
+stays narrow on purpose (below); the SARIF exists to record what the gate lets through rather than
+duplicate what it blocks:
 
-So the Security tab is not where you look for what the gate *tolerates*. Unfixed CVEs, library
-findings, misconfiguration and licences are all reported at full severity, but only into the job
-summary and the `security-report-<image>-<arch>` artifact. If you need a standing inventory of
-accepted risk rather than a duplicate of the exit code, widen the SARIF step's scope beyond the
-gate's — that is a deliberate choice about alert volume, not an oversight.
+- **No `ignore-unfixed`.** On an image whose build just ran `apt-get upgrade`, "fixed" and
+  "already applied" are close to the same set — a fixed-only report on a freshly rebuilt image is
+  close to a guarantee of nothing. What is left is overwhelmingly *unfixed* HIGH/CRITICAL CVEs,
+  which is exactly the accepted risk worth a standing record.
+- **No `vuln-type: os`**, so library findings are included too — the runtime's own bundled `pip`,
+  `npm` and `gem` packages baked into the upstream image. They still don't gate, for the same
+  reason as always (not fixable from this repo), but a consumer of the image has every reason to
+  want to know what CVEs those bundled versions carry.
+- **Severity stays HIGH,CRITICAL**, via `limit-severities-for-sarif: true` alongside `severity:`.
+  Without that flag trivy-action silently ignores `severity:` for SARIF output and ships every
+  severity, UNKNOWN and LOW included — see the comment at the step itself, and
+  [ADR 0003](docs/adr/0003-gates-vs-reports.md) for why that flag exists at all.
+
+So *Security → Code scanning* is where you look for what this repo has decided is safe to ship
+without blocking: unfixed OS CVEs and library CVEs at HIGH/CRITICAL, browsable and diffable across
+builds. It is accepted risk, not a build failure — nothing here means the pipeline is broken. For
+the exhaustive picture (every severity, every scanner, unfixed and fixed alike) go to the job
+summary or the `security-report-<image>-<arch>` artifact, which run with no filters at all.
 
 ### Verifying a signature
 
@@ -597,8 +608,9 @@ changed — `build-and-push.yml` is path-filtered, this is not.
 Four of the five publish SARIF to the Security tab — everything above except the git-history scan,
 whose findings are deliberately kept out of a view people triage to empty. So *Security → Code
 scanning* collects repository secrets, workflow findings, the CodeQL results and the Scorecard
-result. Image vulnerabilities are uploaded there too, but see the note above on why that category
-is empty on a healthy build.
+result. Image vulnerabilities are uploaded there too, under their own `<image>-<arch>` categories
+— but unlike these repository-level scans, that category is expected to be **non-empty** on a
+healthy build; see the note above on why, and what it means when it is not.
 
 > **First run:** the Scorecard badge stays grey until the workflow has run once on `main` and
 > published its results. Both badges track `main`, so they will not reflect a pull request.
