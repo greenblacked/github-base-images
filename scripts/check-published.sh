@@ -30,6 +30,19 @@
 #
 #   ./scripts/check-published.sh                 # human-readable table
 #   ./scripts/check-published.sh --format json   # machine-readable, for the workflow
+#   ./scripts/check-published.sh --ref ghcr.io/<owner>/<image>@sha256:<digest>
+#
+# --ref is the same audit narrowed to ONE digest the caller just published:
+# build-image.yml's merge job runs it straight after `cosign sign`, so a
+# signature or attestation regression fails the run that caused it instead
+# of surfacing days later from published-audit.yml. It deliberately shares
+# every check function below with the full audit rather than carrying a
+# second copy -- the identity regexp and the present-vs-could-not-check
+# distinction in check_attestations were each fixed here against real cosign
+# and buildx output, and a parallel implementation is how those fixes would
+# quietly fail to reach the pipeline. Freshness is the one check it skips:
+# the caller built the image minutes ago, so an age check could only ever
+# pass, and a check that can only pass is not worth reporting as one.
 #
 # Exit codes:
 #   0  every image is healthy and current
@@ -51,13 +64,16 @@ readonly MAX_AGE_DAYS=10
 
 format=table
 log_level=info
+single_ref=""
 
 usage() {
   cat <<'EOF'
-usage: check-published.sh [--format table|json] [--quiet]
+usage: check-published.sh [--format table|json] [--quiet] [--ref REPO@sha256:DIGEST]
 
   --format   output shape on stdout (default: table)
   --quiet    suppress progress logging on stderr
+  --ref      audit only this digest reference (signature + attestations;
+             no freshness check) instead of every image in images.json
 
 Reads:
   OWNER            GHCR namespace to audit (default: repository owner from
@@ -81,6 +97,8 @@ while [ $# -gt 0 ]; do
     --format) [ $# -ge 2 ] || { echo "error: --format needs a value" >&2; usage >&2; exit 2; }
               format="$2"; shift 2 ;;
     --quiet)  log_level=quiet; shift ;;
+    --ref)    [ $# -ge 2 ] || { echo "error: --ref needs a value" >&2; usage >&2; exit 2; }
+              single_ref="$2"; shift 2 ;;
     -h|--help) usage; exit 0 ;;
     *) echo "error: unknown argument: $1" >&2; usage >&2; exit 2 ;;
   esac
@@ -90,6 +108,14 @@ case "$format" in
   table|json) ;;
   *) echo "error: --format must be 'table' or 'json', got '$format'" >&2; exit 2 ;;
 esac
+
+# A digest, never a tag: the point of --ref is to check the exact bytes the
+# caller signed. A tag could move between the signing and this check, and the
+# check would then pass or fail on something the caller never touched.
+if [ -n "$single_ref" ] && ! [[ "$single_ref" =~ ^[^@[:space:]]+@sha256:[0-9a-f]{64}$ ]]; then
+  echo "error: --ref must be a digest reference (REPO@sha256:<64 hex>), got '$single_ref'" >&2
+  exit 2
+fi
 
 for cmd in docker cosign jq date awk; do
   command -v "$cmd" >/dev/null || { echo "error: required command not found: $cmd" >&2; exit 1; }
@@ -314,8 +340,22 @@ check_freshness() {
 }
 
 audit_image() {
-  local image="$1" version="$2" ref digest_ref
-  ref="ghcr.io/${owner}/${image}:${version}"
+  local image="$1" version="$2"
+  audit_target "$image" "$version" "ghcr.io/${owner}/${image}" \
+    "ghcr.io/${owner}/${image}:${version}" true
+}
+
+# --ref mode: one digest reference, the same checks minus freshness (see the
+# header). The row's `version` column carries a marker rather than a tag,
+# since no tag was involved.
+audit_ref() {
+  local ref="$1" repo="${1%@*}"
+  audit_target "${repo##*/}" "(--ref)" "$repo" "$ref" false
+}
+
+# audit_target <image> <version> <repo> <ref> <check_age: true|false>
+audit_target() {
+  local image="$1" version="$2" repo="$3" ref="$4" check_age="$5" digest_ref
 
   log info "auditing $ref"
   check_pull "$ref"
@@ -326,10 +366,17 @@ audit_image() {
   freshness_detail="not checked: image could not be pulled"
 
   if [ "$pull_state" = ok ]; then
-    digest_ref="ghcr.io/${owner}/${image}@${digest}"
+    digest_ref="${repo}@${digest}"
     verify_signature "$digest_ref"
     check_attestations "$digest_ref"
-    check_freshness "$digest_ref"
+    if [ "$check_age" = true ]; then
+      check_freshness "$digest_ref"
+    else
+      # A distinct state, not "ok": the report says this was not looked at,
+      # rather than claiming a pass nobody checked for.
+      freshness_state=skipped
+      freshness_detail="not checked: --ref audits a digest its caller has just published"
+    fi
   fi
 
   # A row is "issue" when some dimension is definitively, observably broken
@@ -345,14 +392,20 @@ audit_image() {
   [ "$pull_state" = ok ] || has_issue=true
   [ "$sig_state" = ok ] || has_issue=true
 
+  # Two independent tests, not an if/elif: SBOM and provenance are checked
+  # separately, so one confirmed absent must still count as an issue when
+  # the other could not be determined -- the elif this replaced reported
+  # "sbom=unknown, provenance=false" as a checker error only, hiding the
+  # confirmed half behind the unrelated half.
+  if [ "$has_sbom" = false ] || [ "$has_provenance" = false ]; then
+    has_issue=true
+  fi
   if [ "$has_sbom" = unknown ] || [ "$has_provenance" = unknown ]; then
     has_unknown=true
-  elif [ "$has_sbom" != true ] || [ "$has_provenance" != true ]; then
-    has_issue=true
   fi
 
   case "$freshness_state" in
-    ok) ;;
+    ok|skipped) ;;
     stale) has_issue=true ;;
     unknown) has_unknown=true ;;
   esac
@@ -389,11 +442,16 @@ audit_image() {
 }
 
 # --- main --------------------------------------------------------------------
-while IFS=$'\t' read -r image version; do
-  [ -n "$image" ] || continue
-  checked=$((checked + 1))
-  audit_image "$image" "$version"
-done < <(jq -r '.[] | [.image, .version] | @tsv' .github/images.json)
+if [ -n "$single_ref" ]; then
+  checked=1
+  audit_ref "$single_ref"
+else
+  while IFS=$'\t' read -r image version; do
+    [ -n "$image" ] || continue
+    checked=$((checked + 1))
+    audit_image "$image" "$version"
+  done < <(jq -r '.[] | [.image, .version] | @tsv' .github/images.json)
+fi
 
 # A jq failure reading .github/images.json (malformed JSON, wrong shape) is
 # invisible to `set -eo pipefail` inside a `< <(...)` process substitution --

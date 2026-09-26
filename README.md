@@ -16,16 +16,21 @@ means the published images are stale or broken, not that someone's pull request 
 |---|---|---|---|
 | `ghcr.io/greenblacked/ci-node22` | `node:22-bookworm-slim` | `bookworm-v1` | `linux/amd64`, `linux/arm64` |
 | `ghcr.io/greenblacked/ci-node24` | `node:24-bookworm-slim` | `bookworm-v1` | `linux/amd64`, `linux/arm64` |
+| `ghcr.io/greenblacked/ci-python314` | `python:3.14-slim-trixie` | `trixie-v1` | `linux/amd64`, `linux/arm64` |
 | `ghcr.io/greenblacked/ci-python313` | `python:3.13-slim-bookworm` | `bookworm-v1` | `linux/amd64`, `linux/arm64` |
 | `ghcr.io/greenblacked/ci-python312` | `python:3.12-slim-bookworm` | `bookworm-v1` | `linux/amd64`, `linux/arm64` |
 | `ghcr.io/greenblacked/ci-go` | `golang:1-bookworm` | `bookworm-v1` | `linux/amd64`, `linux/arm64` |
 | `ghcr.io/greenblacked/ci-rust` | `rust:1-bookworm` | `bookworm-v1` | `linux/amd64`, `linux/arm64` |
+| `ghcr.io/greenblacked/ci-ruby40` | `ruby:4.0-slim-trixie` | `trixie-v1` | `linux/amd64`, `linux/arm64` |
 | `ghcr.io/greenblacked/ci-ruby34` | `ruby:3.4-slim-bookworm` | `bookworm-v1` | `linux/amd64`, `linux/arm64` |
+| `ghcr.io/greenblacked/ci-java25` | `eclipse-temurin:25-jdk-noble` | `noble-v1` | `linux/amd64`, `linux/arm64` |
 | `ghcr.io/greenblacked/ci-java21` | `eclipse-temurin:21-jdk-noble` | `noble-v1` | `linux/amd64`, `linux/arm64` |
 | `ghcr.io/greenblacked/ci-java17` | `eclipse-temurin:17-jdk-noble` | `noble-v1` | `linux/amd64`, `linux/arm64` |
+| `ghcr.io/greenblacked/ci-php85` | `php:8.5-cli-trixie` | `trixie-v1` | `linux/amd64`, `linux/arm64` |
 | `ghcr.io/greenblacked/ci-php84` | `php:8.4-cli-bookworm` | `bookworm-v1` | `linux/amd64`, `linux/arm64` |
-| `ghcr.io/greenblacked/ci-dotnet9` | `mcr.microsoft.com/dotnet/sdk:9.0-bookworm-slim` | `bookworm-v1` | `linux/amd64`, `linux/arm64` |
-| `ghcr.io/greenblacked/ci-dotnet8` | `mcr.microsoft.com/dotnet/sdk:8.0-bookworm-slim` | `bookworm-v1` | `linux/amd64`, `linux/arm64` |
+| `ghcr.io/greenblacked/ci-dotnet10` | `mcr.microsoft.com/dotnet/sdk:10.0-noble` | `noble-v1` | `linux/amd64`, `linux/arm64` |
+| `ghcr.io/greenblacked/ci-dotnet9` ([deprecated](#deprecated-ci-dotnet8-and-ci-dotnet9)) | `mcr.microsoft.com/dotnet/sdk:9.0-bookworm-slim` | `bookworm-v1` | `linux/amd64`, `linux/arm64` |
+| `ghcr.io/greenblacked/ci-dotnet8` ([deprecated](#deprecated-ci-dotnet8-and-ci-dotnet9)) | `mcr.microsoft.com/dotnet/sdk:8.0-bookworm-slim` | `bookworm-v1` | `linux/amd64`, `linux/arm64` |
 | `ghcr.io/greenblacked/ci-tools` | `debian:bookworm-slim` | `bookworm-v1` | `linux/amd64`, `linux/arm64` |
 | `ghcr.io/greenblacked/ci-cloud` | `debian:bookworm-slim` | `bookworm-v1` | `linux/amd64`, `linux/arm64` |
 | `ghcr.io/greenblacked/ci-security` | `debian:bookworm-slim` | `bookworm-v1` | `linux/amd64`, `linux/arm64` |
@@ -39,6 +44,8 @@ curl, tar, gzip, unzip, xz, zstd, jq, and the OpenSSH client. On top of that:
   binaries; see below).
 - **`ci-node24`** — the same image on Node.js 24, for repositories that have moved to the newer
   LTS line or that test against both in a matrix.
+- **`ci-python314`** — Python 3.14 and pip, on Debian Trixie. Otherwise identical to
+  `ci-python313`, including the absent compiler toolchain.
 - **`ci-python313`** — Python 3.13 and pip. No compiler toolchain: projects that build native
   wheels add `build-essential` in their own workflow, for the same reason browsers are not baked
   into `ci-node22`.
@@ -49,21 +56,29 @@ curl, tar, gzip, unzip, xz, zstd, jq, and the OpenSSH client. On top of that:
 - **`ci-rust`** — the current stable Rust toolchain, plus the `rustfmt` and `clippy` components CI
   lints with (non-slim upstream, so the C toolchain the linker needs is included). Deliberately not
   named for a Rust version — see below.
+- **`ci-ruby40`** — Ruby 4.0, RubyGems, and Bundler, on Debian Trixie. Otherwise identical to
+  `ci-ruby34`.
 - **`ci-ruby34`** — Ruby 3.4, RubyGems, and Bundler. No compiler toolchain: projects with gems
   that build native extensions add `build-essential` in their own workflow, same as `ci-python313`.
+- **`ci-java25`** — the Temurin JDK 25, the newest LTS. Same no-Maven, no-Gradle reasoning as
+  `ci-java21`, below.
 - **`ci-java21`** — the Temurin JDK 21. No Maven and no Gradle: both ship a wrapper (`mvnw`,
   `gradlew`) that projects commit and that pins the exact build version, so a second copy here
   would be ignored or fight the wrapper.
 - **`ci-java17`** — the Temurin JDK 17, the previous LTS, which a large amount of production Java
   is still built on. Same no-Maven, no-Gradle reasoning as `ci-java21`.
+- **`ci-php85`** — PHP 8.5 CLI plus the same pinned Composer as `ci-php84`, on Debian Trixie.
 - **`ci-php84`** — PHP 8.4 CLI plus Composer. Composer is the one package manager not shipped by
   its upstream runtime image, so it is installed here — pinned by version *and* SHA-256, and
   fetched from the GitHub release rather than `getcomposer.org`, which is not reachable from every
   build network.
-- **`ci-dotnet9`** — the .NET SDK 9.0. No global tools: those are pinned per project in
-  `.config/dotnet-tools.json` and restored by the project's own workflow.
-- **`ci-dotnet8`** — the .NET SDK 8.0, which is the LTS release; 9.0 is an STS one, so most
-  services in production track this image rather than `ci-dotnet9`.
+- **`ci-dotnet10`** — the .NET SDK 10.0, the current LTS release, on Ubuntu Noble. No global
+  tools: those are pinned per project in `.config/dotnet-tools.json` and restored by the project's
+  own workflow.
+- **`ci-dotnet9`** — the .NET SDK 9.0 (STS). **Deprecated, retiring after 2026-11-10** — see
+  [below](#deprecated-ci-dotnet8-and-ci-dotnet9).
+- **`ci-dotnet8`** — the .NET SDK 8.0 (the previous LTS). **Deprecated, retiring after
+  2026-11-10** — see [below](#deprecated-ci-dotnet8-and-ci-dotnet9).
 - **`ci-tools`** — infra/deploy tooling as pinned upstream release binaries: Terraform, kubectl,
   the AWS CLI v2, and the Docker *client* (no daemon — it talks to the host's socket or a
   `docker:dind` service). Versions are pinned via `ARG`s in
@@ -87,9 +102,9 @@ curl, tar, gzip, unzip, xz, zstd, jq, and the OpenSSH client. On top of that:
 
 **Why `ci-go` and `ci-rust` carry no version, when every other image does.** The versioned names
 are not decoration — they are the choice a consumer makes between *parallel supported lines*. Node
-22 and 24, Python 3.13, Java 21, PHP 8.4 and .NET 8 and 9 are all patched independently by
-upstream, so `ci-python313` is not "behind" 3.14 any more than `ci-node22` is behind 24; you pick
-the line your project targets.
+22 and 24, Python 3.12 to 3.14, Java 17, 21 and 25, PHP 8.4 and 8.5, Ruby 3.4 and 4.0, and .NET 8
+to 10 are all patched independently by upstream, so `ci-python313` is not "behind" `ci-python314`
+any more than `ci-node22` is behind 24; you pick the line your project targets.
 
 Go and Rust have no such lines. Rust patches exactly one version — the current stable — and never
 backports. Go patches only the two newest minors. Both promise that code building on one 1.x builds
@@ -102,14 +117,19 @@ and `golang:1-bookworm` fixes it permanently rather than restarting the same cou
 Projects that genuinely need an exact toolchain already have the right mechanism: a
 `rust-toolchain.toml`, or the `toolchain` directive in `go.mod`. Both work inside these images.
 
-Two of these break a pattern worth naming explicitly:
+Some of these break a pattern worth naming explicitly:
 
-- **`ci-java21` is not Bookworm.** Temurin publishes no Debian Bookworm tag — only Ubuntu and
-  Alpine — and installing a JDK onto `debian:bookworm-slim` would pin us to whatever Debian ships
-  (17, not 21). It is built on Noble and carries its own **`noble-v1`** version line. The version
-  tag is per image, so this costs nothing structurally.
-- **`ci-dotnet9` does not come from Docker Hub.** Microsoft publishes .NET only to
-  `mcr.microsoft.com`. It is still mirrored, so builds depend on one registry rather than two.
+- **The Java images and `ci-dotnet10` are not Debian.** Temurin publishes no Debian tag — only
+  Ubuntu and Alpine — and installing a JDK onto a Debian slim image would pin us to whatever Debian
+  ships. Microsoft likewise publishes no Debian SDK image for .NET 10; its Linux default moved to
+  Ubuntu. All of them are built on Noble and carry their own **`noble-v1`** version line. The
+  version tag is per image, so this costs nothing structurally.
+- **The newest Debian-based images are Trixie, not Bookworm.** `ci-python314`, `ci-php85` and
+  `ci-ruby40` start on Debian 13 and carry **`trixie-v1`**. Debian 12 Bookworm's regular security
+  support has ended and it is on reduced Debian LTS coverage, so starting a brand-new image on it
+  would be migration debt from day one. The existing Bookworm images are unchanged by this.
+- **The .NET images do not come from Docker Hub.** Microsoft publishes .NET only to
+  `mcr.microsoft.com`. They are still mirrored, so builds depend on one registry rather than two.
 
 None of them contains project dependencies, application source, credentials, repository secrets,
 or project-specific build tools. Dependencies stay controlled by each consuming repository's own
@@ -124,6 +144,21 @@ rather than one frozen into this image.
 There is intentionally **no runtime image**. Purr.pet deploys to Cloudflare Workers, which runs
 V8 isolates and never pulls a container image, so a runtime base would have no consumer. If a
 container target is ever added (Cloudflare Containers, Fly, Kubernetes), that is when to add one.
+
+### Deprecated: `ci-dotnet8` and `ci-dotnet9`
+
+.NET 8 (LTS) and .NET 9 (STS) both reach Microsoft's end of support on **2026-11-10**. After that
+date neither receives security fixes upstream, so rebuilding these images weekly would only keep
+producing fresh digests of an unpatched runtime.
+
+- **Move to `ci-dotnet10`** (`ghcr.io/greenblacked/ci-dotnet10:noble-v1`), the current LTS line.
+  It is Ubuntu Noble rather than Debian Bookworm, so a job that installs extra packages with
+  `apt-get` should check that their names still resolve.
+- **Both images will be retired after 2026-11-10** — removed from this repository's build, so they
+  stop being rebuilt and re-scanned. Until then they are built, scanned and published as normal.
+- Retiring an image does not delete its published package (see
+  [Tags and rebuilds](#tags-and-rebuilds)); deleting the GHCR packages is a separate decision for
+  the repository owner.
 
 ## Using it
 
@@ -167,7 +202,9 @@ jq -r '.[] | select(.image == "ci-node22") | .digest' digests.json
 ```
 
 A change-detection run's `digests.json` covers only the images that run rebuilt; a weekly or
-manually dispatched run always covers all of them.
+manually dispatched run always covers all of them. A run in which some image failed still
+aggregates the ones that published and verified — its summary says how many of the planned images
+that is — but the run is red, so the `status=success` query above will not pick it.
 
 ### Locally
 
@@ -301,9 +338,10 @@ for every consuming repository, forever.
 > **One-time manual step:** GHCR packages are created **private**, and visibility cannot be
 > changed by the workflow — `GITHUB_TOKEN` lacks the permission. After the first successful push:
 > package page → *Package settings* → *Change visibility* → **Public**. Do this for every `ci-*`
-> image (`ci-node22`, `ci-node24`, `ci-python313`, `ci-python312`, `ci-go`, `ci-rust`,
-> `ci-ruby34`, `ci-java21`, `ci-java17`, `ci-php84`, `ci-dotnet9`, `ci-dotnet8`, `ci-tools`,
-> `ci-cloud`, `ci-security`, `ci-db`) and every
+> image (`ci-node22`, `ci-node24`, `ci-python314`, `ci-python313`, `ci-python312`, `ci-go`,
+> `ci-rust`, `ci-ruby40`, `ci-ruby34`, `ci-java25`, `ci-java21`, `ci-java17`, `ci-php85`,
+> `ci-php84`, `ci-dotnet10`, `ci-dotnet9`, `ci-dotnet8`, `ci-tools`, `ci-cloud`, `ci-security`,
+> `ci-db`) and every
 > `mirror-*` package.
 > Until then, pulls from other repositories fail with `denied`.
 
@@ -332,15 +370,20 @@ The workflow copies the upstream base into `ghcr.io` before building:
 |---|---|
 | `ghcr.io/greenblacked/mirror-node:22-bookworm-slim` | `node:22-bookworm-slim` (Docker Hub) |
 | `ghcr.io/greenblacked/mirror-node:24-bookworm-slim` | `node:24-bookworm-slim` (Docker Hub) |
+| `ghcr.io/greenblacked/mirror-python:3.14-slim-trixie` | `python:3.14-slim-trixie` (Docker Hub) |
 | `ghcr.io/greenblacked/mirror-python:3.13-slim-bookworm` | `python:3.13-slim-bookworm` (Docker Hub) |
 | `ghcr.io/greenblacked/mirror-python:3.12-slim-bookworm` | `python:3.12-slim-bookworm` (Docker Hub) |
 | `ghcr.io/greenblacked/mirror-golang:1-bookworm` | `golang:1-bookworm` (Docker Hub) |
 | `ghcr.io/greenblacked/mirror-rust:1-bookworm` | `rust:1-bookworm` (Docker Hub) |
+| `ghcr.io/greenblacked/mirror-ruby:4.0-slim-trixie` | `ruby:4.0-slim-trixie` (Docker Hub) |
 | `ghcr.io/greenblacked/mirror-ruby:3.4-slim-bookworm` | `ruby:3.4-slim-bookworm` (Docker Hub) |
 | `ghcr.io/greenblacked/mirror-debian:bookworm-slim` | `debian:bookworm-slim` (Docker Hub) |
+| `ghcr.io/greenblacked/mirror-temurin:25-jdk-noble` | `eclipse-temurin:25-jdk-noble` (Docker Hub) |
 | `ghcr.io/greenblacked/mirror-temurin:21-jdk-noble` | `eclipse-temurin:21-jdk-noble` (Docker Hub) |
 | `ghcr.io/greenblacked/mirror-temurin:17-jdk-noble` | `eclipse-temurin:17-jdk-noble` (Docker Hub) |
+| `ghcr.io/greenblacked/mirror-php:8.5-cli-trixie` | `php:8.5-cli-trixie` (Docker Hub) |
 | `ghcr.io/greenblacked/mirror-php:8.4-cli-bookworm` | `php:8.4-cli-bookworm` (Docker Hub) |
+| `ghcr.io/greenblacked/mirror-dotnet:10.0-noble` | `mcr.microsoft.com/dotnet/sdk:10.0-noble` (MCR) |
 | `ghcr.io/greenblacked/mirror-dotnet:9.0-bookworm-slim` | `mcr.microsoft.com/dotnet/sdk:9.0-bookworm-slim` (MCR) |
 | `ghcr.io/greenblacked/mirror-dotnet:8.0-bookworm-slim` | `mcr.microsoft.com/dotnet/sdk:8.0-bookworm-slim` (MCR) |
 
@@ -376,11 +419,11 @@ exist yet.
 
 ## Tags and rebuilds
 
-- **`bookworm-v1`** is a rolling contract line. The weekly rebuild moves it to a fresh digest
-  carrying Debian security updates, plus whatever the upstream runtime base picked up. It is
-  bumped to `v2` only when the *contents* of the
-  image change — a tool added or removed. Determinism in production comes from pinning a digest,
-  not from the tag.
+- **`bookworm-v1`** is a rolling contract line, and so are **`trixie-v1`** and **`noble-v1`** —
+  each image carries exactly one, per the [table above](#images). The weekly rebuild moves it to a
+  fresh digest carrying distribution security updates, plus whatever the upstream runtime base
+  picked up. It is bumped to `v2` only when the *contents* of the image change — a tool added or
+  removed. Determinism in production comes from pinning a digest, not from the tag.
   - For `ci-rust` and `ci-go` the line is rolling in one extra respect: the **language toolchain
     minor moves too**, because those images track `rust:1-bookworm` and `golang:1-bookworm`
     ([why](#images)). That is a deliberate exception to "contents change ⇒ bump to v2" — under the
@@ -485,6 +528,47 @@ builds. It is accepted risk, not a build failure — nothing here means the pipe
 the exhaustive picture (every severity, every scanner, unfixed and fixed alike) go to the job
 summary or the `security-report-<image>-<arch>` artifact, which run with no filters at all.
 
+**A second opinion from OSV.** After both architectures build, a separate `osv` job runs
+[osv-scanner](https://github.com/google/osv-scanner) over the CycloneDX SBOM the build already
+produced — no second image scan — and uploads the result to the Security tab under its own
+`osv-<image>-<arch>` category, next to Trivy's. OSV aggregates the Debian and Ubuntu security
+trackers alongside the npm, PyPI, RubyGems and Go advisories, so it is a different database
+looking at the same packages. **Reported, not gating.** Like the Trivy SARIF, the upload is
+limited to HIGH/CRITICAL (`security-severity` >= 7.0) — plus every finding OSV gives no score at
+all, which are kept rather than silently dropped. The unfiltered report, every severity, is the
+`osv-report-<image>-<arch>` artifact; the job summary gives the kept / dropped / unscored counts.
+
+Four things about it are less obvious than they look:
+
+- **It fails when it could not look.** Findings are success. A scan that did not complete — the
+  OSV database unreachable, no packages read from the SBOM, the binary not running — turns the
+  job red, and its SARIF is deleted rather than uploaded. osv-scanner writes a valid, zero-result
+  SARIF even when it could not reach its database; uploading that would be an empty report posing
+  as a clean one. Being its own job, an outage there never holds up a publish or the
+  `digests.json` aggregate — the run goes red, and that is all.
+- **The SBOM is normalised first.** As Trivy writes it, it matches nothing in OSV's Debian data:
+  the purl says `distro=debian-12.15` where OSV files under `Debian:12`, and it names binary
+  packages (`libc6`) where OSV keys by source (`glibc`). `scripts/osv-scan-sbom.sh` rewrites a
+  copy from the source-package properties Trivy records; on `debian:bookworm-slim` that is the
+  difference between 0 findings and 98. The SBOM artifact itself is untouched. If those
+  properties ever stop appearing (a Trivy rename), the scan fails instead of quietly falling back
+  to binary names; the summary shows how many packages were mapped each way.
+- **Alerts stay put between runs.** osv-scanner fingerprints each finding by vulnerability,
+  package *and file path*, so the normalised copy is always written to the same path
+  (`/tmp/osv-scan-sbom/<sbom name>`) and the displayed location is rewritten to the SBOM's name.
+  A per-run temp path would have closed and reopened every alert on every build.
+- **Kernel findings on kernel headers stay out of the Security tab.** Images that keep a C
+  toolchain (ci-go, ci-php84, ci-php85) carry `linux-libc-dev`, the kernel's userspace headers,
+  and OSV files every kernel CVE under its source package `linux`: about 2,000 alerts per image
+  and architecture, against a package with no kernel code in it. A container runs the host's
+  kernel. When `linux-libc-dev` is the only package from that source, those findings are left out
+  of the upload and counted in the summary. They stay in the artifact. If anything else from the
+  `linux` source is present, nothing is left out.
+
+```bash
+./scripts/osv-scan-sbom.sh sbom-ci-tools-amd64.cdx.json full.sarif upload.sarif   # locally
+```
+
 ### Verifying a signature
 
 Every published manifest list is signed with keyless cosign — no key to distribute, no key to
@@ -523,6 +607,34 @@ Verification belongs in the job that consumes the image, not only in a README. P
 `digests.json`, verify it, then run it: a tag can move, and a digest that was signed last week is
 still the digest that was signed.
 
+The pipeline runs this same check on itself. Straight after signing, the merge job verifies the
+signature under exactly the identity above and confirms the SBOM and provenance attestations are
+on the index (`scripts/check-published.sh --ref`, the same code as the
+[post-publish audit](.github/workflows/published-audit.yml)), and repeats the check once the GitHub
+attestation below has been attached, against the index exactly as consumers see it. A signature
+that stops verifying —
+a renamed workflow, a changed ref — fails the run that caused it, rather than surfacing from the
+weekly audit. A check that could not run fails too, with its own message; it is never read as a
+pass.
+
+#### Or with the GitHub CLI
+
+Each published index also carries a **GitHub build provenance attestation**, generated by
+[`actions/attest-build-provenance`](https://github.com/actions/attest-build-provenance) in the
+same job that runs cosign. It is independent of the cosign signature — a second verification
+path, not a replacement:
+
+```bash
+gh attestation verify oci://ghcr.io/greenblacked/ci-tools:bookworm-v1 \
+  --repo greenblacked/github-base-images \
+  --cert-identity https://github.com/greenblacked/github-base-images/.github/workflows/build-image.yml@refs/heads/main
+```
+
+The identity is the same as cosign's, for the same reason: the attestation is signed inside the
+reusable workflow. `--repo` alone would accept an attestation from *any* workflow in this
+repository; `--cert-identity` pins it to `build-image.yml` on `main`. The pipeline runs this
+exact command against every index it attests and fails if it does not verify.
+
 ### Attestations
 
 Published images carry an **SBOM and provenance attestation** attached to the artifact itself, not
@@ -536,6 +648,19 @@ docker buildx imagetools inspect ghcr.io/greenblacked/ci-ruby34:bookworm-v1
 docker exporter via `load:`, which cannot carry attestations. `imagetools create` preserves them
 into the final multi-arch index.
 
+The GitHub attestation above is a third, separate record: SLSA build provenance for the index
+digest, signed through Sigstore with the workflow's OIDC identity, stored with GitHub's attestation
+API and also pushed to GHCR next to the image. It adds to the buildx attestations and the cosign
+signature; neither was changed.
+
+On SLSA, precisely: GitHub describes artifact attestations on their own as meeting SLSA v1.0
+**Build Level 2**, and notes that generating them in a reusable workflow *can* provide the
+isolation **Build Level 3** asks for. Signing here does happen in a reusable workflow
+(`build-image.yml`), but that workflow lives in the same repository as its caller and is
+changed through the same pull requests, so it is not the separately controlled builder that
+argument assumes. This repository makes no SLSA level claim beyond what the attestations
+themselves state.
+
 ### Pin drift
 
 Most of this repository's supply chain is watched by something: Dependabot tracks the action pins
@@ -546,7 +671,8 @@ pull in a compromised release — and one `groups` rule for `github/codeql-actio
 `analyze` and `upload-sarif` subpaths are one action on one SHA. Without the grouping Dependabot
 opens a PR per subpath, and since CodeQL rejects `init` and `analyze` on different versions, two of
 the three fail by construction while the third passes as a third of a change. The tools installed as pinned release binaries — Terraform, kubectl, the AWS CLI, the
-Docker client, gcloud, Composer, Playwright, and the five scanners in `ci-security` — were the gap:
+Docker client, gcloud, Composer, Playwright, the five scanners in `ci-security`, and the
+osv-scanner binary the pipeline itself runs — were the gap:
 nothing read them, so they moved only when a human remembered. An audit found six behind at once.
 
 [pin-drift.yml](.github/workflows/pin-drift.yml) closes that gap. Weekly, it compares every pinned
@@ -601,16 +727,25 @@ changed — `build-and-push.yml` is path-filtered, this is not.
   a job added without a `permissions:` block gets nothing and fails loudly rather than inheriting
   the repository default. That matters most in the two build workflows, which are the ones holding
   `packages: write` and `id-token: write`.
+- **Dependency review** — on pull requests only, GitHub's
+  [dependency-review-action](https://github.com/actions/dependency-review-action) checks what the
+  PR *adds* to the dependency graph — in this repository, mostly action versions — against the
+  advisory database. **Gates** at `fail-on-severity: high`: the fix is always available here (do
+  not merge that version), and a review that could not run at all fails rather than passes. The
+  OpenSSF Scorecard lookup it would otherwise make for each changed dependency, against
+  `api.deps.dev` and `api.securityscorecards.dev`, is switched off, so it talks only to GitHub.
 - **OpenSSF Scorecard** — branch protection, token permissions, pinned dependencies, dangerous
   workflow patterns. Produces the score behind the README badge. Runs on `main` only, since several
   checks inspect repository settings rather than the tree.
 
-Four of the five publish SARIF to the Security tab — everything above except the git-history scan,
-whose findings are deliberately kept out of a view people triage to empty. So *Security → Code
+Four of these publish SARIF to the Security tab — everything above except the git-history scan,
+whose findings are deliberately kept out of a view people triage to empty, and dependency review,
+whose verdict is the PR check itself. So *Security → Code
 scanning* collects repository secrets, workflow findings, the CodeQL results and the Scorecard
-result. Image vulnerabilities are uploaded there too, under their own `<image>-<arch>` categories
-— but unlike these repository-level scans, that category is expected to be **non-empty** on a
-healthy build; see the note above on why, and what it means when it is not.
+result. Image vulnerabilities are uploaded there too, under their own `<image>-<arch>` and
+`osv-<image>-<arch>` categories — but unlike these repository-level scans, those are expected to
+be **non-empty** on a healthy build; see the notes above on why, and what it means when they are
+not.
 
 > **First run:** the Scorecard badge stays grey until the workflow has run once on `main` and
 > published its results. Both badges track `main`, so they will not reflect a pull request.
@@ -618,7 +753,7 @@ healthy build; see the note above on why, and what it means when it is not.
 ## PR validation and linting
 
 A PR runs the full per-image pipeline — build both architectures natively, smoke test, all five
-scans, both gates — for **every image the `plan` job selects** (the changed ones, or all of them
+Trivy scans, both gates, the OSV report — for **every image the `plan` job selects** (the changed ones, or all of them
 when the pipeline itself changed), with every registry write skipped. Publishing (mirror push,
 digest push, manifest tagging) happens only on `main`. A manually dispatched run from another
 branch builds everything, upstream-only, with no registry writes.
@@ -675,13 +810,13 @@ To add an image:
 Everything else is automatic: the `paths:` filter is the glob `ci-*/**`, the mirror job and the
 build matrix are driven by `images.json`, the lint job cross-checks that every entry has a
 directory and every `ci-*` directory has an entry, and the [Makefile](Makefile) discovers images
-by globbing `*/Dockerfile.ci`. The `version` field is per image, which is how `ci-java21` carries
-`noble-v1` while everything else is `bookworm-v1`.
+by globbing `*/Dockerfile.ci`. The `version` field is per image, which is how the Noble-based
+images carry `noble-v1` and the Trixie-based ones `trixie-v1` while the rest are `bookworm-v1`.
 
 ### Which images a run builds
 
 A push or pull request builds **only the images whose directories changed** — a one-line fix to
-`ci-ruby34` does not rebuild the other fifteen images or move `latest` on them. Changing the
+`ci-ruby34` does not rebuild the other twenty images or move `latest` on them. Changing the
 pipeline itself (either workflow file, or `images.json`) rebuilds everything, and the weekly
 schedule and `workflow_dispatch` always rebuild everything — the rebuild is the security-update
 mechanism and is never narrowed. Every ambiguous case (force-push, missing diff base) falls back
@@ -700,9 +835,13 @@ and .NET.
 
 Nothing is queued behind them, and the bar for the next one is **raised**, not unchanged: a
 concrete consumer. That bar was applied loosely when the set grew to sixteen — the second runtime
-versions in particular were added for matrix coverage that nobody had asked for yet. An image with
-no consumer is not free: it is two build jobs, nine Trivy scans per architecture on every full
-rebuild, another base to keep current, and another set of pinned tools nothing tracks. The
+versions in particular were added for matrix coverage that nobody had asked for yet. The five
+added since (`ci-dotnet10`, `ci-java25`, `ci-python314`, `ci-php85`, `ci-ruby40`) are the next
+supported line of runtimes already shipped here, not new kinds of image: they are where consumers
+of the older lines move as those reach end of life, as `ci-dotnet8` and `ci-dotnet9` do next.
+
+An image with no consumer is not free: it is two build jobs, nine Trivy scans per architecture on
+every full rebuild, another base to keep current, and another set of pinned tools nothing tracks. The
 marginal cost of *writing* one is a directory and two config entries; the marginal cost of
 *owning* one is considerably higher, and that is the number that matters.
 

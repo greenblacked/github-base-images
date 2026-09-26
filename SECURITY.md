@@ -20,7 +20,9 @@ In scope:
   at any severity, so anything that ships is a real escape.
 - A fixable HIGH/CRITICAL OS-package vulnerability that the build gate should have caught.
 - A supply-chain problem with how images are built or published — an unexpected base, a tag
-  pointing at a digest this repo did not build.
+  pointing at a digest this repo did not build, or a published digest whose cosign signature or
+  GitHub attestation does not verify under the identity the README documents. The pipeline checks
+  both right after signing, so one that does not verify is a real escape.
 
 Out of scope:
 
@@ -34,6 +36,10 @@ Out of scope:
 
 ## Supported versions
 
-Only the current rolling tag (`bookworm-v1`) is supported. It is rebuilt weekly, picking up Debian
-security updates; older digests are never patched in place. Pin a digest for reproducibility, but
-expect to move it forward to receive fixes.
+Only each image's current rolling tag (`bookworm-v1`, `trixie-v1` or `noble-v1` — see the README's
+image table) is supported. It is rebuilt weekly, picking up distribution security updates; older
+digests are never patched in place. Pin a digest for reproducibility, but expect to move it forward
+to receive fixes.
+
+`ci-dotnet8` and `ci-dotnet9` are deprecated: .NET 8 and .NET 9 reach end of support on
+2026-11-10, and both images are retired after that date. Use `ci-dotnet10`.

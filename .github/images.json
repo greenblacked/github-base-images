@@ -24,6 +24,12 @@
     "upstream": "mcr.microsoft.com/dotnet/sdk:9.0-bookworm-slim"
   },
   {
+    "image": "ci-dotnet10",
+    "version": "noble-v1",
+    "mirror": "mirror-dotnet:10.0-noble",
+    "upstream": "mcr.microsoft.com/dotnet/sdk:10.0-noble"
+  },
+  {
     "image": "ci-go",
     "version": "bookworm-v1",
     "mirror": "mirror-golang:1-bookworm",
@@ -40,6 +46,12 @@
     "version": "noble-v1",
     "mirror": "mirror-temurin:21-jdk-noble",
     "upstream": "eclipse-temurin:21-jdk-noble"
+  },
+  {
+    "image": "ci-java25",
+    "version": "noble-v1",
+    "mirror": "mirror-temurin:25-jdk-noble",
+    "upstream": "eclipse-temurin:25-jdk-noble"
   },
   {
     "image": "ci-node22",
@@ -60,6 +72,12 @@
     "upstream": "php:8.4-cli-bookworm"
   },
   {
+    "image": "ci-php85",
+    "version": "trixie-v1",
+    "mirror": "mirror-php:8.5-cli-trixie",
+    "upstream": "php:8.5-cli-trixie"
+  },
+  {
     "image": "ci-python312",
     "version": "bookworm-v1",
     "mirror": "mirror-python:3.12-slim-bookworm",
@@ -72,10 +90,22 @@
     "upstream": "python:3.13-slim-bookworm"
   },
   {
+    "image": "ci-python314",
+    "version": "trixie-v1",
+    "mirror": "mirror-python:3.14-slim-trixie",
+    "upstream": "python:3.14-slim-trixie"
+  },
+  {
     "image": "ci-ruby34",
     "version": "bookworm-v1",
     "mirror": "mirror-ruby:3.4-slim-bookworm",
     "upstream": "ruby:3.4-slim-bookworm"
+  },
+  {
+    "image": "ci-ruby40",
+    "version": "trixie-v1",
+    "mirror": "mirror-ruby:4.0-slim-trixie",
+    "upstream": "ruby:4.0-slim-trixie"
   },
   {
     "image": "ci-rust",

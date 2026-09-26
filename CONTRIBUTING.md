@@ -54,6 +54,8 @@ Two rules that are easy to miss:
 - **Bump kubectl in both places.** It is pinned in `ci-tools` *and* `ci-cloud` so a cluster deploy
   behaves the same whichever image runs it. The lint job asserts the version and both checksums are
   identical, so updating one and not the other fails the build rather than shipping a version skew.
+- **Bump Composer in both places.** It is pinned in `ci-php84` *and* `ci-php85`, with the same lint
+  assertion on the version and checksum, for the same reason.
 
 ## What does not belong in an image
 
@@ -62,7 +64,7 @@ Project dependencies, application source, credentials, and project-specific buil
 one to make a build pass, that is usually the bug rather than the test.
 
 Pinned tool versions (Terraform, kubectl, AWS CLI, Docker client in `ci-tools`; Composer in
-`ci-php84`) are `ARG`s so a bump is a small change that CI revalidates. Dependabot does **not**
+`ci-php84` and `ci-php85`) are `ARG`s so a bump is a small change that CI revalidates. Dependabot does **not**
 track these — it only updates each Dockerfile's `ARG BASE_IMAGE` — so they still move when a human
 moves them. What has changed is that you no longer have to *notice*: the weekly
 [pin drift](../.github/workflows/pin-drift.yml) job compares every one of them against its vendor's

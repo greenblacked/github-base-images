@@ -10,6 +10,7 @@ decision, the reasoning that made it win, and what would have to change for it t
 | [0002](0002-images-json-reusable-workflow.md) | One `images.json`, one reusable workflow, per-image change detection |
 | [0003](0003-gates-vs-reports.md) | Security gates block only what this repo can fix |
 | [0004](0004-sha-pinned-actions.md) | Actions pinned by commit SHA, maintained by Dependabot with a cooldown |
+| [0005](0005-new-images-current-distro-retire-at-eol.md) | New images start on the current distro; images retire at upstream end of support |
 
 Records are immutable once accepted; a change of course gets a new record that supersedes the old
 one, so the history of *why* survives the history of *what*.

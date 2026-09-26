@@ -90,6 +90,10 @@ trap 'rm -rf "$tmp"' EXIT INT TERM
 #
 # The pinned value is read from the file rather than duplicated here, so this
 # script cannot disagree with what actually builds.
+#
+# kubectl and composer are each pinned in two Dockerfiles (ci-tools/ci-cloud,
+# ci-php84/ci-php85) but listed once: scripts/lint.sh fails if the copies ever
+# differ, so checking one checks both.
 readonly PINS='
 terraform  | ci-tools/Dockerfile.ci               | TERRAFORM_VERSION  | hashicorp | terraform
 kubectl    | ci-tools/Dockerfile.ci               | KUBECTL_VERSION    | k8s       | -
@@ -104,6 +108,7 @@ grype      | ci-security/Dockerfile.ci            | GRYPE_VERSION      | github 
 cosign     | ci-security/Dockerfile.ci            | COSIGN_VERSION     | github    | sigstore/cosign
 gitleaks   | ci-security/Dockerfile.ci            | GITLEAKS_VERSION   | github    | gitleaks/gitleaks
 migrate    | ci-db/Dockerfile.ci                  | MIGRATE_VERSION    | github    | golang-migrate/migrate
+osv-scanner | .github/workflows/build-image.yml   | OSV_SCANNER_VERSION | github   | google/osv-scanner
 '
 
 fetch() {
@@ -163,9 +168,14 @@ resolve_gcs() {
     | sed 's/.*google-cloud-cli-//;s/-linux-x86_64.*//' | sort -V | tail -1
 }
 
+# Three spellings of a pin: a Dockerfile `ARG KEY=v`, a shell `KEY=v`, and a
+# workflow step's `env:` entry, `    KEY: v` (osv-scanner, pinned where it
+# runs in build-image.yml). The YAML form must be indented, which keeps a
+# `${KEY}` reference or a comment mentioning the key from matching first.
 current_pin() {
   local file="$1" key="$2" value
-  value=$(grep -m1 -E "^(ARG )?${key}=" "$file" 2>/dev/null | sed "s/^ARG //;s/^${key}=//" || true)
+  value=$(grep -m1 -E "^(ARG )?${key}=|^[[:space:]]+${key}:[[:space:]]" "$file" 2>/dev/null \
+    | sed -E "s/^ARG //;s/^${key}=//;s/^[[:space:]]+${key}:[[:space:]]*//;s/^[\"']//;s/[\"'][[:space:]]*$//;s/[[:space:]]+$//" || true)
   printf '%s' "$value"
 }
 

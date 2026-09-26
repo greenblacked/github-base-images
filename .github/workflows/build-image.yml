@@ -366,6 +366,114 @@ jobs:
           if-no-files-found: error
           retention-days: 1
 
+  # A second vulnerability opinion from a second database: osv-scanner reads
+  # the CycloneDX SBOM the build job already produced -- no second image scan
+  # -- and reports it to code scanning under its own `osv-<image>-<arch>`
+  # category, next to Trivy's.
+  #
+  # Report-only, and deliberately its own job rather than a step in `build`.
+  # Findings never fail anything. A scan that could not look -- osv-scanner
+  # would not run, could not read the SBOM, could not reach the OSV database
+  # -- DOES fail, loudly, and that is exactly why it lives out here: `merge`
+  # needs only `build`, so an OSV outage turns the run red without holding a
+  # security rebuild back from publishing. Inside `build`, the same failure
+  # would have blocked every push behind someone else's API. (The caller's
+  # `image` job still reports failure, so the run is red; its `digests` job
+  # runs regardless and aggregates every manifest that was published.)
+  #
+  # All the exit-code handling lives in scripts/osv-scan-sbom.sh, where it can
+  # be run locally; see its header for why the SBOM is normalised first (as
+  # produced, it matches nothing in OSV's Debian data at all).
+  osv:
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      # Required by the SARIF upload to code scanning.
+      security-events: write
+
+    strategy:
+      fail-fast: false
+      matrix:
+        # The SBOM is data, so both architectures' SBOMs are read on one
+        # amd64 runner; nothing here executes the image.
+        arch: [amd64, arm64]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Download SBOM
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: security-report-${{ inputs.image }}-${{ matrix.arch }}
+          path: reports
+
+      # Pinned release binary, verified against the vendor's own
+      # osv-scanner_SHA256SUMS -- the same pattern as gitleaks in security.yml
+      # and the lint engines in scripts/lint.sh. scripts/check-pins.sh reads
+      # OSV_SCANNER_VERSION from this file, so pin-drift.yml reports when it
+      # falls behind.
+      - name: Install osv-scanner
+        env:
+          OSV_SCANNER_VERSION: 2.6.0
+          OSV_SCANNER_SHA256: ca69b3d3cd08f889a49dc0a383122f71cc528b83803671df5fd874d97485b108
+        run: |
+          dir="$RUNNER_TEMP/osv-scanner"
+          mkdir -p "$dir"
+          curl -fsSL --retry 3 -o "$dir/osv-scanner" \
+            "https://github.com/google/osv-scanner/releases/download/v${OSV_SCANNER_VERSION}/osv-scanner_linux_amd64"
+          echo "${OSV_SCANNER_SHA256}  $dir/osv-scanner" > "$dir/osv-scanner.sum"
+          sha256sum --check --strict "$dir/osv-scanner.sum"
+          chmod +x "$dir/osv-scanner"
+          echo "$dir" >> "$GITHUB_PATH"
+
+      # No `|| true`, no continue-on-error: the script exits 0 for a completed
+      # scan with or without findings and 1 for a scan that did not complete,
+      # and deletes both SARIFs in that case -- osv-scanner writes a valid,
+      # zero-result SARIF even when it could not reach its database.
+      #
+      # Two outputs: the full SARIF (every severity) is the 90-day artifact;
+      # the upload SARIF is what code scanning gets -- security-severity
+      # >= 7.0 plus every unscored finding, the same readability trade as the
+      # Trivy SARIF. The script writes the kept/dropped/unscored counts and
+      # its input mapping counts to the step summary itself.
+      #
+      # And no pipe on the script's line. This step runs under GitHub's
+      # default `bash -e {0}` -- errexit WITHOUT pipefail -- so
+      # `script | tee` would take tee's exit status and pass a failed scan.
+      - name: OSV report (SARIF)
+        env:
+          IMAGE: ${{ inputs.image }}
+          ARCH: ${{ matrix.arch }}
+        run: |
+          ./scripts/osv-scan-sbom.sh "reports/sbom-$IMAGE-$ARCH.cdx.json" \
+            "osv-$IMAGE-$ARCH.sarif" "osv-upload-$IMAGE-$ARCH.sarif"
+
+      # continue-on-error, like every SARIF upload here: code scanning must
+      # never be what turns a run red. No `if: always()`, unlike the Trivy
+      # upload: this only runs when the scan step above succeeded, so there
+      # is never a half-written SARIF to upload.
+      - name: Upload SARIF to code scanning
+        continue-on-error: true
+        uses: github/codeql-action/upload-sarif@b96794f015dfd88f77b49b1c93e0fa7110f94c63 # v4.38.0
+        with:
+          sarif_file: osv-upload-${{ inputs.image }}-${{ matrix.arch }}.sarif
+          category: osv-${{ inputs.image }}-${{ matrix.arch }}
+
+      # The UNFILTERED report: every severity, including what the upload
+      # above leaves out.
+      - name: Upload OSV report
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: osv-report-${{ inputs.image }}-${{ matrix.arch }}
+          path: osv-${{ inputs.image }}-${{ matrix.arch }}.sarif
+          if-no-files-found: error
+          retention-days: 90
+
   # Assemble the per-arch digests into one tagged manifest list, so pulling the
   # version tag resolves to the right architecture automatically. Only runs if
   # every arch passed its gates, and never on PRs.
@@ -380,10 +488,26 @@ jobs:
       # Keyless cosign signing: the OIDC token is what proves to Fulcio that
       # this signature came from this workflow on this ref. The caller's
       # `image` job must grant the same -- called-workflow permissions are the
-      # intersection of both declarations.
+      # intersection of both declarations. The GitHub attestation below signs
+      # with the same token.
       id-token: write
+      # For actions/attest-build-provenance to store the attestation with
+      # GitHub's attestations API. The caller grants it too, for the same
+      # intersection reason. `artifact-metadata: write` -- a real scope, and
+      # in the action's documented example -- is deliberately NOT here: the
+      # action uses it only to create an artifact storage record, which
+      # GitHub supports only for organization-owned repositories. This one is
+      # user-owned, so the step sets create-storage-record: false instead of
+      # holding a scope it cannot use.
+      attestations: write
 
     steps:
+      # For scripts/check-published.sh, which the post-sign verification runs.
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
       - name: Download digests
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
@@ -466,26 +590,128 @@ jobs:
         run: |
           cosign sign --yes "$REPO@$DIGEST"
 
-      # One {image, version, digest} object per image, aggregated by the
-      # caller's `digests` job into a machine-readable digests.json -- the
-      # automatable form of the "pin this digest" advice below.
-      - name: Export digest manifest
+      # Gate: re-derive from the registry, in this run, what published-audit.yml
+      # would otherwise only find out later -- the signature verifies under
+      # the exact expected identity (build-image.yml@refs/heads/main under
+      # GitHub's OIDC issuer; this reusable workflow's path, not the caller's),
+      # and both the SBOM and provenance attestations are present on the
+      # index. Not a new implementation: this is check-published.sh itself in
+      # --ref mode, the same functions the scheduled audit runs, which were
+      # fixed against real cosign v3.0.6 / buildx v0.31.1 / GHCR output. Two
+      # copies of that logic is how one of them ends up on the wrong identity.
+      #
+      # Runs before the GitHub attestation below, so it proves cosign's own
+      # signature rather than whatever else a later step attaches. The same
+      # check runs again after that step, against the final state a consumer
+      # sees, so the two failing apart point at different causes.
+      #
+      # Both failure kinds fail the job, with different messages: 3 means the
+      # registry definitively lacks a valid signature or an attestation; 1
+      # means the checker could not tell. Neither is a pass. The tags have
+      # already moved by this point (imagetools create above), so this cannot
+      # un-publish -- it makes the run that caused the regression the one that
+      # goes red, instead of a scheduled audit days later.
+      - name: Verify signature and attestations
         env:
-          IMAGE: ${{ inputs.image }}
-          VERSION: ${{ inputs.version }}
-          DIGEST: ${{ steps.resolve.outputs.digest }}
+          REF: ghcr.io/${{ github.repository_owner }}/${{ inputs.image }}@${{ steps.resolve.outputs.digest }}
+          OWNER: ${{ github.repository_owner }}
+          REPO_SLUG: ${{ github.repository }}
         run: |
-          jq -n --arg image "$IMAGE" --arg version "$VERSION" --arg digest "$DIGEST" \
-            '{image: $image, version: $version, digest: $digest}' \
-            > "digest-manifest-$IMAGE.json"
+          rc=0
+          ./scripts/check-published.sh --ref "$REF" || rc=$?
+          case "$rc" in
+            0) echo "verified: $REF is signed by the expected identity and carries SBOM and provenance attestations" ;;
+            3) echo "::error::$REF failed post-sign verification: the signature does not verify under the expected identity, or an SBOM/provenance attestation is missing (see the table above)"
+               exit 1 ;;
+            1) echo "::error::could not verify $REF: the signature or attestation check itself failed to run (see the log above) -- treated as a failure, not a pass"
+               exit 1 ;;
+            *) echo "::error::check-published.sh --ref exited $rc (usage or unexpected error)"
+               exit 1 ;;
+          esac
 
-      - name: Upload digest manifest
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      # GitHub-native build provenance, IN ADDITION to cosign and the buildx
+      # attestations, which are untouched. A second, independent verification
+      # path for consumers (`gh attestation verify`, see the README): signed
+      # with this job's OIDC token through Sigstore (public-good, since the
+      # repository is public), stored with GitHub's attestations API, and --
+      # with push-to-registry -- also pushed next to the image in GHCR.
+      #
+      # Fails closed on its own: the action errors if it cannot sign, store
+      # or push. The step after it then checks the result the way a consumer
+      # would.
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
-          name: digest-manifest-${{ inputs.image }}
-          path: digest-manifest-*.json
-          if-no-files-found: error
-          retention-days: 90
+          subject-name: ghcr.io/${{ github.repository_owner }}/${{ inputs.image }}
+          subject-digest: ${{ steps.resolve.outputs.digest }}
+          push-to-registry: true
+          # Storage records are organization-only; see the permissions note.
+          create-storage-record: false
+
+      # The consumer recipe from the README, run against what was just
+      # attested, pinned to the same identity cosign is: this reusable
+      # workflow on refs/heads/main, for this repository. Any non-zero exit --
+      # no attestation found, wrong signer, or gh unable to ask -- fails.
+      #
+      # Bounded retry: this reads GitHub's attestations API seconds after the
+      # step above wrote to it, and nothing documents that read as
+      # immediately consistent. A lag there must not turn a good publish red,
+      # so up to 5 attempts, 15s apart (about a minute in all). It retries
+      # only; the last failure still fails the step, and every failed attempt
+      # is logged as a warning, so a check that needed retries is visible.
+      - name: Verify GitHub attestation
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REF: ghcr.io/${{ github.repository_owner }}/${{ inputs.image }}@${{ steps.resolve.outputs.digest }}
+          REPO_SLUG: ${{ github.repository }}
+        run: |
+          attempts=5
+          delay=15
+          rc=1
+          for attempt in $(seq 1 "$attempts"); do
+            rc=0
+            gh attestation verify "oci://$REF" \
+              --repo "$REPO_SLUG" \
+              --cert-identity "https://github.com/$REPO_SLUG/.github/workflows/build-image.yml@refs/heads/main" \
+              || rc=$?
+            if [ "$rc" -eq 0 ]; then
+              echo "verified on attempt $attempt of $attempts"
+              break
+            fi
+            echo "::warning::gh attestation verify attempt $attempt of $attempts failed for $REF (exit $rc)"
+            if [ "$attempt" -lt "$attempts" ]; then
+              sleep "$delay"
+            fi
+          done
+          if [ "$rc" -ne 0 ]; then
+            echo "::error::gh attestation verify failed for $REF after $attempts attempts (last exit $rc) -- no attestation from build-image.yml@refs/heads/main could be verified"
+            exit 1
+          fi
+
+      # The first check again, now that the attestation above has pushed a
+      # second Sigstore bundle to the registry for the same digest. cosign
+      # finds its own signature among that digest's referrers, so an extra
+      # referrer is exactly the kind of change that could make the published
+      # index stop verifying for consumers. Checked here, it turns this run red rather
+      # than showing up days later in published-audit.yml. If this step fails
+      # but the first one passed, the attestation step is the cause.
+      - name: Re-verify signature and attestations after attestation
+        env:
+          REF: ghcr.io/${{ github.repository_owner }}/${{ inputs.image }}@${{ steps.resolve.outputs.digest }}
+          OWNER: ${{ github.repository_owner }}
+          REPO_SLUG: ${{ github.repository }}
+        run: |
+          rc=0
+          ./scripts/check-published.sh --ref "$REF" || rc=$?
+          case "$rc" in
+            0) echo "verified: $REF still verifies with the GitHub attestation attached" ;;
+            3) echo "::error::$REF passed post-sign verification before the GitHub attestation was attached and fails it now: the signature no longer verifies under the expected identity, or an SBOM/provenance attestation is no longer found (see the table above)"
+               exit 1 ;;
+            1) echo "::error::could not re-verify $REF after attestation: the signature or attestation check itself failed to run (see the log above) -- treated as a failure, not a pass"
+               exit 1 ;;
+            *) echo "::error::check-published.sh --ref exited $rc (usage or unexpected error)"
+               exit 1 ;;
+          esac
 
       - name: Report digest and platforms
         env:
@@ -517,3 +743,30 @@ jobs:
             echo "$inspect"
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
+
+      # One {image, version, digest} object per image, aggregated by the
+      # caller's `digests` job into a machine-readable digests.json -- the
+      # automatable form of the "pin this digest" advice above.
+      #
+      # LAST on purpose, after every check this job makes: signing, all three
+      # verifications, the attestation and the both-platforms assertion. The
+      # caller's `digests` job runs even when an image failed (!cancelled()),
+      # so a manifest must only exist for an index that passed everything --
+      # an upload before a failing check would put that index in digests.json.
+      - name: Export digest manifest
+        env:
+          IMAGE: ${{ inputs.image }}
+          VERSION: ${{ inputs.version }}
+          DIGEST: ${{ steps.resolve.outputs.digest }}
+        run: |
+          jq -n --arg image "$IMAGE" --arg version "$VERSION" --arg digest "$DIGEST" \
+            '{image: $image, version: $version, digest: $digest}' \
+            > "digest-manifest-$IMAGE.json"
+
+      - name: Upload digest manifest
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: digest-manifest-${{ inputs.image }}
+          path: digest-manifest-*.json
+          if-no-files-found: error
+          retention-days: 90

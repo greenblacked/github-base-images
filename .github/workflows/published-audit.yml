@@ -3,12 +3,16 @@
 #
 # Every gate in build-image.yml -- the vulnerability scan, the smoke test, the
 # secret gate, even the cosign signature and the SBOM/provenance attestations
-# -- runs against the artifact BEFORE or AT the moment it is pushed. Nothing in
-# this repository has ever re-checked the artifact a consumer actually pulls
-# afterwards. A package flipped to private, a signature whose identity has
-# drifted (a workflow rename, a ref that stopped being `main`), a rebuild that
-# silently stopped firing -- none of that fails a build, because none of it
-# happens during one. This is that other half, on a timer of its own.
+# -- runs against the artifact BEFORE or AT the moment it is pushed. The
+# merge job does re-check its own signature and attestations straight after
+# signing and again after the GitHub attestation (check-published.sh --ref,
+# the same code as this audit), but only for the digest it just produced, at
+# publish time. Nothing re-checks the artifact a
+# consumer actually pulls in the days afterwards. A package flipped to
+# private, a signature whose identity has drifted (a workflow rename, a ref
+# that stopped being `main`), a rebuild that silently stopped firing -- none
+# of that fails a build, because none of it happens during one. This is that
+# other half, on a timer of its own.
 #
 # Deliberately not covered: whether an old, retired image name (one no longer
 # in .github/images.json) is still being served by GHCR. Finding that

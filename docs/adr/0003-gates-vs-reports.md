@@ -10,8 +10,19 @@ working tree via `security.yml`), and **mirror integrity** — the `mirror` job 
 upstream tag cannot be resolved to a digest, or if the mirrored copy does not resolve back to that
 same digest (see [0001](0001-mirror-upstream-bases.md), "Digest control"). Everything else —
 library vulnerabilities, Dockerfile misconfiguration, license findings, the zizmor workflow audit,
-the git-history secret scan — is **reported**: printed to logs, kept as 90-day artifacts, and
-uploaded to code scanning, but never red.
+the git-history secret scan, the OSV scan of the SBOM — is **reported**: printed to logs, kept as
+90-day artifacts, and uploaded to code scanning, but never red.
+
+Two further gates sit either side of publishing rather than in front of it:
+
+- **Post-sign verification** — straight after `cosign sign`, the merge job re-derives from the
+  registry that the signature verifies under the exact expected identity and that the index carries
+  both SBOM and provenance attestations (`check-published.sh --ref`), and then that the GitHub
+  build provenance attestation verifies with `gh attestation verify`, and finally repeats the
+  registry check against the index as consumers now see it, with that attestation attached. A
+  failure, or a check that could not run, fails the run.
+- **Dependency review** — on pull requests, a change that adds a dependency (in practice an action
+  version) with a known HIGH or CRITICAL advisory fails the PR's checks.
 
 ## Why
 
@@ -38,6 +49,58 @@ A gate is only honest if going red always means an action *this repo* can take:
   does *not* clear: a mismatch that survives a re-run is not something to keep retrying past, it
   is the trigger for a human to look at the registry, which is an action this repo can take even
   though "re-run" alone is not one.
+- **Post-sign verification gates because every way it can fail is this repo's own doing.** A
+  signature that does not verify as `build-image.yml@refs/heads/main`, an index missing its
+  attestations, a GitHub attestation that `gh` cannot verify — each is a regression in this
+  pipeline (a renamed workflow, a changed buildx flag, a permission dropped from the caller), and
+  each was previously only discovered by the scheduled audit, days later and detached from the
+  commit that caused it. It cannot un-publish — the tags have moved by the time a signature exists
+  to check — so what it buys is attribution: the run that broke it is the run that goes red. It
+  reuses `check-published.sh` rather than restating its checks, because that script's identity
+  regexp and its "absent" vs "could not check" split were each fixed against real cosign, buildx
+  and GHCR behaviour, and a second copy is where those fixes would silently fail to arrive. Both
+  outcomes fail the job, with different messages: *absent* and *could not check* are different
+  diagnoses, but neither is a pass.
+- **Dependency review gates because the remedy is not merging.** It reports on what a pull request
+  *adds*, against an advisory naming the exact version — so red always has an action: pick a
+  different version, or leave the PR open. `fail-on-severity: high` matches the image gate's
+  threshold. If the review itself cannot run (dependency graph off, API unreachable), the action
+  fails rather than passing, which is the right direction for a gate.
+- **The OSV scan reports, for the same reason library findings do** — it sees the same packages as
+  Trivy through a second database, and a second opinion on something already not gated cannot
+  become the gate. It still fails **loudly when it cannot look**: osv-scanner exits 1 for
+  findings and 127–130 when it could not scan (unreachable database, no packages read, bad
+  config); only the first is success. That matters here more than usual, because the tool's own
+  failure mode is a well-formed SARIF with zero results — exactly an empty report posing as a
+  clean scan — so the wrapper deletes the SARIF whenever the scan did not complete. It runs as its
+  own job after `build`, not inside it: an OSV outage turns the run red, but neither publishing
+  nor the `digests.json` aggregate is blocked by it (`digests` runs on `!cancelled()` and
+  aggregates every manifest that was published).
+
+  What reaches code scanning is filtered the same way as the Trivy SARIF: `security-severity`
+  >= 7.0. Findings whose rule has no score at all are uploaded too — an unscored finding is not a
+  low one, and dropping it would be exactly the silent narrowing this section argues against. The
+  unfiltered SARIF is the 90-day artifact, and the job summary counts kept, dropped and unscored.
+
+  One exclusion applies on top of the severity filter: findings on Debian's `linux` source package,
+  when `linux-libc-dev` (the kernel's userspace headers, pulled in by `libc6-dev`) is the only
+  package built from it. OSV files every kernel CVE under that source, which put about 2,000
+  alerts per architecture on ci-go, ci-php84 and ci-php85, none of them about code the image
+  contains; a container runs the host's kernel. Left in, they would bury everything else in the
+  Security tab. The exclusion is counted in the summary, the findings stay in the artifact, and it
+  switches itself off when any other package from `linux` is present. It depends on osv-scanner
+  naming the package in each result's message, so when it applies, the scan fails if a result
+  does not parse or if no result at all is a kernel finding (Debian always has open kernel CVEs),
+  rather than letting the exclusion silently stop matching.
+
+  One more reason it is only a report: as produced, Trivy's SBOM matches nothing in OSV's Debian
+  data — the purl carries the point release (`debian-12.15`, where OSV files under `Debian:12`)
+  and names binary packages (`libc6`) where OSV keys by source (`glibc`). The scan normalises a
+  copy of the SBOM first (see `scripts/osv-scan-sbom.sh`); on `debian:bookworm-slim` that took it
+  from 0 findings to 98. A mapping this repo maintains is a mapping that can drift, which is a
+  reason to watch its output, not to gate on it — and a reason for the one tripwire it does have:
+  if none of an SBOM's Debian packages carries Trivy's source-name property any more, the scan
+  fails rather than falling back to binary names.
 
 ## Consequences
 
@@ -48,6 +111,15 @@ A gate is only honest if going red always means an action *this repo* can take:
   rebuild picked the fix up.
 - A mirror-verify failure blocks the `image` job entirely (it depends on `mirror`), so a bad
   mirror never reaches a build the way an unfixed library finding is allowed to.
+- A green publish run additionally means the published index verified — cosign identity, both
+  buildx attestations, and the GitHub attestation — against the registry, in that run. The
+  scheduled audit still exists for everything that can change *after* a run.
+- *Security → Code scanning* gains an `osv-<image>-<arch>` category per image and architecture,
+  HIGH/CRITICAL plus unscored. `osv-scanner scan` v2.6.0 has no severity flag, so the filter is
+  applied to its SARIF afterwards, with `rules[]` left intact. On `debian:bookworm-slim` that is
+  42 of 98 findings uploaded (36 scored >= 7.0, 6 unscored), 56 kept only in the artifact.
+- A run where some image failed is red, but `digests.json` still covers every image that
+  published and verified, and says how many of the planned images that is.
 
 ## The SARIF report is not the gate with the pipes swapped
 
@@ -118,3 +190,10 @@ drifted, not that the gate should be muted. For mirror integrity specifically: i
 ever observed to survive re-runs against a registry nobody believes is compromised — a genuinely
 flaky or inconsistent upstream, not an attack — the "re-run clears transient faults" assumption
 above has stopped holding and the gate needs a different remedy, not a quieter one.
+
+For the OSV report: if OSV's Debian ecosystem or Trivy's purls change shape (a point release OSV
+does recognise, source names in the purl), the normalisation in `scripts/osv-scan-sbom.sh` should
+shrink rather than grow. The symptom to look for is a sharp drop in a Debian image's findings,
+not necessarily to zero: the distro fix alone left bookworm-slim at 27 of 98, and a partial loss
+of Trivy's source-package properties would land somewhere in between — the input counts in the
+job summary (mapped by source name vs by binary name) are where that shows first.
