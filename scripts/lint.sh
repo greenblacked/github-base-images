@@ -160,6 +160,25 @@ note "images.json cross-check"
       exit 1
     fi
   done
+
+  # Composer is pinned in both PHP images -- ci-php84 and ci-php85 -- and
+  # scripts/check-pins.sh reads only ci-php84's copy. Same reasoning as kubectl
+  # above: assert the two agree, so the pin-drift report covers both and a bump
+  # that moves one cannot leave the other behind unnoticed.
+  for key in COMPOSER_VERSION COMPOSER_SHA256; do
+    a=$(grep -m1 "^ARG $key=" ci-php84/Dockerfile.ci || true)
+    b=$(grep -m1 "^ARG $key=" ci-php85/Dockerfile.ci || true)
+    if [ -z "$a" ] || [ -z "$b" ]; then
+      echo "error: $key not found in ci-php84 and/or ci-php85 Dockerfile.ci"
+      exit 1
+    fi
+    if [ "$a" != "$b" ]; then
+      echo "error: $key differs between ci-php84 and ci-php85"
+      echo "  ci-php84: $a"
+      echo "  ci-php85: $b"
+      exit 1
+    fi
+  done
 } || fail=1
 
 # --- 5. zizmor, best-effort and non-gating -- the same posture as CI, where
