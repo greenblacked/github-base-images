@@ -73,11 +73,15 @@ check "no gems baked in"           '[ -z "$(ls -A "${GEM_HOME:-/usr/local/bundle
 
 check "no compiler baked in"       '! command -v gcc && ! command -v cc'
 
-# json is upgraded in the Dockerfile (CVE-2026-33210 in the default 2.18.0).
-# What matters is the code that loads, not what is on disk: `require "json"`
-# must activate the patched gem, and parsing must work through it.
+# json is replaced in place in the Dockerfile (CVE-2026-33210 in the default
+# 2.18.0). What matters is the code that loads, and CI jobs load it through
+# Bundler as well as plain require, so both are asserted -- Bundler with json
+# unlisted, which resolves to the default gem, is exactly the path a
+# side-by-side install would have left on 2.18.0.
 check "json loads >= 2.19.2"       'ruby -rjson -e "exit(Gem::Version.new(JSON::VERSION) >= Gem::Version.new(\"2.19.2\") ? 0 : 1)"'
-check "json parses"                'ruby -rjson -e "exit(JSON.parse(%q({\"a\":[1]}))[\"a\"] == [1] ? 0 : 1)"'
+check "json parses via extension"  'ruby -rjson -e "exit(JSON::Parser == JSON::Ext::Parser && JSON.parse(%q({\"a\":[1]}))[\"a\"] == [1] ? 0 : 1)"'
+check "json >= 2.19.2 under Bundler" 'd=$(mktemp -d) && printf "source \"https://rubygems.org\"\n" > "$d/Gemfile" && BUNDLE_GEMFILE="$d/Gemfile" ruby -rbundler/setup -rjson -e "exit(Gem::Version.new(JSON::VERSION) >= Gem::Version.new(\"2.19.2\") ? 0 : 1)"'
+check "one json default gem"       '[ "$(ls "$(ruby -e "print Gem.default_specifications_dir")" | grep -c "^json-")" = 1 ]'
 
 if [ "$failed" -ne 0 ]; then
   echo "FAIL: one or more checks failed for $IMAGE" >&2
