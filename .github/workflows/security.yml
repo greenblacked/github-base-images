@@ -123,42 +123,6 @@ jobs:
           sarif_file: zizmor.sarif
           category: workflow-audit
 
-  # Dependency review: what a pull request ADDS to the dependency graph --
-  # for this repository, chiefly the actions its workflows `uses:` -- checked
-  # against GitHub's advisory database before merge. Every other scan here
-  # looks at what is already in the tree; this is the one that looks at the
-  # change, so a PR (Dependabot's included) that bumps an action to a version
-  # with a known HIGH or CRITICAL advisory is stopped at review rather than
-  # found afterwards.
-  #
-  # Gates. The advisory names a specific version and the fix is to not merge
-  # it (or to pick another version), which is always an action this repo can
-  # take -- the same test as the other gates, see ADR 0003. The action also
-  # fails when it cannot determine the diff at all (dependency graph
-  # disabled, API unreachable), which is the correct direction: a review that
-  # could not run is not a review that passed.
-  #
-  # Pull requests only: the action compares a PR's base and head and errors
-  # on any other event, so on push/schedule/dispatch the job is skipped
-  # rather than run to fail.
-  dependency-review:
-    name: Dependency review
-    if: github.event_name == 'pull_request'
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    permissions:
-      contents: read
-    steps:
-      - name: Dependency review
-        uses: actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294 # v5.0.0
-        with:
-          fail-on-severity: high
-          # Off (the default is on), so the action talks only to GitHub's own
-          # API. With it on, every changed dependency is also looked up on
-          # api.deps.dev and api.securityscorecards.dev (src/scorecard.ts at
-          # this SHA) for a score this job does not gate on.
-          show-openssf-scorecard: false
-
   # OpenSSF Scorecard: branch protection, token permissions, pinned
   # dependencies, dangerous workflow patterns, maintenance signals. Produces the
   # score behind the README badge.

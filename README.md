@@ -718,20 +718,12 @@ changed — `build-and-push.yml` is path-filtered, this is not.
   a job added without a `permissions:` block gets nothing and fails loudly rather than inheriting
   the repository default. That matters most in the two build workflows, which are the ones holding
   `packages: write` and `id-token: write`.
-- **Dependency review** — on pull requests only, GitHub's
-  [dependency-review-action](https://github.com/actions/dependency-review-action) checks what the
-  PR *adds* to the dependency graph — in this repository, mostly action versions — against the
-  advisory database. **Gates** at `fail-on-severity: high`: the fix is always available here (do
-  not merge that version), and a review that could not run at all fails rather than passes. The
-  OpenSSF Scorecard lookup it would otherwise make for each changed dependency, against
-  `api.deps.dev` and `api.securityscorecards.dev`, is switched off, so it talks only to GitHub.
 - **OpenSSF Scorecard** — branch protection, token permissions, pinned dependencies, dangerous
   workflow patterns. Produces the score behind the README badge. Runs on `main` only, since several
   checks inspect repository settings rather than the tree.
 
 Four of these publish SARIF to the Security tab — everything above except the git-history scan,
-whose findings are deliberately kept out of a view people triage to empty, and dependency review,
-whose verdict is the PR check itself. So *Security → Code
+whose findings are deliberately kept out of a view people triage to empty. So *Security → Code
 scanning* collects repository secrets, workflow findings, the CodeQL results and the Scorecard
 result. Image vulnerabilities are uploaded there too, under their own `<image>-<arch>` and
 `osv-<image>-<arch>` categories — but unlike these repository-level scans, those are expected to

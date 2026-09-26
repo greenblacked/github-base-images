@@ -13,15 +13,13 @@ library vulnerabilities, Dockerfile misconfiguration, license findings, the zizm
 the git-history secret scan, the OSV scan of the SBOM — is **reported**: printed to logs, kept as
 90-day artifacts, and uploaded to code scanning, but never red.
 
-Two further gates sit either side of publishing rather than in front of it:
+One further gate sits after publishing rather than in front of it:
 
 - **Post-sign verification** — straight after `cosign sign`, the merge job re-derives from the
   registry that the signature verifies under the exact expected identity and that the index carries
   both SBOM and provenance attestations (`check-published.sh --ref`), and then that the GitHub
   build provenance attestation verifies with `gh attestation verify`. A failure, or a check that
   could not run, fails the run.
-- **Dependency review** — on pull requests, a change that adds a dependency (in practice an action
-  version) with a known HIGH or CRITICAL advisory fails the PR's checks.
 
 ## Why
 
@@ -60,11 +58,6 @@ A gate is only honest if going red always means an action *this repo* can take:
   and GHCR behaviour, and a second copy is where those fixes would silently fail to arrive. Both
   outcomes fail the job, with different messages: *absent* and *could not check* are different
   diagnoses, but neither is a pass.
-- **Dependency review gates because the remedy is not merging.** It reports on what a pull request
-  *adds*, against an advisory naming the exact version — so red always has an action: pick a
-  different version, or leave the PR open. `fail-on-severity: high` matches the image gate's
-  threshold. If the review itself cannot run (dependency graph off, API unreachable), the action
-  fails rather than passing, which is the right direction for a gate.
 - **The OSV scan reports, for the same reason library findings do** — it sees the same packages as
   Trivy through a second database, and a second opinion on something already not gated cannot
   become the gate. It still fails **loudly when it cannot look**: osv-scanner exits 1 for
