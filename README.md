@@ -829,6 +829,26 @@ and each image's base-image ref current with weekly PRs. Because PR validation r
 build/test/scan stack, a Dependabot bump arrives pre-verified — green means the updated base
 already built, passed the smoke tests, and cleared both gates on both architectures.
 
+### Required checks
+
+Merging into `main` requires CI to pass. The `main` ruleset (Settings → Rules → Rulesets →
+`main`) requires these status checks:
+
+| Check | Workflow | What it covers |
+|---|---|---|
+| `CI result` | Build and Push to GHCR | lint, plan, and every image the PR builds: build, smoke test, both gates, OSV |
+| `Repository secret scan` | Security | committed credentials in the working tree |
+| `CodeQL (workflows)` | Security | CodeQL `actions` analysis (reports findings to the Security tab; red when the analysis cannot run) |
+| `Dependency review` | Security | new dependencies with HIGH/CRITICAL advisories |
+
+The per-image jobs can't be required by name, because which of them exist depends on the images a
+PR touches, and a required check that never reports blocks the PR forever. `CI result` is the one
+fixed name that stands for all of them. It always runs, and fails if any job that ran failed or
+was cancelled. `Git history secret scan` and `Workflow security audit` are left out: both run their
+scanner with `continue-on-error`, so they stay green even when the scan did not run, and requiring
+them would add checks that cannot go red. For the same reason Build and Push is not path-filtered on pull requests: a PR that
+touches no image and no pipeline file runs lint and builds nothing, instead of not running at all.
+
 ## Architectures
 
 The tag is a multi-arch manifest list, so `docker pull` and `container:` resolve the right
@@ -873,7 +893,8 @@ images carry `noble-v1` and the Trixie-based ones `trixie-v1` while the rest are
 
 ### Which images a run builds
 
-A push or pull request builds **only the images whose directories changed** — a one-line fix to
+A push or pull request builds **only the images whose directories changed** (a pull request that
+changes none, and no pipeline file, builds nothing) — a one-line fix to
 `ci-ruby34` does not rebuild the other twenty images or move `latest` on them. Changing the
 pipeline itself (either workflow file, or `images.json`) rebuilds everything, and the weekly
 schedule and `workflow_dispatch` always rebuild everything — the rebuild is the security-update
