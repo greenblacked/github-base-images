@@ -115,7 +115,6 @@ cleanup() {
   fi
   return "$rc"
 }
-trap cleanup EXIT
 
 base=$(basename -- "$sbom")
 case "$base" in
@@ -124,6 +123,10 @@ case "$base" in
   # what selects CycloneDX -- and the rewritten copy keeps the input's name.
   *) echo "error: SBOM file name must end in .cdx.json, got '$base'" >&2; exit 2 ;;
 esac
+
+# Only after argument checks: a usage error (exit 2) has produced nothing, so
+# it must not delete output files left by an earlier run.
+trap cleanup EXIT
 
 # In Actions, the summary lines also go to the step summary.
 summary() {

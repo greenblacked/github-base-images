@@ -603,7 +603,9 @@ still the digest that was signed.
 The pipeline runs this same check on itself. Straight after signing, the merge job verifies the
 signature under exactly the identity above and confirms the SBOM and provenance attestations are
 on the index (`scripts/check-published.sh --ref`, the same code as the
-[post-publish audit](.github/workflows/published-audit.yml)). A signature that stops verifying —
+[post-publish audit](.github/workflows/published-audit.yml)), and repeats the check once the GitHub
+attestation below has been attached, against the index exactly as consumers see it. A signature
+that stops verifying —
 a renamed workflow, a changed ref — fails the run that caused it, rather than surfacing from the
 weekly audit. A check that could not run fails too, with its own message; it is never read as a
 pass.

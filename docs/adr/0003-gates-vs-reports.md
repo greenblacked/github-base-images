@@ -18,8 +18,9 @@ Two further gates sit either side of publishing rather than in front of it:
 - **Post-sign verification** — straight after `cosign sign`, the merge job re-derives from the
   registry that the signature verifies under the exact expected identity and that the index carries
   both SBOM and provenance attestations (`check-published.sh --ref`), and then that the GitHub
-  build provenance attestation verifies with `gh attestation verify`. A failure, or a check that
-  could not run, fails the run.
+  build provenance attestation verifies with `gh attestation verify`, and finally repeats the
+  registry check against the index as consumers now see it, with that attestation attached. A
+  failure, or a check that could not run, fails the run.
 - **Dependency review** — on pull requests, a change that adds a dependency (in practice an action
   version) with a known HIGH or CRITICAL advisory fails the PR's checks.
 

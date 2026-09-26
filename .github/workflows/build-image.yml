@@ -601,9 +601,9 @@ jobs:
       # copies of that logic is how one of them ends up on the wrong identity.
       #
       # Runs before the GitHub attestation below, so it proves cosign's own
-      # signature rather than whatever else a later step attaches. Whether
-      # the two coexist for a consumer is published-audit.yml's to observe --
-      # it runs the same check against the final state after this workflow.
+      # signature rather than whatever else a later step attaches. The same
+      # check runs again after that step, against the final state a consumer
+      # sees, so the two failing apart point at different causes.
       #
       # Both failure kinds fail the job, with different messages: 3 means the
       # registry definitively lacks a valid signature or an attestation; 1
@@ -688,6 +688,31 @@ jobs:
             exit 1
           fi
 
+      # The first check again, now that the attestation above has pushed a
+      # second Sigstore bundle to the registry for the same digest. cosign
+      # finds its own signature among that digest's referrers, so an extra
+      # referrer is exactly the kind of change that could make the published
+      # index stop verifying for consumers. Checked here, it turns this run red rather
+      # than showing up days later in published-audit.yml. If this step fails
+      # but the first one passed, the attestation step is the cause.
+      - name: Re-verify signature and attestations after attestation
+        env:
+          REF: ghcr.io/${{ github.repository_owner }}/${{ inputs.image }}@${{ steps.resolve.outputs.digest }}
+          OWNER: ${{ github.repository_owner }}
+          REPO_SLUG: ${{ github.repository }}
+        run: |
+          rc=0
+          ./scripts/check-published.sh --ref "$REF" || rc=$?
+          case "$rc" in
+            0) echo "verified: $REF still verifies with the GitHub attestation attached" ;;
+            3) echo "::error::$REF passed post-sign verification before the GitHub attestation was attached and fails it now: the signature no longer verifies under the expected identity, or an SBOM/provenance attestation is no longer found (see the table above)"
+               exit 1 ;;
+            1) echo "::error::could not re-verify $REF after attestation: the signature or attestation check itself failed to run (see the log above) -- treated as a failure, not a pass"
+               exit 1 ;;
+            *) echo "::error::check-published.sh --ref exited $rc (usage or unexpected error)"
+               exit 1 ;;
+          esac
+
       - name: Report digest and platforms
         env:
           REPO: ghcr.io/${{ github.repository_owner }}/${{ inputs.image }}
@@ -723,7 +748,7 @@ jobs:
       # caller's `digests` job into a machine-readable digests.json -- the
       # automatable form of the "pin this digest" advice above.
       #
-      # LAST on purpose, after every check this job makes: signing, both
+      # LAST on purpose, after every check this job makes: signing, all three
       # verifications, the attestation and the both-platforms assertion. The
       # caller's `digests` job runs even when an image failed (!cancelled()),
       # so a manifest must only exist for an index that passed everything --

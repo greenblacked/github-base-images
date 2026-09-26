@@ -5,8 +5,9 @@
 # secret gate, even the cosign signature and the SBOM/provenance attestations
 # -- runs against the artifact BEFORE or AT the moment it is pushed. The
 # merge job does re-check its own signature and attestations straight after
-# signing (check-published.sh --ref, the same code as this audit), but only
-# once, for the digest it just produced. Nothing re-checks the artifact a
+# signing and again after the GitHub attestation (check-published.sh --ref,
+# the same code as this audit), but only for the digest it just produced, at
+# publish time. Nothing re-checks the artifact a
 # consumer actually pulls in the days afterwards. A package flipped to
 # private, a signature whose identity has drifted (a workflow rename, a ref
 # that stopped being `main`), a rebuild that silently stopped firing -- none
