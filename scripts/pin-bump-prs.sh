@@ -290,9 +290,11 @@ one_unit() {
     ensure_label || { note="${note}could not create or find the $LABEL label"; row error "$action"; return 1; }
     run gh pr edit "$pr_num" --repo "$repo" --add-label "$LABEL"
     if [ -n "$open_json" ]; then
-      # A previous version of this PR may have been auto. Fails harmlessly
-      # when auto-merge was never on.
-      rc=0; run gh pr merge "$pr_num" --repo "$repo" --disable-auto || rc=$?
+      # A previous version of this PR may have been auto. Its auto-merge
+      # request would merge this review bump the moment the checks just
+      # dispatched pass, so it must be off: read it, turn it off if on, and
+      # fail the unit if either step fails.
+      disable_automerge
     fi
     action="$action, labelled $LABEL"
   fi
@@ -400,6 +402,24 @@ heal() { # HEAD_SHA
 }
 
 # Record the unit's row: an error if anything above failed, else STATUS.
+# Turn off an auto-merge request left by an earlier, auto version of this PR.
+# Only an explicit null from the API counts as off; an unreadable answer, or a
+# refused --disable-auto, is an error rather than a PR that may merge unread.
+disable_automerge() {
+  local rc=0 am
+  am=$(gh_read "automerge-$unit" pr view "$pr_num" --repo "$repo" --json autoMergeRequest) || rc=$?
+  if [ "$rc" -ne 0 ] || ! jq -e 'type == "object" and has("autoMergeRequest")' <<<"$am" >/dev/null 2>&1; then
+    errors="${errors}could not read whether auto-merge is on for #$pr_num (exit $rc), so it may still merge this review bump; turn it off by hand. "
+  elif jq -e '.autoMergeRequest != null' <<<"$am" >/dev/null; then
+    rc=0; run gh pr merge "$pr_num" --repo "$repo" --disable-auto || rc=$?
+    if [ "$rc" -eq 0 ]; then
+      action="$action, auto-merge off"
+    else
+      errors="${errors}gh pr merge --disable-auto failed (exit $rc): #$pr_num still has auto-merge on and will merge this review bump when green; turn it off by hand. "
+    fi
+  fi
+}
+
 finish() { # [STATUS]
   note="${errors}${note}"; note=${note% }
   if [ -n "$errors" ]; then

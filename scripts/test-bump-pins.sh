@@ -638,6 +638,42 @@ check "no auto-merge" not_logged '^pr merge'
 check "summary warning" grep -q 'Warning:\*\* auto-merge was not enabled, because the rules for main could not be read' "$d/out"
 check "run annotation" grep -q '^::warning::trivy: auto-merge not enabled' "$d/out"
 
+echo "case 6i: an auto PR refreshed to a review version -> its auto-merge is turned off"
+scenario i
+seed syft "$BOT" "$BOT" > /dev/null
+pr syft 12 OPEN 1.99.0 auto
+echo '{"autoMergeRequest":{"enabledAt":"2026-09-21T09:00:00Z"}}' > "$stub/automerge-syft.json"
+run_prs <<< 'syft 2.0.0'
+check "exit 0" [ "$rc" -eq 0 ]
+expect_row syft status ok
+check "labelled for review" logged "pr edit 12 --repo o/r --add-label needs-review"
+check "auto-merge turned off" logged "pr merge 12 --repo o/r --disable-auto"
+# --disable-auto refused: the old request would merge a major unread.
+scenario i2
+seed syft "$BOT" "$BOT" > /dev/null
+pr syft 12 OPEN 1.99.0 auto
+echo '{"autoMergeRequest":{"enabledAt":"2026-09-21T09:00:00Z"}}' > "$stub/automerge-syft.json"
+FAKE_GH_FAIL='^pr merge 12 .*--disable-auto' run_prs <<< 'syft 2.0.0'
+check "a refused --disable-auto: exit 1" [ "$rc" -eq 1 ]
+expect_row syft status error
+check "  and the note says auto-merge is still on" grep -q 'still has auto-merge on' "$res"
+# Auto-merge already off: nothing to turn off.
+scenario i3
+seed syft "$BOT" "$BOT" > /dev/null
+pr syft 12 OPEN 1.99.0 auto
+echo '{"autoMergeRequest":null}' > "$stub/automerge-syft.json"
+run_prs <<< 'syft 2.0.0'
+check "auto-merge already off: exit 0" [ "$rc" -eq 0 ]
+check "  and no --disable-auto call" not_logged '^pr merge 12 '
+# Whether auto-merge is on cannot be read: an error, not "probably off".
+scenario i4
+seed syft "$BOT" "$BOT" > /dev/null
+pr syft 12 OPEN 1.99.0 auto
+echo '{"message":"Server Error"}' > "$stub/automerge-syft.json"; echo 1 > "$stub/automerge-syft.exit"
+run_prs <<< 'syft 2.0.0'
+check "unreadable auto-merge state: exit 1" [ "$rc" -eq 1 ]
+expect_row syft status error
+
 echo "case 6h: a failed dispatch errors its unit, after every unit was processed"
 scenario h
 export FAKE_GH_FAIL='^workflow run build-and-push\.yml .*--ref pin-bump/kubectl$'
