@@ -12,6 +12,7 @@ decision, the reasoning that made it win, and what would have to change for it t
 | [0004](0004-sha-pinned-actions.md) | Actions pinned by commit SHA, maintained by Dependabot with a cooldown |
 | [0005](0005-new-images-current-distro-retire-at-eol.md) | New images start on the current distro; images retire at upstream end of support |
 | [0006](0006-gate-on-fixable-library-vulnerabilities.md) | The vulnerability gate fails on fixable library findings too (supersedes part of 0003) |
+| [0007](0007-automatic-updates.md) | Pinned tools and Dependabot updates merge themselves when safe and green; the rest wait for review |
 
 Records are immutable once accepted; a change of course gets a new record that supersedes the old
 one, so the history of *why* survives the history of *what*.

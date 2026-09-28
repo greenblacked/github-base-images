@@ -13,6 +13,7 @@ mean, and how pinned versions are kept current. The security checks along the wa
 - [Tags and rebuilds](#tags-and-rebuilds)
 - [Digests and `digests.json`](#digests-and-digestsjson)
 - [Pin drift](#pin-drift)
+- [Automatic updates](#automatic-updates)
 
 ## Overview
 
@@ -104,7 +105,8 @@ the host). `make lint` runs the same battery locally; see
 **Dependabot** ([.github/dependabot.yml](../.github/dependabot.yml)) keeps the workflow's action
 pins and each image's base-image ref current with weekly PRs. Because PR validation runs the full
 build/test/scan stack, a Dependabot bump arrives pre-verified — green means the updated base
-already built, passed the smoke tests, and cleared both gates on both architectures.
+already built, passed the smoke tests, and cleared both gates on both architectures. Minor and
+patch bumps then merge themselves; see [Automatic updates](#automatic-updates).
 
 Which checks the `main` ruleset requires, and why `CI result` stands in for every per-image job,
 is in [Required checks](security.md#required-checks).
@@ -177,7 +179,9 @@ stays correct on both architectures.
 - **`<commit-sha>`** identifies the exact build.
 
 Every image rebuilds on every push to `main` touching any image directory, weekly on a schedule,
-and on demand via *Run workflow*.
+and on demand via *Run workflow*. The exception is a merge made by automation: it triggers no
+push build, so the image it changes publishes with the next weekly rebuild
+([Automatic updates](#automatic-updates)).
 
 **Why the rebuild actually refreshes anything.** "The rebuild carries Debian security updates"
 holds only if `apt-get update && apt-get upgrade` genuinely re-runs, and a build cache will happily
@@ -233,29 +237,30 @@ and `analyze` on different versions, two of the three fail by construction while
 as a third of a change.
 
 The tools installed as pinned release binaries — Terraform, kubectl, the AWS CLI, the Docker
-client, gcloud, Composer, Playwright, the five scanners in `ci-security`, and the osv-scanner
-binary the pipeline itself runs — were the gap: nothing read them, so they moved only when a human
-remembered. An audit found six behind at once.
+client, gcloud, Composer, Playwright, npm, the json gem in `ci-ruby40`, the five scanners in
+`ci-security` (and the second gitleaks in `security.yml`), the osv-scanner binary the pipeline
+itself runs, and the hadolint and actionlint engines in `scripts/lint.sh` — were the gap: nothing
+read them, so they moved only when a human remembered. An audit found six behind at once.
 
 [pin-drift.yml](../.github/workflows/pin-drift.yml) closes that gap. Weekly, it compares every
 pinned version against the version its vendor currently ships and maintains **one** tracking issue
 — opened when something falls behind, updated while it stays behind, closed automatically once
 every pin is current.
 
-It reports rather than gates. Drift is not a broken build; it is a bump someone should make
-deliberately, with a fresh checksum, through the normal PR path. Failing builds over it would just
-teach people to ignore a permanently red repository.
+It reports rather than gates. Drift is not a broken build; it is a bump to make through the
+normal PR path, with a fresh checksum. Failing builds over it would just teach people to ignore a
+permanently red repository. Since [automatic updates](#automatic-updates), the bump is made for
+you, and the issue is mainly a record of what is still open.
 
-Two cautions when acting on that issue. It is only as fresh as its last weekly run, so re-dispatch
-the workflow before working from the table — more than once a bump has been prepared against a
-version already superseded. And the lint engines are not in it: `HADOLINT_VERSION` and
-`ACTIONLINT_VERSION` in `scripts/lint.sh` are plain shell variables, which neither Dependabot nor
-`check-pins.sh` reads, so they move only when a human moves them. They used to be worse. CI ran
-`hadolint-action`, which bundles its own hadolint binary, so its version was coupled to
-`HADOLINT_VERSION` with nothing enforcing it, and twice a Dependabot PR moving only the action was
-green while putting local and CI on different linters. The `lint` job now runs `scripts/lint.sh`
-itself, so there is one pinned version of each engine, in one file; the comments above the pins
-and above the `lint` job in `build-and-push.yml` record that history.
+The issue is only as fresh as its last weekly run, so re-dispatch the workflow before working
+from the table by hand — more than once a bump has been prepared against a version already
+superseded. The lint engines are in it too: `HADOLINT_VERSION` and `ACTIONLINT_VERSION` in
+`scripts/lint.sh`, each with its per-platform checksums as named variables beside it. They used to
+be worse. CI ran `hadolint-action`, which bundles its own hadolint binary, so its version was
+coupled to `HADOLINT_VERSION` with nothing enforcing it, and twice a Dependabot PR moving only the
+action was green while putting local and CI on different linters. The `lint` job now runs
+`scripts/lint.sh` itself, so there is one pinned version of each engine, in one file; the comments
+above the pins and above the `lint` job in `build-and-push.yml` record that history.
 
 ```bash
 ./scripts/check-pins.sh              # the same check, locally
@@ -263,3 +268,82 @@ and above the `lint` job in `build-and-push.yml` record that history.
 
 How to bump a pin, including its checksums, is in
 [CONTRIBUTING.md](../CONTRIBUTING.md#what-does-not-belong-in-an-image).
+
+## Automatic updates
+
+Each image stays current without anyone watching for drift
+([ADR 0007](adr/0007-automatic-updates.md)). Every update still arrives as a pull request that
+runs the full pipeline and every [required check](security.md#required-checks), and merges only
+through GitHub auto-merge, which waits for all of them. Nothing merges red.
+
+**Dependabot.** [dependabot-auto-merge.yml](../.github/workflows/dependabot-auto-merge.yml)
+turns on auto-merge (squash) for minor and patch updates only. A major update gets the
+`needs-review` label and waits for a maintainer, and so does an update whose type `fetch-metadata`
+could not determine: a SHA-pinned action with no version comment moves by SHA alone, and that SHA
+could be a new major.
+
+**Pinned tools.** [pin-bump.yml](../.github/workflows/pin-bump.yml) runs every Monday after pin
+drift. For each tool that is behind, it opens (or refreshes) one PR on a `pin-bump/<tool>` branch,
+with the version and its checksums rewritten by `scripts/bump-pins.sh`. Pins kept in more than one
+place move together: kubectl in `ci-tools` and `ci-cloud`, Composer in both PHP images, gitleaks
+in `ci-security` and `security.yml`, npm and Playwright in both Node images. Every checksum is
+read from the vendor's own checksums file or registry record for that version. None is computed
+from a download.
+
+| Class | When | Outcome |
+|---|---|---|
+| `auto` | vendor checksum or registry integrity, not a major version, released 7+ days ago | merges itself once every required check is green |
+| `review` | no vendor checksum (AWS CLI, Docker client, gcloud), a major version, or an unknown release date | labelled `needs-review`, auto-merge off |
+| deferred | released less than 7 days ago, the same cooldown Dependabot uses | no PR until next week |
+
+The workflow uses only its own `GITHUB_TOKEN`. A push made with that token starts no workflow, so
+after pushing it dispatches *Build and Push to GHCR* and *Security* on the branch; their check runs
+land on the PR's head commit, where the ruleset reads them. A dispatched build rebuilds every
+image, not only the one the bump touches. For the same reason, `Dependency review` also runs on a
+dispatch from any branch but `main`, comparing it with `main`
+([Repository security checks](security.md#repository-security-checks)).
+
+Runs are idempotent, and they heal what an earlier run left undone. A PR at an older version is
+rebuilt from `main` and updated in place. A PR already at the target version is not rebuilt, but if
+the required checks never reported on its head commit, the workflows whose checks are missing are
+dispatched again, and an `auto` PR whose auto-merge is off gets it once the ruleset qualifies. A
+check that ran red stays red; it is not re-dispatched. A PR closed unmerged is not reopened for the
+same version. The run summary has one row per tool: old and new version, class, PR, and what was
+done; a failed dispatch or an unreadable check-run list is an error there, and the run goes red.
+
+A branch with a commit by anyone else, as author or as committer, is not touched at all: not
+rebuilt, not re-dispatched, not given auto-merge. That includes the merge commit GitHub's *Update
+branch* button makes, so don't use it on these PRs; the weekly run rebuilds a branch that fell
+behind `main` by itself. If it was used, either merge the PR by hand once it is green, or give the
+branch back by dropping the merge commit, after which the next run rebuilds it:
+
+```bash
+git fetch origin
+git push --force-with-lease origin origin/pin-bump/<tool>^1:refs/heads/pin-bump/<tool>
+```
+
+Deleting the branch instead closes the PR, and a closed PR is not reopened for that version; the
+next version gets a new one.
+
+The job that pushes runs from `main` only, dry run or not. Dispatching the workflow from any other
+branch runs a read-only `preview` job instead, which prints what the branch's scripts would do.
+
+**After the merge.** A merge made by auto-merge under the workflow token triggers no `push` build,
+so the image publishes with the next weekly rebuild, at most a week later. Run *Build and Push to
+GHCR* on `main` to publish sooner.
+
+**Settings the repository needs.** Without these the run stays green but leaves every PR open, and
+its summary says which setting is missing:
+
+- *Settings → Actions → General → Workflow permissions*: **Allow GitHub Actions to create and
+  approve pull requests** (without it, no PR can be opened at all).
+- *Settings → General → Pull Requests*: **Allow auto-merge** and **Allow squash merging**.
+- The `main` ruleset requires `CI result`, `Repository secret scan`, `CodeQL (workflows)` and
+  `Dependency review`. Auto-merge is enabled only when all four are required.
+
+```bash
+./scripts/bump-pins.sh --unit kubectl          # bump one tool in your working tree
+./scripts/check-pins.sh --format json > drift.json
+./scripts/bump-pins.sh --drift drift.json      # bump everything that is behind
+./scripts/test-bump-pins.sh                    # offline tests of both scripts; scripts/lint.sh runs them
+```

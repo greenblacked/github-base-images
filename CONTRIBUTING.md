@@ -105,6 +105,25 @@ Run it yourself any time:
 Exit codes are `0` current, `3` drift found, `1` a vendor endpoint was unreachable — so drift is
 distinguishable from a broken check.
 
+**Most bumps now make themselves.** The weekly [pin bump](.github/workflows/pin-bump.yml) job
+opens one PR per drifted tool, with the version and its checksums rewritten from the vendor's own
+published files, and dispatches the full CI on it. A bump with a vendor checksum (or registry
+integrity), no major version change, and a release at least seven days old merges itself once every
+required check is green; the rest are labelled `needs-review` and wait for you. The same script
+works locally, and the commands below remain the way to check a checksum by hand
+([ADR 0007](docs/adr/0007-automatic-updates.md)):
+
+```bash
+./scripts/bump-pins.sh --unit kubectl            # both copies, version and checksums
+./scripts/bump-pins.sh --unit terraform --to <VERSION>
+```
+
+Paired pins move as one unit, which keeps the lint parity checks green: kubectl in `ci-tools`
+and `ci-cloud`, Composer in `ci-php84` and `ci-php85`, gitleaks in `ci-security` and
+`security.yml`, npm and Playwright in `ci-node22` and `ci-node24`. hadolint and actionlint are
+pinned in `scripts/lint.sh` with their per-platform checksums as named variables, so they move the
+same way.
+
 Where the vendor publishes a per-file SHA-256, the download is checked against it, and the
 checksum is an `ARG` alongside the version. Bumping one of those is a **three**-line change —
 version plus both per-architecture sums — because the checksums differ per architecture:
@@ -126,21 +145,22 @@ attestation. It detects a later substitution, not an originally bad artifact.
 `https://getcomposer.org/download/<VERSION>/composer.phar.sha256sum`, which is strictly better than
 a computed hash. It is unreachable from some restricted build and development networks — the same
 reason the binary itself is fetched from GitHub rather than from there — so it could not be used
-when this pin was last set. If you are on a network that can reach it, **verify against it and say
-so in the PR**; that upgrades this pin from trust-on-first-use to vendor-attested and the caveat
-above can go.
-
-Either way, when bumping Composer, first confirm the method still reproduces the *current* pin
-before trusting a hash it produces for a new one.
+when this pin was last set. `scripts/bump-pins.sh` now takes the Composer checksum from there and
+nowhere else: where it is unreachable the bump fails rather than falling back to hashing the
+download. So the next Composer bump, automated or by hand with the script, upgrades this pin from
+trust-on-first-use to vendor-attested, and the caveat above can go with it. The build's
+`sha256sum --check` confirms the getcomposer.org digest matches the GitHub release asset.
 
 Three downloads are **not** checksummed, deliberately: the Docker static tarball (no `.sha256` is
 published — the URL 404s), the AWS CLI installer (detached GPG signature only, which would mean
 adding `gnupg` and a pinned AWS public key to the build), and the gcloud CLI in `ci-cloud` (the
 release bucket carries no `.sha256` companions). These stay unverified and labelled rather than
-given a checksum that looks vendor-attested and is not.
+given a checksum that looks vendor-attested and is not, and their automated bumps are always
+`needs-review`: with no checksum, a human reading the release is the only check on the version.
 
-That is admittedly inconsistent with Composer, which does carry a computed hash — the difference
-is historical rather than principled, and worth resolving in one direction or the other. The
+That is admittedly inconsistent with Composer, which does carry a computed hash until its next
+bump — the difference is historical rather than principled, and worth resolving in one direction
+or the other. The
 argument for extending trust-on-first-use to all four is that it detects a later substitution,
 which is better than nothing; the argument against is that a computed hash in the same `ARG` shape
 as a vendor-published one invites the reader to assume a guarantee that is not there. Adding GPG

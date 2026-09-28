@@ -61,7 +61,7 @@ jobs:
         id: check
         env:
           # Read by the script for api.github.com; raises the rate limit from
-          # 60/hour to 1000/hour, which nine GitHub-hosted tools need.
+          # 60/hour to 1000/hour, which a dozen GitHub-hosted tools need.
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set +e
@@ -124,7 +124,10 @@ jobs:
             echo "Dependabot does not track these -- it only updates each Dockerfile's \`ARG BASE_IMAGE\` --"
             echo "so they move when a human moves them."
             echo
-            echo "**To bump one:** update the \`ARG\` *and its checksums* where the vendor publishes them"
+            echo "The weekly pin-bump workflow opens a PR for each of these, and merges the safe ones once CI"
+            echo "is green (docs/adr/0007-automatic-updates.md); look for open \`pin-bump/*\` PRs first."
+            echo
+            echo "**To bump one by hand:** update the \`ARG\` *and its checksums* where the vendor publishes them"
             echo "(see CONTRIBUTING.md), then let CI revalidate. A checksum left at the old value fails"
             echo "the build immediately at \`sha256sum --check\`, which is the intended behaviour."
             echo

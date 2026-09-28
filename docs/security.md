@@ -327,16 +327,21 @@ weeks when no image directory changed — `build-and-push.yml` is path-filtered,
   a job added without a `permissions:` block gets nothing and fails loudly rather than inheriting
   the repository default. That matters most in the two build workflows, which are the ones holding
   `packages: write` and `id-token: write`.
-- **Dependency review** — on pull requests only, GitHub's
+- **Dependency review** — on pull requests, GitHub's
   [dependency-review-action](https://github.com/actions/dependency-review-action) checks what the
   PR *adds* to the dependency graph — in this repository, mostly action versions — against the
   advisory database. **Gates** at `fail-on-severity: high`: the fix is always available here (do
   not merge that version), and a review that could not run at all fails rather than passes. The
   OpenSSF Scorecard lookup it would otherwise make for each changed dependency, against
   `api.deps.dev` and `api.securityscorecards.dev`, is switched off, so it talks only to GitHub.
+  It also runs when the workflow is dispatched on a branch other than `main`, comparing `main`
+  with the dispatched commit. That is how the automated bump PRs get a real review: their pushes
+  come from the workflow token, which starts no `pull_request` run, so their checks come from a
+  dispatch ([Automatic updates](pipeline.md#automatic-updates)). Without it the job would be
+  skipped there, and a skipped job satisfies a required check without having looked.
 - **OpenSSF Scorecard** — branch protection, token permissions, pinned dependencies, dangerous
   workflow patterns. Produces the score behind the README badge. Runs on `main` only, since several
-  checks inspect repository settings rather than the tree.
+  checks inspect repository settings rather than the tree, and the action refuses any other ref.
 
 Four of these publish SARIF to the Security tab — everything above except the git-history scan,
 whose findings are deliberately kept out of a view people triage to empty, and dependency review,
@@ -370,6 +375,10 @@ scanner with `continue-on-error`, so they stay green even when the scan did not 
 them would add checks that cannot go red. For the same reason Build and Push is not path-filtered
 on pull requests: a PR that touches no image and no pipeline file runs lint and builds nothing,
 instead of not running at all.
+
+These four are also what auto-merge waits for. The automated update workflows read the ruleset
+before enabling it, and leave the PR open if any of the four is not required
+([Automatic updates](pipeline.md#automatic-updates)).
 
 ## Security alerts report
 
@@ -449,4 +458,7 @@ ecosystem: nothing is adopted the day it ships, since the window between publica
 is exactly when a same-day bump would pull in a compromised release. The pinned release binaries
 Dependabot cannot see are compared against their vendors weekly by the pin-drift job, which opens
 a tracking issue rather than failing a build. Both are described in full under
-[Pin drift](pipeline.md#pin-drift).
+[Pin drift](pipeline.md#pin-drift). The pin-bump job then turns that drift into pull requests, with
+checksums taken only from the vendor's published files and the same seven-day cooldown; it and
+Dependabot's minor and patch updates merge themselves once every required check passes
+([Automatic updates](pipeline.md#automatic-updates)).

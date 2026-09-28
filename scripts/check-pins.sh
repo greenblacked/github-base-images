@@ -93,7 +93,12 @@ trap 'rm -rf "$tmp"' EXIT INT TERM
 #
 # kubectl and composer are each pinned in two Dockerfiles (ci-tools/ci-cloud,
 # ci-php84/ci-php85) but listed once: scripts/lint.sh fails if the copies ever
-# differ, so checking one checks both.
+# differ, so checking one checks both. npm and playwright are likewise listed
+# once for ci-node22 and ci-node24; scripts/bump-pins.sh moves both copies.
+#
+# gitleaks is the exception, listed twice: the copy security.yml runs over the
+# git history is a separate pin that nothing forces to agree with the image's,
+# so it is checked in its own right rather than assumed to follow.
 readonly PINS='
 terraform  | ci-tools/Dockerfile.ci               | TERRAFORM_VERSION  | hashicorp | terraform
 kubectl    | ci-tools/Dockerfile.ci               | KUBECTL_VERSION    | k8s       | -
@@ -109,6 +114,11 @@ cosign     | ci-security/Dockerfile.ci            | COSIGN_VERSION     | github 
 gitleaks   | ci-security/Dockerfile.ci            | GITLEAKS_VERSION   | github    | gitleaks/gitleaks
 migrate    | ci-db/Dockerfile.ci                  | MIGRATE_VERSION    | github    | golang-migrate/migrate
 osv-scanner | .github/workflows/build-image.yml   | OSV_SCANNER_VERSION | github   | google/osv-scanner
+npm        | ci-node22/Dockerfile.ci              | NPM_VERSION        | npm       | npm
+json       | ci-ruby40/Dockerfile.ci              | JSON_VERSION       | rubygems  | json
+hadolint   | scripts/lint.sh                      | HADOLINT_VERSION   | github    | hadolint/hadolint
+actionlint | scripts/lint.sh                      | ACTIONLINT_VERSION | github    | rhysd/actionlint
+gitleaks-workflow | .github/workflows/security.yml | GITLEAKS_VERSION  | github    | gitleaks/gitleaks
 '
 
 fetch() {
@@ -123,7 +133,7 @@ resolve_github() {
   local repo="$1" auth=()
   # GITHUB_TOKEN is read from the environment, never taken as an argument, and
   # never echoed. Unauthenticated calls work but are rate limited to 60/hour,
-  # which 9 tools would exhaust quickly on a shared runner.
+  # which a dozen tools would exhaust quickly on a shared runner.
   if [ -n "${GITHUB_TOKEN:-}" ]; then
     auth=(-H "Authorization: Bearer $GITHUB_TOKEN")
   fi
@@ -161,6 +171,15 @@ resolve_dockerstatic() {
 }
 
 resolve_npm() { fetch "https://registry.npmjs.org/$1" | jq -r '."dist-tags".latest // empty'; }
+
+# The ruby platform only: json also ships -java builds, which carry the same
+# number and would otherwise count twice. Prereleases are excluded, as they
+# are by every other resolver here, which all read a "latest stable" channel.
+resolve_rubygems() {
+  fetch "https://rubygems.org/api/v1/versions/$1.json" \
+    | jq -r '.[] | select(.prerelease == false and .platform == "ruby") | .number // empty' \
+    | grep -E '^[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -1
+}
 
 resolve_gcs() {
   fetch 'https://storage.googleapis.com/cloud-sdk-release?prefix=google-cloud-cli-&max-keys=8000' \
@@ -213,13 +232,14 @@ while IFS='|' read -r name file key resolver arg; do
     hashicorp)    latest=$(resolve_hashicorp "$arg" || true) ;;
     dockerstatic) latest=$(resolve_dockerstatic || true) ;;
     npm)          latest=$(resolve_npm "$arg" || true) ;;
+    rubygems)     latest=$(resolve_rubygems "$arg" || true) ;;
     gcs)          latest=$(resolve_gcs || true) ;;
     *) log error "$name: unknown resolver '$resolver'"; failed=$((failed + 1)); continue ;;
   esac
 
   if [ -z "$latest" ]; then
     # Deliberately not fatal for the whole run: one unreachable vendor should
-    # not hide drift in the other twelve. Counted, reported, and reflected in
+    # not hide drift in all the others. Counted, reported, and reflected in
     # the exit code.
     log error "$name: could not resolve current version from vendor"
     failed=$((failed + 1))
@@ -257,9 +277,11 @@ if [ "$format" = json ]; then
   jq -s --argjson drift "$drift" --argjson failed "$failed" \
     '{drift:$drift, failed:$failed, tools:.}' "$tmp/rows.jsonl"
 else
-  printf '%-12s %-12s %-12s %s\n' TOOL PINNED LATEST STATE
-  jq -r '[.tool,.pinned,.latest,.state] | @tsv' "$tmp/rows.jsonl" \
-    | while IFS=$'\t' read -r t p l s; do printf '%-12s %-12s %-12s %s\n' "$t" "$p" "$l" "$s"; done
+  printf '%-18s %-12s %-12s %s\n' TOOL PINNED LATEST STATE
+  # `// "-"` because an unresolved row has a null latest, and an empty field
+  # between tabs collapses under IFS whitespace splitting, shifting the columns.
+  jq -r '[.tool, .pinned, (.latest // "-"), .state] | @tsv' "$tmp/rows.jsonl" \
+    | while IFS=$'\t' read -r t p l s; do printf '%-18s %-12s %-12s %s\n' "$t" "$p" "$l" "$s"; done
   echo
   printf 'checked=%d behind=%d unresolved=%d\n' "$checked" "$drift" "$failed"
 fi

@@ -12,10 +12,17 @@ version: 2
 # This delays security fixes by the same amount, which is the real trade-off.
 # It is acceptable here because the weekly rebuild plus the Trivy gate already
 # catch a vulnerable Debian package without waiting for a base-image bump.
+#
+# Minor and patch updates merge themselves once every required check is green,
+# via .github/workflows/dependabot-auto-merge.yml; majors are labelled
+# needs-review and wait for a human (docs/adr/0007-automatic-updates.md).
 
 updates:
   # Keeps the action pins in .github/workflows current (docker/*, actions/*,
-  # aquasecurity/trivy-action, hadolint, actionlint, zizmor's runner, scorecard).
+  # aquasecurity/trivy-action, astral-sh/setup-uv, scorecard, and
+  # dependabot/fetch-metadata in dependabot-auto-merge.yml). hadolint and
+  # actionlint are no longer actions here: scripts/lint.sh pins both, and
+  # scripts/check-pins.sh and bump-pins.sh keep them current.
   - package-ecosystem: github-actions
     directory: /
     schedule:
@@ -47,7 +54,7 @@ updates:
   #
   # Note this does NOT track the pinned tool versions in ci-tools/Dockerfile.ci
   # (Terraform, kubectl, AWS CLI, Docker client) -- those are plain ARGs with no
-  # ecosystem behind them, so they move when a human moves them.
+  # ecosystem behind them. .github/workflows/pin-bump.yml moves them instead.
   - package-ecosystem: docker
     directory: /ci-node22
     schedule:
@@ -97,7 +104,8 @@ updates:
     cooldown:
       default-days: 7
 
-  # Does not track COMPOSER_VERSION -- that is a plain ARG, like the ci-tools pins.
+  # Does not track COMPOSER_VERSION -- that is a plain ARG, like the ci-tools
+  # pins, which pin-bump.yml moves.
   - package-ecosystem: docker
     directory: /ci-php84
     schedule:
@@ -184,7 +192,8 @@ updates:
     cooldown:
       default-days: 7
 
-  # Does not track COMPOSER_VERSION -- that is a plain ARG, like the ci-tools pins.
+  # Does not track COMPOSER_VERSION -- that is a plain ARG, like the ci-tools
+  # pins, which pin-bump.yml moves.
   - package-ecosystem: docker
     directory: /ci-php85
     schedule:

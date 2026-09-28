@@ -1,0 +1,154 @@
+# Let Dependabot's minor and patch updates merge themselves once CI is green;
+# leave majors, and anything whose update type is unknown, for a human
+# (docs/adr/0007-automatic-updates.md).
+#
+# This workflow never merges anything itself. It turns on GitHub auto-merge,
+# which merges only when every check the `main` ruleset requires has passed --
+# the same full build, scan and gate a human-opened PR goes through. A red PR
+# stays open. Dependabot's own seven-day cooldown still applies upstream of
+# this: nothing reaches here the day it is published.
+#
+# Why `pull_request` and not `pull_request_target`:
+#   - On a Dependabot PR, `pull_request` runs with a token whose permissions
+#     are the ones granted below, and no repository secrets beyond
+#     Dependabot's own. That is all this needs.
+#   - `pull_request_target` would run with a write token for EVERY pull
+#     request, forks included, and the `if:` below would be the only thing
+#     standing between a stranger's PR and that token. Under `pull_request`, a
+#     fork's PR gets a read-only token whatever this file says, so even a
+#     mistake in the condition cannot hand out write access.
+#   - Nothing here checks out or runs code from the PR. fetch-metadata reads
+#     the PR's commit through the API, and refuses (empty outputs) unless the
+#     commit is authored by Dependabot and signed.
+#
+# Not an image pipeline file: it is outside build-and-push.yml's `paths:` and
+# the plan's full-rebuild list, so changing it rebuilds nothing.
+name: Dependabot auto-merge
+
+on:
+  pull_request:
+    branches: [main]
+
+# One run per PR; a newer push to the same PR supersedes an older run.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+permissions: {}
+
+jobs:
+  auto-merge:
+    name: Dependabot auto-merge
+    # Both: the PR was opened by Dependabot, and this event was caused by it.
+    # A maintainer's push to a Dependabot branch runs nothing here; it still
+    # has to pass the same required checks before anything merges.
+    #
+    # zizmor flags `github.actor` as spoofable (bot-conditions): the actor is
+    # whoever last acted, so a PR from someone else's branch can carry
+    # Dependabot as its actor. That is why it is never the condition on its
+    # own here. The PR author, which zizmor recommends, is the condition; the
+    # actor check only narrows it further, to events Dependabot itself caused.
+    # Removing it would widen the job, not harden it.
+    if: github.event.pull_request.user.login == 'dependabot[bot]' && github.actor == 'dependabot[bot]' # zizmor: ignore[bot-conditions]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write       # gh pr merge --auto
+      pull-requests: write  # enabling auto-merge, and labelling what needs review
+    steps:
+      - name: Fetch Dependabot metadata
+        id: meta
+        uses: dependabot/fetch-metadata@25dd0e34f4fe68f24cc83900b1fe3fe149efef98 # v3.1.0
+
+      # Auto-merge is only as safe as what it waits for: with no required
+      # checks, "merge when green" merges at once. So confirm the ruleset
+      # requires the full gate before turning it on, and say what is missing
+      # otherwise. The same list as scripts/pin-bump-prs.sh.
+      - name: Check the required checks
+        id: gate
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: |
+          rc=0
+          rules=$(gh api "repos/$REPO/rules/branches/main") || rc=$?
+          missing=""
+          for c in "CI result" "Repository secret scan" "CodeQL (workflows)" "Dependency review"; do
+            if [ "$rc" -ne 0 ] || ! jq -e --arg c "$c" \
+                'any(.[]; .type == "required_status_checks" and any(.parameters.required_status_checks[]?; .context == $c))' \
+                <<<"$rules" >/dev/null; then
+              missing="${missing:+$missing, }$c"
+            fi
+          done
+          if [ -n "$missing" ]; then
+            echo "::warning::auto-merge not enabled: the main ruleset does not require: $missing. Enable Settings -> General -> 'Allow auto-merge' and require those checks in the main ruleset."
+            echo "ok=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "ok=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      # Minor and patch only: an update type fetch-metadata positively
+      # parsed. It returns an empty update-type whenever it cannot parse a
+      # version -- a SHA-pinned `uses:` with no version comment, for one --
+      # and that SHA may just as well be a new major. Nothing here can tell
+      # the two apart without resolving both SHAs to tags, so an empty type
+      # is treated as a major, below, rather than as "digest only".
+      - name: Enable auto-merge
+        if: >-
+          steps.gate.outputs.ok == 'true' && (
+            steps.meta.outputs.update-type == 'version-update:semver-patch' ||
+            steps.meta.outputs.update-type == 'version-update:semver-minor')
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_URL: ${{ github.event.pull_request.html_url }}
+        run: |
+          rc=0
+          gh pr merge --auto --squash "$PR_URL" || rc=$?
+          if [ "$rc" -ne 0 ]; then
+            echo "::warning::gh pr merge --auto failed (exit $rc); is 'Allow auto-merge' enabled in Settings -> General?"
+          fi
+
+      # Everything that is not a known minor or patch: a major, an empty
+      # update-type (see above), or a value this file does not know.
+      - name: Label for review
+        if: >-
+          steps.meta.outputs.update-type != 'version-update:semver-patch' &&
+          steps.meta.outputs.update-type != 'version-update:semver-minor'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_URL: ${{ github.event.pull_request.html_url }}
+          REPO: ${{ github.repository }}
+        run: |
+          # `gh label create` fails when the label exists; only a label that is
+          # then really there counts. errexit (the default shell's -e) fails
+          # the step when the label is neither created nor found.
+          rc=0
+          gh label create needs-review --repo "$REPO" --color d93f0b \
+            --description "Automated update that a maintainer must review and merge" || rc=$?
+          if [ "$rc" -ne 0 ]; then
+            gh label list --repo "$REPO" --search needs-review --json name \
+              | jq -e 'any(.[]; .name == "needs-review")' >/dev/null
+          fi
+          gh pr edit "$PR_URL" --add-label needs-review
+
+      - name: Summary
+        if: always()
+        env:
+          NAMES: ${{ steps.meta.outputs.dependency-names }}
+          ECOSYSTEM: ${{ steps.meta.outputs.package-ecosystem }}
+          UPDATE_TYPE: ${{ steps.meta.outputs.update-type }}
+          FROM: ${{ steps.meta.outputs.previous-version }}
+          TO: ${{ steps.meta.outputs.new-version }}
+          GATE: ${{ steps.gate.outputs.ok }}
+        run: |
+          {
+            echo "### Dependabot auto-merge"
+            echo
+            if [ -z "$NAMES" ]; then
+              echo "fetch-metadata returned nothing (not a verified Dependabot commit?): no auto-merge."
+            else
+              echo "- dependencies: $NAMES ($ECOSYSTEM)"
+              echo "- ${FROM:-?} -> ${TO:-?}, update type: ${UPDATE_TYPE:-unknown (treated as major: labelled needs-review, no auto-merge)}"
+              echo "- required checks in place: ${GATE:-unknown}"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"

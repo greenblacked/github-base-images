@@ -138,18 +138,36 @@ jobs:
   # disabled, API unreachable), which is the correct direction: a review that
   # could not run is not a review that passed.
   #
-  # Pull requests only: the action compares a PR's base and head and errors
-  # on any other event, so on push/schedule/dispatch the job is skipped
-  # rather than run to fail.
+  # Pull requests, and dispatches on a branch other than main. The action
+  # compares a base and a head. On pull_request it takes both from the event;
+  # on any other event it errors unless they are given.
+  #
+  # The dispatch case exists for the automated bump PRs (pin-bump.yml,
+  # docs/adr/0007-automatic-updates.md). They are pushed with the workflow
+  # token, which triggers no pull_request run, so their checks come from a
+  # workflow_dispatch on the branch instead. A job whose `if:` is false still
+  # reports its check -- as skipped, which a required check treats as passing
+  # -- so without this the required "Dependency review" would go green on
+  # every such PR without having looked at it. On dispatch the job compares
+  # main with the dispatched commit, which is the PR's diff for a branch cut
+  # from main.
+  #
+  # Two steps rather than one with conditional inputs, so the pull_request
+  # path runs exactly as before: explicit refs take priority over the
+  # event's, and none are passed there. On push, schedule, and a dispatch on
+  # main there is no diff to review, and the job is skipped.
   dependency-review:
     name: Dependency review
-    if: github.event_name == 'pull_request'
+    if: >-
+      github.event_name == 'pull_request' ||
+      (github.event_name == 'workflow_dispatch' && github.ref_type == 'branch' && github.ref != 'refs/heads/main')
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
       contents: read
     steps:
       - name: Dependency review
+        if: github.event_name == 'pull_request'
         uses: actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294 # v5.0.0
         with:
           fail-on-severity: high
@@ -159,15 +177,29 @@ jobs:
           # this SHA) for a score this job does not gate on.
           show-openssf-scorecard: false
 
+      # base-ref and head-ref are inputs of this pinned version (action.yml
+      # and src/git-refs.ts at the SHA above).
+      - name: Dependency review (dispatched branch against main)
+        if: github.event_name == 'workflow_dispatch'
+        uses: actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294 # v5.0.0
+        with:
+          fail-on-severity: high
+          show-openssf-scorecard: false
+          base-ref: main
+          head-ref: ${{ github.sha }}
+
   # OpenSSF Scorecard: branch protection, token permissions, pinned
   # dependencies, dangerous workflow patterns, maintenance signals. Produces the
   # score behind the README badge.
   #
   # Only meaningful on the default branch -- several checks inspect repository
-  # settings rather than the tree -- so it does not run on pull requests.
+  # settings rather than the tree -- so it runs on main only. Not merely "not
+  # on pull requests": scorecard-action exits with "only default branch is
+  # supported" for any other ref, so a dispatch on a bump branch (see
+  # dependency-review above) would otherwise put a red job on every bump PR.
   scorecard:
     name: OpenSSF Scorecard
-    if: github.event_name != 'pull_request'
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
@@ -270,7 +302,8 @@ jobs:
       # Docker Hub's anonymous rate limits from shared runners, and git inside
       # a container trips the dubious-ownership check against the runner's
       # checkout. A bump is a two-line PR (version + checksum) that CI
-      # revalidates.
+      # revalidates; scripts/bump-pins.sh makes it together with the
+      # ci-security copy, so the two cannot drift apart.
       #
       # Reported, not gating. A history finding cannot be fixed by a commit --
       # it needs a rewrite plus rotation -- so failing the build would block
