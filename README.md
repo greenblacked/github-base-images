@@ -237,7 +237,8 @@ truth — it builds both architectures natively and enforces the vulnerability a
 Makefile does not.
 
 `make lint` runs the CI lint job's exact battery — shellcheck, hadolint and actionlint on the same
-pinned versions CI uses, the `images.json` cross-check, and a zizmor workflow audit. Engines are
+pinned versions CI uses, the `images.json` cross-check, the
+[vulnerability exceptions](#vulnerability-exceptions) check, and a zizmor workflow audit. Engines are
 downloaded once as checksum-verified release binaries into a git-ignored `.lint-cache/`. Running it
 before opening a PR saves a round trip, because the `lint` job is the first thing that fails.
 
@@ -480,16 +481,27 @@ attached to the job summary, and uploaded as a **`security-report-<image>-<arch>
 (retained 90 days), including on failed builds:
 
 - **Vulnerability scan** — full report at every severity, and **a gate that blocks the push** on
-  fixable HIGH/CRITICAL in the **Debian layer** only. That scope is deliberate:
-  - Debian findings are actionable — `apt` pulls the patched package on the next rebuild.
-  - `ignore-unfixed` keeps it honest: red always means a rebuild picks up a fix, rather than
-    blocking on a CVE with no patch available.
-  - **Library findings do not gate.** They are the runtime's own bundled dependencies (npm's
-    `picomatch`, `sigstore`, …) shipped inside the upstream image, not fixable from this repo.
-    Gating on them would block every push on someone else's release schedule. They are reported,
-    not enforced.
+  any **fixable** HIGH/CRITICAL finding, in OS packages *and* in libraries and binaries (Go
+  binaries, npm, pip, gem, jar, …) — `vuln-type: os,library`. That scope is deliberate:
+  - `ignore-unfixed` keeps it honest: red always means there is a version to move to, never a CVE
+    with no patch available. Unfixed findings are reported, not enforced.
+  - A fixable OS finding is fixed by the next rebuild — `apt` pulls the patched package.
+  - A fixable library finding is fixed one of two ways. In a tool this repo installs and pins, bump
+    the pin in `Dockerfile.ci`. In the upstream runtime image (the npm, pip or gem packages it
+    bundles), the fix is the upstream's patch release, which the weekly rebuild and Dependabot's
+    base-image bumps pick up.
+  - The cost of the second case is accepted: an image can stay red until upstream ships a patched
+    image, and in exchange nothing known-fixable at HIGH/CRITICAL is ever published.
+    [ADR 0006](docs/adr/0006-gate-on-fixable-library-vulnerabilities.md) records why library
+    findings, report-only until then, now gate.
+  - The one way past it is an **expiring exception** in `.github/vuln-exceptions.json`, for a
+    finding whose fixed version is in no released artifact yet (a module compiled into the latest
+    upstream release binary, a package vendored inside pip). Exceptions are per image, per CVE
+    and per path or package version, last 90 days at most, and are printed in the gate step's
+    log and summary; the reports and SARIF above never use them. See [Vulnerability exceptions](#vulnerability-exceptions).
 - **Secret scan** — **gates at any severity**. A baked-in credential in a public CI image is
-  always fixable from this repo, so unlike library vulns there is no excuse for shipping one.
+  always fixable from this repo, with no upstream to wait on, so there is no excuse for shipping
+  one.
 - **Misconfiguration scan** — lints the Dockerfile's build instructions (missing `USER`, `ADD` vs
   `COPY`, …). Best-practice guidance rather than exploitable findings, so it is **reported, not
   gating** — the gates stay reserved for real, fixable security problems.
@@ -506,24 +518,24 @@ buried in a build log. The upload is `continue-on-error` — code scanning must 
 an image fails to publish.
 
 **Its scope is deliberately wider than the gate's, so expect this view to be non-empty.** The gate
-stays narrow on purpose (below); the SARIF exists to record what the gate lets through rather than
+blocks only what has a fix; the SARIF exists to record what the gate lets through rather than
 duplicate what it blocks:
 
 - **No `ignore-unfixed`.** On an image whose build just ran `apt-get upgrade`, "fixed" and
   "already applied" are close to the same set — a fixed-only report on a freshly rebuilt image is
   close to a guarantee of nothing. What is left is overwhelmingly *unfixed* HIGH/CRITICAL CVEs,
   which is exactly the accepted risk worth a standing record.
-- **No `vuln-type: os`**, so library findings are included too — the runtime's own bundled `pip`,
-  `npm` and `gem` packages baked into the upstream image. They still don't gate, for the same
-  reason as always (not fixable from this repo), but a consumer of the image has every reason to
-  want to know what CVEs those bundled versions carry.
+- **The same package scope as the gate**: OS packages and libraries, including the runtime's own
+  bundled `pip`, `npm` and `gem` packages baked into the upstream image. Their unfixed CVEs never
+  gate, but a consumer of the image has every reason to want to know what those bundled versions
+  carry.
 - **Severity stays HIGH,CRITICAL**, via `limit-severities-for-sarif: true` alongside `severity:`.
   Without that flag trivy-action silently ignores `severity:` for SARIF output and ships every
   severity, UNKNOWN and LOW included — see the comment at the step itself, and
   [ADR 0003](docs/adr/0003-gates-vs-reports.md) for why that flag exists at all.
 
 So *Security → Code scanning* is where you look for what this repo has decided is safe to ship
-without blocking: unfixed OS CVEs and library CVEs at HIGH/CRITICAL, browsable and diffable across
+without blocking: unfixed OS and library CVEs at HIGH/CRITICAL, browsable and diffable across
 builds. It is accepted risk, not a build failure — nothing here means the pipeline is broken. For
 the exhaustive picture (every severity, every scanner, unfixed and fixed alike) go to the job
 summary or the `security-report-<image>-<arch>` artifact, which run with no filters at all.
@@ -568,6 +580,63 @@ Four things about it are less obvious than they look:
 ```bash
 ./scripts/osv-scan-sbom.sh sbom-ci-tools-amd64.cdx.json full.sarif upload.sarif   # locally
 ```
+
+### Vulnerability exceptions
+
+`.github/vuln-exceptions.json` is the only way past the vulnerability gate, and it is narrow on
+purpose ([ADR 0006](docs/adr/0006-gate-on-fixable-library-vulnerabilities.md#exceptions-expiring-per-image-per-id)).
+An entry is for a finding whose advisory names a fixed version that **no released artifact
+contains yet**: a Go module compiled into the latest release of a binary the image installs, a
+package vendored inside the upstream image's pip, a package inside the newest .NET SDK. It is
+never for "a fix exists and nobody has bumped the pin", nor for "upstream has shipped a patched
+image and this one has not been rebuilt" — those get fixed, not excepted.
+
+JSON has no comments, so the file's format lives here. It is an array of entries:
+
+```json
+{
+  "image": "ci-db",
+  "id": "CVE-2026-56854",
+  "package": "golang.org/x/crypto",
+  "installed": "v0.53.0",
+  "reason": "Compiled into the golang-migrate v4.20.1 release binary, the latest release, ...",
+  "upstream": "https://github.com/golang-migrate/migrate/releases",
+  "expires": "2026-10-26",
+  "paths": ["usr/local/bin/migrate"]
+}
+```
+
+- `image` is an image in `images.json`; `id` is the CVE or GHSA id exactly as Trivy prints it. One
+  entry per image and id: the same CVE in two images is two entries, and the same CVE in two
+  files of one image is one entry with both paths.
+- `reason` is one sentence on why this repository cannot take the fix now; `upstream` is where to
+  watch for it (a release page, a tracking issue, a vendoring file).
+- `expires` is `YYYY-MM-DD`, at most 90 days from the day it is written. From that date the entry
+  no longer applies — Trivy's `expired_at` semantics — and the image goes red again.
+- Every entry needs `paths`, `purls` or both, so it is limited to one package rather than the id
+  anywhere in the image. When both are given, a finding must match both.
+- `paths` is the Trivy target (`usr/local/bin/migrate`) or package path (a `.deps.json`,
+  `…dist-info/METADATA` or `.gemspec` file) the entry is limited to, written out in full as Trivy
+  reports it: no leading `/`, no glob characters. Use it whenever the gate table, its *Report
+  Summary* or the JSON report shows a stable path.
+- `purls` is for findings with no usable path (pip's vendored packages appear under the aggregate
+  `Python` target): the package's PURL as Trivy prints it in the JSON report's `PkgIdentifier`,
+  `pkg:<type>/<name>@<version>`, for example `["pkg:pypi/msgpack@1.1.2"]`. It pins the exact
+  installed version, so the entry stops applying when the package changes.
+
+**Adding one.** Take the ids from the failing gate step's table — all of them, both
+architectures — and check that no release of the thing that bundles them carries the fix yet.
+Add one entry per image and id, then run `./scripts/lint.sh`, which checks every field, rejects
+an unknown image, a malformed id, date, path or PURL, an entry with neither `paths` nor `purls`, a
+duplicate, or an expiry more than 90 days out. A change to the file rebuilds exactly the images
+whose entries changed, on the pull request and again on `main`, and each gate step prints the
+Trivy ignore file it was given in its log and job summary.
+
+**When one expires.** The image fails its gate again, `build-image.yml` warns about the expired
+entry by name, lint warns (without failing), and the alerts report lists it under *Expired
+exceptions*. Check `upstream`: if the fix has shipped, take it (bump the pin, rebuild) and delete
+the entry; if it still has not, renew it with a new `expires` and, if anything changed, a new
+`reason`. Delete an entry as soon as the finding is gone, even before it expires.
 
 ### Verifying a signature
 
@@ -665,9 +734,9 @@ themselves state.
 
 Most of this repository's supply chain is watched by something: Dependabot tracks the action pins
 and each Dockerfile's `ARG BASE_IMAGE`, and the weekly rebuild plus the Trivy gate cover the OS
-packages. Its config carries a seven-day `cooldown` on every ecosystem — nothing is adopted the day
-it ships, since the window between publication and discovery is exactly when a same-day bump would
-pull in a compromised release — and one `groups` rule for `github/codeql-action`, whose `init`,
+packages and the libraries the images carry. Its config carries a seven-day `cooldown` on every
+ecosystem — nothing is adopted the day it ships, since the window between publication and
+discovery is exactly when a same-day bump would pull in a compromised release — and one `groups` rule for `github/codeql-action`, whose `init`,
 `analyze` and `upload-sarif` subpaths are one action on one SHA. Without the grouping Dependabot
 opens a PR per subpath, and since CodeQL rejects `init` and `analyze` on different versions, two of
 the three fail by construction while the third passes as a third of a change. The tools installed as pinned release binaries — Terraform, kubectl, the AWS CLI, the
@@ -750,6 +819,67 @@ not.
 > **First run:** the Scorecard badge stays grey until the workflow has run once on `main` and
 > published its results. Both badges track `main`, so they will not reflect a pull request.
 
+### Security alerts report
+
+*Security → Code scanning* holds thousands of alerts across every image, architecture and tool,
+and at that volume the list says how many and little else.
+[alerts-report.yml](.github/workflows/alerts-report.yml) turns it into one report: every open
+code-scanning alert on `main` plus every open Dependabot alert, analysed by
+[scripts/alerts-report.sh](scripts/alerts-report.sh). The report has:
+
+- totals by tool and severity;
+- a row for **every** image in `images.json`, including those with no alerts: Trivy critical and
+  high, how many are fixable, how many are excepted, OSV count, and which architectures have
+  alerts;
+- every **fixable** HIGH/CRITICAL Trivy alert in full: image, architecture, package, installed and
+  fixed version, CVE, and a link;
+- **active exceptions**: every fixable HIGH/CRITICAL Trivy alert covered by an unexpired entry in
+  [`.github/vuln-exceptions.json`](#vulnerability-exceptions), with its expiry and reason, and
+  every **expired** entry, as a reminder to remove or renew it;
+- every open Dependabot alert: package, ecosystem, manifest, severity, GHSA/CVE, vulnerable range,
+  first patched version;
+- the 25 CVEs that affect the most images, which is how a shared-base problem shows up;
+- repository-level alerts (CodeQL, zizmor, Scorecard, the repository secret scan), grouped by tool
+  and rule;
+- **stale** categories: alerts uploaded for images that no longer exist (`ci-go125`, `ci-rust185`,
+  …). Nothing will upload there again, so they never close on their own; delete the category under
+  *Security → Code scanning → Tool status*.
+
+It runs after every publish run on `main` (the `alerts` job in `build-and-push.yml`), weekly on
+Tuesdays, and on demand via *Run workflow*. Read it on the run's summary page; the full
+`report.md`, with the raw `code-scanning.json` and `dependabot.json` it was built from, is the
+`code-scanning-report` artifact (90 days). A very large report is cut in the summary, section by
+section, never in the artifact.
+
+**It fails the run when a fix is waiting.** A fixable HIGH/CRITICAL Trivy alert in a current image
+means the last build of that image failed its gate and the published image is older still, or the
+image has not been rebuilt since the fix appeared. A HIGH/CRITICAL Dependabot alert with a patched
+version is the same thing for the repository's own dependencies. Unfixed findings are accepted risk
+waiting on upstream and never fail it; stale categories never fail it either. Nor does an alert
+covered by an active exception — the same image, CVE and path or package version the gate is
+skipping — though it is listed, and counted separately in the summary; an expired entry excuses
+nothing. It also fails, rather than reporting zero, whenever it could not look: an API call that
+failed, Dependabot alerts switched off for the repository (turn them on under *Settings → Code
+security*), input that does not parse (the exceptions file included), or an alert whose fixability
+it cannot read.
+
+```bash
+./scripts/alerts-report.sh code-scanning.json dependabot.json .github/images.json \
+  .github/vuln-exceptions.json report.md
+# exit 0 clean, 3 fixable HIGH/CRITICAL open and not excepted,
+# 1 could not produce a trustworthy report, 2 usage
+```
+
+**Not covered: GitHub secret scanning.** No `GITHUB_TOKEN` permission can read secret-scanning
+alerts, and this repository adds no personal access token or app credential to reach them, so the
+report says so in its own section and links to *Security → Secret scanning* for a manual look.
+Secrets are covered in CI by the Trivy secret gate on every image, the Trivy secret scan of the
+working tree (which gates), and the gitleaks scan of the git history (reported, in its job log).
+
+The Dependabot fetch needs the `vulnerability-alerts: read` token permission, which is separate
+from `security-events`. The pinned actionlint predates that permission, so
+`.github/actionlint.yaml` ignores that one message, in those two workflow files only.
+
 ## PR validation and linting
 
 A PR runs the full per-image pipeline — build both architectures natively, smoke test, all five
@@ -770,6 +900,26 @@ deliberately single-quoted so they expand inside the container, not on the host)
 and each image's base-image ref current with weekly PRs. Because PR validation runs the full
 build/test/scan stack, a Dependabot bump arrives pre-verified — green means the updated base
 already built, passed the smoke tests, and cleared both gates on both architectures.
+
+### Required checks
+
+Merging into `main` requires CI to pass. The `main` ruleset (Settings → Rules → Rulesets →
+`main`) requires these status checks:
+
+| Check | Workflow | What it covers |
+|---|---|---|
+| `CI result` | Build and Push to GHCR | lint, plan, and every image the PR builds: build, smoke test, both gates, OSV |
+| `Repository secret scan` | Security | committed credentials in the working tree |
+| `CodeQL (workflows)` | Security | CodeQL `actions` analysis (reports findings to the Security tab; red when the analysis cannot run) |
+| `Dependency review` | Security | new dependencies with HIGH/CRITICAL advisories |
+
+The per-image jobs can't be required by name, because which of them exist depends on the images a
+PR touches, and a required check that never reports blocks the PR forever. `CI result` is the one
+fixed name that stands for all of them. It always runs, and fails if any job that ran failed or
+was cancelled. `Git history secret scan` and `Workflow security audit` are left out: both run their
+scanner with `continue-on-error`, so they stay green even when the scan did not run, and requiring
+them would add checks that cannot go red. For the same reason Build and Push is not path-filtered on pull requests: a PR that
+touches no image and no pipeline file runs lint and builds nothing, instead of not running at all.
 
 ## Architectures
 
@@ -815,9 +965,11 @@ images carry `noble-v1` and the Trixie-based ones `trixie-v1` while the rest are
 
 ### Which images a run builds
 
-A push or pull request builds **only the images whose directories changed** — a one-line fix to
+A push or pull request builds **only the images whose directories changed** (a pull request that
+changes none, and no pipeline file, builds nothing) — a one-line fix to
 `ci-ruby34` does not rebuild the other twenty images or move `latest` on them. Changing the
-pipeline itself (either workflow file, or `images.json`) rebuilds everything, and the weekly
+pipeline itself (either workflow file, or `images.json`) rebuilds everything; a change to
+`.github/vuln-exceptions.json` rebuilds the images whose entries changed. The weekly
 schedule and `workflow_dispatch` always rebuild everything — the rebuild is the security-update
 mechanism and is never narrowed. Every ambiguous case (force-push, missing diff base) falls back
 to the full list: over-building costs minutes, under-building leaves a stale published image
@@ -853,9 +1005,10 @@ If an image here has no consumer, deleting it is a legitimate and expected chang
 [SECURITY.md](SECURITY.md) covers how to report a vulnerability in a published image, and what is
 in and out of scope.
 
-For *why* it is built this way — why upstream bases are mirrored, why library vulnerabilities are
-reported but do not gate, why builds are native rather than emulated, and why every action is
-SHA-pinned — see the [architecture decision records](docs/adr/README.md).
+For *why* it is built this way — why upstream bases are mirrored, why the vulnerability gate
+blocks only fixable findings (and why that now includes libraries), why builds are native rather
+than emulated, and why every action is SHA-pinned — see the
+[architecture decision records](docs/adr/README.md).
 
 ## License
 

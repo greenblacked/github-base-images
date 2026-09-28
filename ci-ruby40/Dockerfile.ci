@@ -41,6 +41,35 @@ RUN apt-get update \
 # their own workflow -- same philosophy as browsers not being baked into
 # ci-node22: project-specific build tooling stays with the project.
 
+# Replace the json default gem Ruby 4.0 ships (2.18.0, CVE-2026-33210,
+# CRITICAL), which the vulnerability gate blocks (docs/adr/0006). No Ruby 4.0
+# release carries a fixed json yet: ext/json/lib/json/version.rb is still
+# 2.18.0 through v4.0.7. json 2.19.2 fixed it; the latest 2.19.x is used.
+#
+# Replaced IN PLACE, not installed alongside. With a newer json merely
+# installed next to the default one, plain `require "json"` loads it, but
+# Bundler resolves json to the default gemspec and runs the bundled 2.18.0
+# code -- and CI jobs run Ruby through `bundle exec`. replace-default-gem.rb
+# swaps the library files, the compiled extensions and the default gemspec
+# for 2.19.x's, so there is one json and every load path gets it. test.sh
+# asserts the version under plain require and under Bundler.
+#
+# The gem is built in a throwaway directory (json has a C extension, so a
+# compiler is installed for this layer and purged in it; test.sh asserts none
+# is left), and nothing lands in GEM_HOME. Drop this block once the ruby:4.0
+# image ships json >= 2.19.2.
+ARG JSON_VERSION=2.19.9
+COPY replace-default-gem.rb /tmp/replace-default-gem.rb
+# hadolint ignore=DL3008
+RUN apt-get update \
+    && apt-get install --yes --no-install-recommends gcc libc6-dev make \
+    && gemtmp="$(mktemp -d)" \
+    && gem install --no-document --install-dir "$gemtmp" json --version "${JSON_VERSION}" \
+    && ruby /tmp/replace-default-gem.rb json "${JSON_VERSION}" "$gemtmp" \
+    && rm -rf "$gemtmp" /tmp/replace-default-gem.rb \
+    && apt-get purge --yes --auto-remove gcc libc6-dev make \
+    && rm -rf /var/lib/apt/lists/*
+
 WORKDIR /workspace
 
 RUN ruby --version \

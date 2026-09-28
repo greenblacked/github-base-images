@@ -39,6 +39,7 @@ echo "Testing $IMAGE"
 check "node is present"            'node --version'
 check "node is v22"                '[ "$(node -p "process.versions.node.split(\".\")[0]")" = 22 ]'
 check "npm is present"             'npm --version'
+check "npm is v12 (bundled deps patched)" '[ "$(npm --version | cut -d. -f1)" = 12 ]'
 check "bash is present"            'bash --version'
 check "git is present"             'git --version'
 check "curl is present"            'curl --version'

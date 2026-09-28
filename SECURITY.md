@@ -18,7 +18,9 @@ In scope:
 
 - A credential, token, or private key baked into a published image. The secret scan gates on this
   at any severity, so anything that ships is a real escape.
-- A fixable HIGH/CRITICAL OS-package vulnerability that the build gate should have caught.
+- A fixable HIGH/CRITICAL vulnerability that the build gate should have caught — in an OS package,
+  or in a library or binary in the image (a pinned tool, or a package the runtime's upstream image
+  bundles). The gate covers both.
 - A supply-chain problem with how images are built or published — an unexpected base, a tag
   pointing at a digest this repo did not build, or a published digest whose cosign signature or
   GitHub attestation does not verify under the identity the README documents. The pipeline checks
@@ -26,11 +28,10 @@ In scope:
 
 Out of scope:
 
-- Vulnerabilities in the language runtimes' own bundled dependencies (npm's transitive packages,
-  Python wheels shipped in the upstream base, and so on). These are reported by the scan but do not
-  gate, because they are not fixable from this repository — see the README's "Tests and security
-  scanning" section.
-- Unfixed OS CVEs with no patch available upstream. The gate uses `ignore-unfixed` deliberately.
+- Unfixed vulnerabilities with no patched version available upstream, whether in an OS package or
+  in the language runtimes' own bundled dependencies (npm's transitive packages, Python wheels
+  shipped in the upstream base, and so on). These are reported by the scan but do not gate; the
+  gate uses `ignore-unfixed` deliberately — see the README's "Tests and security scanning" section.
 - Findings from the Dockerfile misconfiguration scan (missing `USER`, and similar). These images
   need root to run `apt`, and the scan is reported rather than gating for that reason.
 
