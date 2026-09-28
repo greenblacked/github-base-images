@@ -1,0 +1,737 @@
+[
+  {
+    "image": "ci-cloud",
+    "id": "CVE-2025-47273",
+    "package": "setuptools",
+    "installed": "70.3.0",
+    "reason": "setuptools is vendored inside pip 26.2.1 (pip/_vendor), which azure-cli's bundled Python ships, and pip's vendor.txt still pins setuptools==70.3.0, on main as well as in the latest release.",
+    "upstream": "https://github.com/pypa/pip/blob/main/src/pip/_vendor/vendor.txt",
+    "expires": "2026-10-26",
+    "purls": [
+      "pkg:pypi/setuptools@70.3.0"
+    ]
+  },
+  {
+    "image": "ci-cloud",
+    "id": "CVE-2026-69247",
+    "package": "cryptography",
+    "installed": "48.0.1",
+    "reason": "cryptography 48.0.1 is bundled with azure-cli 2.90.0, the newest in Microsoft's bookworm repository, and no azure-cli release carries a fixed cryptography yet. (gcloud's copy, 46.0.7, is removed in the Dockerfile with the unused bundled Python.)",
+    "upstream": "https://github.com/Azure/azure-cli/releases",
+    "expires": "2026-10-26",
+    "paths": [
+      "opt/az/lib/python3.14/site-packages/cryptography-48.0.1.dist-info/METADATA"
+    ]
+  },
+  {
+    "image": "ci-cloud",
+    "id": "CVE-2026-69249",
+    "package": "cryptography",
+    "installed": "48.0.1",
+    "reason": "cryptography 48.0.1 is bundled with azure-cli 2.90.0, the newest in Microsoft's bookworm repository, and no azure-cli release carries a fixed cryptography yet. (gcloud's copy, 46.0.7, is removed in the Dockerfile with the unused bundled Python.)",
+    "upstream": "https://github.com/Azure/azure-cli/releases",
+    "expires": "2026-10-26",
+    "paths": [
+      "opt/az/lib/python3.14/site-packages/cryptography-48.0.1.dist-info/METADATA"
+    ]
+  },
+  {
+    "image": "ci-cloud",
+    "id": "GHSA-6v7p-g79w-8964",
+    "package": "msgpack",
+    "installed": "1.1.2",
+    "reason": "msgpack is vendored inside pip 26.2.1 (pip/_vendor), which azure-cli's bundled Python ships, and no released pip vendors the fixed msgpack 1.2.1 yet; the bump exists only on pip main.",
+    "upstream": "https://github.com/pypa/pip/blob/main/news/msgpack.vendor.rst",
+    "expires": "2026-10-26",
+    "purls": [
+      "pkg:pypi/msgpack@1.1.2"
+    ]
+  },
+  {
+    "image": "ci-db",
+    "id": "CVE-2026-56852",
+    "package": "golang.org/x/text",
+    "installed": "v0.38.0",
+    "reason": "Compiled into the golang-migrate v4.20.1 release binary, the latest release, whose go.mod still requires golang.org/x/text v0.38.0; only a new migrate release can carry the fix.",
+    "upstream": "https://github.com/golang-migrate/migrate/releases",
+    "expires": "2026-10-26",
+    "paths": [
+      "usr/local/bin/migrate"
+    ]
+  },
+  {
+    "image": "ci-db",
+    "id": "CVE-2026-56854",
+    "package": "golang.org/x/crypto",
+    "installed": "v0.53.0",
+    "reason": "Compiled into the golang-migrate v4.20.1 release binary, the latest release, whose go.mod still requires golang.org/x/crypto v0.53.0; only a new migrate release can carry the fix.",
+    "upstream": "https://github.com/golang-migrate/migrate/releases",
+    "expires": "2026-10-26",
+    "paths": [
+      "usr/local/bin/migrate"
+    ]
+  },
+  {
+    "image": "ci-db",
+    "id": "CVE-2026-84304",
+    "package": "google.golang.org/grpc",
+    "installed": "v1.82.0",
+    "reason": "Compiled into the golang-migrate v4.20.1 release binary, the latest release, whose go.mod still requires google.golang.org/grpc v1.82.0; only a new migrate release can carry the fix.",
+    "upstream": "https://github.com/golang-migrate/migrate/releases",
+    "expires": "2026-10-26",
+    "paths": [
+      "usr/local/bin/migrate"
+    ]
+  },
+  {
+    "image": "ci-db",
+    "id": "CVE-2026-84445",
+    "package": "google.golang.org/grpc",
+    "installed": "v1.82.0",
+    "reason": "Compiled into the golang-migrate v4.20.1 release binary, the latest release, whose go.mod still requires google.golang.org/grpc v1.82.0; only a new migrate release can carry the fix.",
+    "upstream": "https://github.com/golang-migrate/migrate/releases",
+    "expires": "2026-10-26",
+    "paths": [
+      "usr/local/bin/migrate"
+    ]
+  },
+  {
+    "image": "ci-db",
+    "id": "GHSA-hrxh-6v49-42gf",
+    "package": "google.golang.org/grpc",
+    "installed": "v1.82.0",
+    "reason": "Compiled into the golang-migrate v4.20.1 release binary, the latest release, whose go.mod still requires google.golang.org/grpc v1.82.0; only a new migrate release can carry the fix.",
+    "upstream": "https://github.com/golang-migrate/migrate/releases",
+    "expires": "2026-10-26",
+    "paths": [
+      "usr/local/bin/migrate"
+    ]
+  },
+  {
+    "image": "ci-dotnet8",
+    "id": "CVE-2025-26646",
+    "package": "Microsoft.Build.Tasks.Core",
+    "installed": "17.11.48",
+    "reason": "Microsoft.Build.Tasks.Core 17.11.48 ships inside .NET SDK 8.0.425, the SDK in the newest mcr.microsoft.com/dotnet/sdk:8.0 image, and no released 8.0 SDK carries the fixed package yet.",
+    "upstream": "https://github.com/dotnet/dotnet-docker",
+    "expires": "2026-10-26",
+    "paths": [
+      "usr/share/dotnet/sdk/8.0.425/DotnetTools/dotnet-format/dotnet-format.deps.json",
+      "usr/share/dotnet/sdk/8.0.425/FSharp/fsc.deps.json",
+      "usr/share/dotnet/sdk/8.0.425/FSharp/fsi.deps.json",
+      "usr/share/dotnet/sdk/8.0.425/MSBuild.deps.json",
+      "usr/share/dotnet/sdk/8.0.425/NuGet.CommandLine.XPlat.deps.json",
+      "usr/share/dotnet/sdk/8.0.425/dotnet.deps.json"
+    ]
+  },
+  {
+    "image": "ci-dotnet8",
+    "id": "CVE-2026-47302",
+    "package": "System.Security.Cryptography.Xml",
+    "installed": "8.0.3",
+    "reason": "System.Security.Cryptography.Xml 8.0.3 ships inside .NET SDK 8.0.425, the SDK in the newest mcr.microsoft.com/dotnet/sdk:8.0 image, and no released 8.0 SDK carries the fixed package yet.",
+    "upstream": "https://github.com/dotnet/dotnet-docker",
+    "expires": "2026-10-26",
+    "paths": [
+      "usr/share/dotnet/sdk/8.0.425/DotnetTools/dotnet-format/dotnet-format.deps.json"
+    ]
+  },
+  {
+    "image": "ci-dotnet8",
+    "id": "CVE-2026-47304",
+    "package": "System.Security.Cryptography.Xml",
+    "installed": "8.0.3",
+    "reason": "System.Security.Cryptography.Xml 8.0.3 ships inside .NET SDK 8.0.425, the SDK in the newest mcr.microsoft.com/dotnet/sdk:8.0 image, and no released 8.0 SDK carries the fixed package yet.",
+    "upstream": "https://github.com/dotnet/dotnet-docker",
+    "expires": "2026-10-26",
+    "paths": [
+      "usr/share/dotnet/sdk/8.0.425/DotnetTools/dotnet-format/dotnet-format.deps.json"
+    ]
+  },
+  {
+    "image": "ci-dotnet8",
+    "id": "CVE-2026-50525",
+    "package": "System.Security.Cryptography.Xml",
+    "installed": "8.0.3",
+    "reason": "System.Security.Cryptography.Xml 8.0.3 ships inside .NET SDK 8.0.425, the SDK in the newest mcr.microsoft.com/dotnet/sdk:8.0 image, and no released 8.0 SDK carries the fixed package yet.",
+    "upstream": "https://github.com/dotnet/dotnet-docker",
+    "expires": "2026-10-26",
+    "paths": [
+      "usr/share/dotnet/sdk/8.0.425/DotnetTools/dotnet-format/dotnet-format.deps.json"
+    ]
+  },
+  {
+    "image": "ci-dotnet8",
+    "id": "CVE-2026-50527",
+    "package": "System.Security.Cryptography.Xml",
+    "installed": "8.0.3",
+    "reason": "System.Security.Cryptography.Xml 8.0.3 ships inside .NET SDK 8.0.425, the SDK in the newest mcr.microsoft.com/dotnet/sdk:8.0 image, and no released 8.0 SDK carries the fixed package yet.",
+    "upstream": "https://github.com/dotnet/dotnet-docker",
+    "expires": "2026-10-26",
+    "paths": [
+      "usr/share/dotnet/sdk/8.0.425/DotnetTools/dotnet-format/dotnet-format.deps.json"
+    ]
+  },
+  {
+    "image": "ci-dotnet8",
+    "id": "CVE-2026-50648",
+    "package": "System.Security.Cryptography.Xml",
+    "installed": "8.0.3",
+    "reason": "System.Security.Cryptography.Xml 8.0.3 ships inside .NET SDK 8.0.425, the SDK in the newest mcr.microsoft.com/dotnet/sdk:8.0 image, and no released 8.0 SDK carries the fixed package yet.",
+    "upstream": "https://github.com/dotnet/dotnet-docker",
+    "expires": "2026-10-26",
+    "paths": [
+      "usr/share/dotnet/sdk/8.0.425/DotnetTools/dotnet-format/dotnet-format.deps.json"
+    ]
+  },
+  {
+    "image": "ci-python313",
+    "id": "CVE-2025-47273",
+    "package": "setuptools",
+    "installed": "70.3.0",
+    "reason": "setuptools is vendored inside pip 26.2.1 (pip/_vendor) in the upstream python:3.13 image, and pip's vendor.txt still pins setuptools==70.3.0, on main as well as in the latest release.",
+    "upstream": "https://github.com/pypa/pip/blob/main/src/pip/_vendor/vendor.txt",
+    "expires": "2026-10-26",
+    "purls": [
+      "pkg:pypi/setuptools@70.3.0"
+    ]
+  },
+  {
+    "image": "ci-python313",
+    "id": "GHSA-6v7p-g79w-8964",
+    "package": "msgpack",
+    "installed": "1.1.2",
+    "reason": "msgpack is vendored inside pip 26.2.1 (pip/_vendor) in the upstream python:3.13 image, and no released pip vendors the fixed msgpack 1.2.1 yet; the bump exists only on pip main.",
+    "upstream": "https://github.com/pypa/pip/blob/main/news/msgpack.vendor.rst",
+    "expires": "2026-10-26",
+    "purls": [
+      "pkg:pypi/msgpack@1.1.2"
+    ]
+  },
+  {
+    "image": "ci-python314",
+    "id": "CVE-2025-47273",
+    "package": "setuptools",
+    "installed": "70.3.0",
+    "reason": "setuptools is vendored inside pip 26.2.1 (pip/_vendor) in the upstream python:3.14 image, and pip's vendor.txt still pins setuptools==70.3.0, on main as well as in the latest release.",
+    "upstream": "https://github.com/pypa/pip/blob/main/src/pip/_vendor/vendor.txt",
+    "expires": "2026-10-26",
+    "purls": [
+      "pkg:pypi/setuptools@70.3.0"
+    ]
+  },
+  {
+    "image": "ci-python314",
+    "id": "GHSA-6v7p-g79w-8964",
+    "package": "msgpack",
+    "installed": "1.1.2",
+    "reason": "msgpack is vendored inside pip 26.2.1 (pip/_vendor) in the upstream python:3.14 image, and no released pip vendors the fixed msgpack 1.2.1 yet; the bump exists only on pip main.",
+    "upstream": "https://github.com/pypa/pip/blob/main/news/msgpack.vendor.rst",
+    "expires": "2026-10-26",
+    "purls": [
+      "pkg:pypi/msgpack@1.1.2"
+    ]
+  },
+  {
+    "image": "ci-security",
+    "id": "CVE-2025-47913",
+    "package": "golang.org/x/crypto",
+    "installed": "v0.35.0",
+    "reason": "Compiled into gitleaks 8.30.1, the latest upstream release and pinned as such in ci-security, so only a new release built with a fixed golang.org/x/crypto can carry the fix.",
+    "upstream": "https://github.com/gitleaks/gitleaks/releases",
+    "expires": "2026-10-26",
+    "paths": [
+      "usr/local/bin/gitleaks"
+    ]
+  },
+  {
+    "image": "ci-security",
+    "id": "CVE-2025-61726",
+    "package": "stdlib",
+    "installed": "v1.24.11",
+    "reason": "Compiled into gitleaks 8.30.1, the latest upstream release and pinned as such in ci-security, so only a new release built with a fixed stdlib can carry the fix.",
+    "upstream": "https://github.com/gitleaks/gitleaks/releases",
+    "expires": "2026-10-26",
+    "paths": [
+      "usr/local/bin/gitleaks"
+    ]
+  },
+  {
+    "image": "ci-security",
+    "id": "CVE-2025-68121",
+    "package": "stdlib",
+    "installed": "v1.24.11",
+    "reason": "Compiled into gitleaks 8.30.1, the latest upstream release and pinned as such in ci-security, so only a new release built with a fixed stdlib can carry the fix.",
+    "upstream": "https://github.com/gitleaks/gitleaks/releases",
+    "expires": "2026-10-26",
+    "paths": [
+      "usr/local/bin/gitleaks"
+    ]
+  },
+  {
+    "image": "ci-security",
+    "id": "CVE-2026-25679",
+    "package": "stdlib",
+    "installed": "v1.24.11",
+    "reason": "Compiled into gitleaks 8.30.1, the latest upstream release and pinned as such in ci-security, so only a new release built with a fixed stdlib can carry the fix.",
+    "upstream": "https://github.com/gitleaks/gitleaks/releases",
+    "expires": "2026-10-26",
+    "paths": [
+      "usr/local/bin/gitleaks"
+    ]
+  },
+  {
+    "image": "ci-security",
+    "id": "CVE-2026-27145",
+    "package": "stdlib",
+    "installed": "v1.24.11 (gitleaks), v1.26.3 (grype), v1.26.3 (syft)",
+    "reason": "Compiled into gitleaks 8.30.1, grype 0.119.0, syft 1.52.0, each the latest upstream release and pinned as such in ci-security, so only new releases built with a fixed stdlib can carry the fix.",
+    "upstream": "https://github.com/gitleaks/gitleaks/releases",
+    "expires": "2026-10-26",
+    "paths": [
+      "usr/local/bin/gitleaks",
+      "usr/local/bin/grype",
+      "usr/local/bin/syft"
+    ]
+  },
+  {
+    "image": "ci-security",
+    "id": "CVE-2026-32280",
+    "package": "stdlib",
+    "installed": "v1.24.11",
+    "reason": "Compiled into gitleaks 8.30.1, the latest upstream release and pinned as such in ci-security, so only a new release built with a fixed stdlib can carry the fix.",
+    "upstream": "https://github.com/gitleaks/gitleaks/releases",
+    "expires": "2026-10-26",
+    "paths": [
+      "usr/local/bin/gitleaks"
+    ]
+  },
+  {
+    "image": "ci-security",
+    "id": "CVE-2026-32281",
+    "package": "stdlib",
+    "installed": "v1.24.11",
+    "reason": "Compiled into gitleaks 8.30.1, the latest upstream release and pinned as such in ci-security, so only a new release built with a fixed stdlib can carry the fix.",
+    "upstream": "https://github.com/gitleaks/gitleaks/releases",
+    "expires": "2026-10-26",
+    "paths": [
+      "usr/local/bin/gitleaks"
+    ]
+  },
+  {
+    "image": "ci-security",
+    "id": "CVE-2026-32283",
+    "package": "stdlib",
+    "installed": "v1.24.11",
+    "reason": "Compiled into gitleaks 8.30.1, the latest upstream release and pinned as such in ci-security, so only a new release built with a fixed stdlib can carry the fix.",
+    "upstream": "https://github.com/gitleaks/gitleaks/releases",
+    "expires": "2026-10-26",
+    "paths": [
+      "usr/local/bin/gitleaks"
+    ]
+  },
+  {
+    "image": "ci-security",
+    "id": "CVE-2026-33811",
+    "package": "stdlib",
+    "installed": "v1.24.11",
+    "reason": "Compiled into gitleaks 8.30.1, the latest upstream release and pinned as such in ci-security, so only a new release built with a fixed stdlib can carry the fix.",
+    "upstream": "https://github.com/gitleaks/gitleaks/releases",
+    "expires": "2026-10-26",
+    "paths": [
+      "usr/local/bin/gitleaks"
+    ]
+  },
+  {
+    "image": "ci-security",
+    "id": "CVE-2026-33814",
+    "package": "stdlib",
+    "installed": "v1.24.11",
+    "reason": "Compiled into gitleaks 8.30.1, the latest upstream release and pinned as such in ci-security, so only a new release built with a fixed stdlib can carry the fix.",
+    "upstream": "https://github.com/gitleaks/gitleaks/releases",
+    "expires": "2026-10-26",
+    "paths": [
+      "usr/local/bin/gitleaks"
+    ]
+  },
+  {
+    "image": "ci-security",
+    "id": "CVE-2026-33818",
+    "package": "stdlib",
+    "installed": "v1.26.4 (cosign), v1.24.11 (gitleaks), v1.26.3 (grype), v1.26.3 (syft)",
+    "reason": "Compiled into cosign 3.1.3, gitleaks 8.30.1, grype 0.119.0, syft 1.52.0, each the latest upstream release and pinned as such in ci-security, so only new releases built with a fixed stdlib can carry the fix.",
+    "upstream": "https://github.com/sigstore/cosign/releases",
+    "expires": "2026-10-26",
+    "paths": [
+      "usr/local/bin/cosign",
+      "usr/local/bin/gitleaks",
+      "usr/local/bin/grype",
+      "usr/local/bin/syft"
+    ]
+  },
+  {
+    "image": "ci-security",
+    "id": "CVE-2026-39820",
+    "package": "stdlib",
+    "installed": "v1.24.11",
+    "reason": "Compiled into gitleaks 8.30.1, the latest upstream release and pinned as such in ci-security, so only a new release built with a fixed stdlib can carry the fix.",
+    "upstream": "https://github.com/gitleaks/gitleaks/releases",
+    "expires": "2026-10-26",
+    "paths": [
+      "usr/local/bin/gitleaks"
+    ]
+  },
+  {
+    "image": "ci-security",
+    "id": "CVE-2026-39821",
+    "package": "stdlib",
+    "installed": "v1.26.4 (cosign), v1.24.11 (gitleaks), v1.26.3 (grype), v1.26.3 (syft)",
+    "reason": "Compiled into cosign 3.1.3, gitleaks 8.30.1, grype 0.119.0, syft 1.52.0, each the latest upstream release and pinned as such in ci-security, so only new releases built with a fixed stdlib can carry the fix.",
+    "upstream": "https://github.com/sigstore/cosign/releases",
+    "expires": "2026-10-26",
+    "paths": [
+      "usr/local/bin/cosign",
+      "usr/local/bin/gitleaks",
+      "usr/local/bin/grype",
+      "usr/local/bin/syft"
+    ]
+  },
+  {
+    "image": "ci-security",
+    "id": "CVE-2026-39822",
+    "package": "stdlib",
+    "installed": "v1.26.4 (cosign), v1.24.11 (gitleaks), v1.26.3 (grype), v1.26.3 (syft)",
+    "reason": "Compiled into cosign 3.1.3, gitleaks 8.30.1, grype 0.119.0, syft 1.52.0, each the latest upstream release and pinned as such in ci-security, so only new releases built with a fixed stdlib can carry the fix.",
+    "upstream": "https://github.com/sigstore/cosign/releases",
+    "expires": "2026-10-26",
+    "paths": [
+      "usr/local/bin/cosign",
+      "usr/local/bin/gitleaks",
+      "usr/local/bin/grype",
+      "usr/local/bin/syft"
+    ]
+  },
+  {
+    "image": "ci-security",
+    "id": "CVE-2026-39828",
+    "package": "golang.org/x/crypto",
+    "installed": "v0.35.0",
+    "reason": "Compiled into gitleaks 8.30.1, the latest upstream release and pinned as such in ci-security, so only a new release built with a fixed golang.org/x/crypto can carry the fix.",
+    "upstream": "https://github.com/gitleaks/gitleaks/releases",
+    "expires": "2026-10-26",
+    "paths": [
+      "usr/local/bin/gitleaks"
+    ]
+  },
+  {
+    "image": "ci-security",
+    "id": "CVE-2026-39829",
+    "package": "golang.org/x/crypto",
+    "installed": "v0.35.0",
+    "reason": "Compiled into gitleaks 8.30.1, the latest upstream release and pinned as such in ci-security, so only a new release built with a fixed golang.org/x/crypto can carry the fix.",
+    "upstream": "https://github.com/gitleaks/gitleaks/releases",
+    "expires": "2026-10-26",
+    "paths": [
+      "usr/local/bin/gitleaks"
+    ]
+  },
+  {
+    "image": "ci-security",
+    "id": "CVE-2026-39830",
+    "package": "golang.org/x/crypto",
+    "installed": "v0.35.0",
+    "reason": "Compiled into gitleaks 8.30.1, the latest upstream release and pinned as such in ci-security, so only a new release built with a fixed golang.org/x/crypto can carry the fix.",
+    "upstream": "https://github.com/gitleaks/gitleaks/releases",
+    "expires": "2026-10-26",
+    "paths": [
+      "usr/local/bin/gitleaks"
+    ]
+  },
+  {
+    "image": "ci-security",
+    "id": "CVE-2026-39831",
+    "package": "golang.org/x/crypto",
+    "installed": "v0.35.0",
+    "reason": "Compiled into gitleaks 8.30.1, the latest upstream release and pinned as such in ci-security, so only a new release built with a fixed golang.org/x/crypto can carry the fix.",
+    "upstream": "https://github.com/gitleaks/gitleaks/releases",
+    "expires": "2026-10-26",
+    "paths": [
+      "usr/local/bin/gitleaks"
+    ]
+  },
+  {
+    "image": "ci-security",
+    "id": "CVE-2026-39832",
+    "package": "golang.org/x/crypto",
+    "installed": "v0.35.0",
+    "reason": "Compiled into gitleaks 8.30.1, the latest upstream release and pinned as such in ci-security, so only a new release built with a fixed golang.org/x/crypto can carry the fix.",
+    "upstream": "https://github.com/gitleaks/gitleaks/releases",
+    "expires": "2026-10-26",
+    "paths": [
+      "usr/local/bin/gitleaks"
+    ]
+  },
+  {
+    "image": "ci-security",
+    "id": "CVE-2026-39835",
+    "package": "golang.org/x/crypto",
+    "installed": "v0.35.0",
+    "reason": "Compiled into gitleaks 8.30.1, the latest upstream release and pinned as such in ci-security, so only a new release built with a fixed golang.org/x/crypto can carry the fix.",
+    "upstream": "https://github.com/gitleaks/gitleaks/releases",
+    "expires": "2026-10-26",
+    "paths": [
+      "usr/local/bin/gitleaks"
+    ]
+  },
+  {
+    "image": "ci-security",
+    "id": "CVE-2026-39836",
+    "package": "stdlib",
+    "installed": "v1.24.11",
+    "reason": "Compiled into gitleaks 8.30.1, the latest upstream release and pinned as such in ci-security, so only a new release built with a fixed stdlib can carry the fix.",
+    "upstream": "https://github.com/gitleaks/gitleaks/releases",
+    "expires": "2026-10-26",
+    "paths": [
+      "usr/local/bin/gitleaks"
+    ]
+  },
+  {
+    "image": "ci-security",
+    "id": "CVE-2026-42499",
+    "package": "stdlib",
+    "installed": "v1.24.11",
+    "reason": "Compiled into gitleaks 8.30.1, the latest upstream release and pinned as such in ci-security, so only a new release built with a fixed stdlib can carry the fix.",
+    "upstream": "https://github.com/gitleaks/gitleaks/releases",
+    "expires": "2026-10-26",
+    "paths": [
+      "usr/local/bin/gitleaks"
+    ]
+  },
+  {
+    "image": "ci-security",
+    "id": "CVE-2026-42504",
+    "package": "stdlib",
+    "installed": "v1.24.11 (gitleaks), v1.26.3 (grype), v1.26.3 (syft)",
+    "reason": "Compiled into gitleaks 8.30.1, grype 0.119.0, syft 1.52.0, each the latest upstream release and pinned as such in ci-security, so only new releases built with a fixed stdlib can carry the fix.",
+    "upstream": "https://github.com/gitleaks/gitleaks/releases",
+    "expires": "2026-10-26",
+    "paths": [
+      "usr/local/bin/gitleaks",
+      "usr/local/bin/grype",
+      "usr/local/bin/syft"
+    ]
+  },
+  {
+    "image": "ci-security",
+    "id": "CVE-2026-42508",
+    "package": "golang.org/x/crypto",
+    "installed": "v0.35.0",
+    "reason": "Compiled into gitleaks 8.30.1, the latest upstream release and pinned as such in ci-security, so only a new release built with a fixed golang.org/x/crypto can carry the fix.",
+    "upstream": "https://github.com/gitleaks/gitleaks/releases",
+    "expires": "2026-10-26",
+    "paths": [
+      "usr/local/bin/gitleaks"
+    ]
+  },
+  {
+    "image": "ci-security",
+    "id": "CVE-2026-46595",
+    "package": "golang.org/x/crypto",
+    "installed": "v0.35.0",
+    "reason": "Compiled into gitleaks 8.30.1, the latest upstream release and pinned as such in ci-security, so only a new release built with a fixed golang.org/x/crypto can carry the fix.",
+    "upstream": "https://github.com/gitleaks/gitleaks/releases",
+    "expires": "2026-10-26",
+    "paths": [
+      "usr/local/bin/gitleaks"
+    ]
+  },
+  {
+    "image": "ci-security",
+    "id": "CVE-2026-46597",
+    "package": "golang.org/x/crypto",
+    "installed": "v0.35.0",
+    "reason": "Compiled into gitleaks 8.30.1, the latest upstream release and pinned as such in ci-security, so only a new release built with a fixed golang.org/x/crypto can carry the fix.",
+    "upstream": "https://github.com/gitleaks/gitleaks/releases",
+    "expires": "2026-10-26",
+    "paths": [
+      "usr/local/bin/gitleaks"
+    ]
+  },
+  {
+    "image": "ci-security",
+    "id": "CVE-2026-46600",
+    "package": "stdlib",
+    "installed": "v1.26.4 (cosign), v1.26.3 (grype), v1.26.3 (syft)",
+    "reason": "Compiled into cosign 3.1.3, grype 0.119.0, syft 1.52.0, each the latest upstream release and pinned as such in ci-security, so only new releases built with a fixed stdlib can carry the fix.",
+    "upstream": "https://github.com/sigstore/cosign/releases",
+    "expires": "2026-10-26",
+    "paths": [
+      "usr/local/bin/cosign",
+      "usr/local/bin/grype",
+      "usr/local/bin/syft"
+    ]
+  },
+  {
+    "image": "ci-security",
+    "id": "CVE-2026-56852",
+    "package": "golang.org/x/text",
+    "installed": "v0.38.0 (cosign), v0.22.0 (gitleaks)",
+    "reason": "Compiled into cosign 3.1.3, gitleaks 8.30.1, each the latest upstream release and pinned as such in ci-security, so only new releases built with a fixed golang.org/x/text can carry the fix.",
+    "upstream": "https://github.com/sigstore/cosign/releases",
+    "expires": "2026-10-26",
+    "paths": [
+      "usr/local/bin/cosign",
+      "usr/local/bin/gitleaks"
+    ]
+  },
+  {
+    "image": "ci-security",
+    "id": "CVE-2026-56853",
+    "package": "stdlib",
+    "installed": "v1.26.4 (cosign), v1.24.11 (gitleaks), v1.26.3 (grype), v1.26.3 (syft)",
+    "reason": "Compiled into cosign 3.1.3, gitleaks 8.30.1, grype 0.119.0, syft 1.52.0, each the latest upstream release and pinned as such in ci-security, so only new releases built with a fixed stdlib can carry the fix.",
+    "upstream": "https://github.com/sigstore/cosign/releases",
+    "expires": "2026-10-26",
+    "paths": [
+      "usr/local/bin/cosign",
+      "usr/local/bin/gitleaks",
+      "usr/local/bin/grype",
+      "usr/local/bin/syft"
+    ]
+  },
+  {
+    "image": "ci-security",
+    "id": "CVE-2026-56854",
+    "package": "golang.org/x/crypto",
+    "installed": "v0.53.0 (cosign), v0.35.0 (gitleaks)",
+    "reason": "Compiled into cosign 3.1.3, gitleaks 8.30.1, each the latest upstream release and pinned as such in ci-security, so only new releases built with a fixed golang.org/x/crypto can carry the fix.",
+    "upstream": "https://github.com/sigstore/cosign/releases",
+    "expires": "2026-10-26",
+    "paths": [
+      "usr/local/bin/cosign",
+      "usr/local/bin/gitleaks"
+    ]
+  },
+  {
+    "image": "ci-security",
+    "id": "CVE-2026-56858",
+    "package": "stdlib",
+    "installed": "v1.26.4 (cosign), v1.24.11 (gitleaks), v1.26.3 (grype), v1.26.3 (syft)",
+    "reason": "Compiled into cosign 3.1.3, gitleaks 8.30.1, grype 0.119.0, syft 1.52.0, each the latest upstream release and pinned as such in ci-security, so only new releases built with a fixed stdlib can carry the fix.",
+    "upstream": "https://github.com/sigstore/cosign/releases",
+    "expires": "2026-10-26",
+    "paths": [
+      "usr/local/bin/cosign",
+      "usr/local/bin/gitleaks",
+      "usr/local/bin/grype",
+      "usr/local/bin/syft"
+    ]
+  },
+  {
+    "image": "ci-security",
+    "id": "CVE-2026-56859",
+    "package": "stdlib",
+    "installed": "v1.26.4 (cosign), v1.24.11 (gitleaks), v1.26.3 (grype), v1.26.3 (syft)",
+    "reason": "Compiled into cosign 3.1.3, gitleaks 8.30.1, grype 0.119.0, syft 1.52.0, each the latest upstream release and pinned as such in ci-security, so only new releases built with a fixed stdlib can carry the fix.",
+    "upstream": "https://github.com/sigstore/cosign/releases",
+    "expires": "2026-10-26",
+    "paths": [
+      "usr/local/bin/cosign",
+      "usr/local/bin/gitleaks",
+      "usr/local/bin/grype",
+      "usr/local/bin/syft"
+    ]
+  },
+  {
+    "image": "ci-security",
+    "id": "CVE-2026-56860",
+    "package": "stdlib",
+    "installed": "v1.26.4 (cosign), v1.24.11 (gitleaks), v1.26.3 (grype), v1.26.3 (syft)",
+    "reason": "Compiled into cosign 3.1.3, gitleaks 8.30.1, grype 0.119.0, syft 1.52.0, each the latest upstream release and pinned as such in ci-security, so only new releases built with a fixed stdlib can carry the fix.",
+    "upstream": "https://github.com/sigstore/cosign/releases",
+    "expires": "2026-10-26",
+    "paths": [
+      "usr/local/bin/cosign",
+      "usr/local/bin/gitleaks",
+      "usr/local/bin/grype",
+      "usr/local/bin/syft"
+    ]
+  },
+  {
+    "image": "ci-security",
+    "id": "CVE-2026-56862",
+    "package": "stdlib",
+    "installed": "v1.26.4 (cosign), v1.24.11 (gitleaks), v1.26.3 (grype), v1.26.3 (syft)",
+    "reason": "Compiled into cosign 3.1.3, gitleaks 8.30.1, grype 0.119.0, syft 1.52.0, each the latest upstream release and pinned as such in ci-security, so only new releases built with a fixed stdlib can carry the fix.",
+    "upstream": "https://github.com/sigstore/cosign/releases",
+    "expires": "2026-10-26",
+    "paths": [
+      "usr/local/bin/cosign",
+      "usr/local/bin/gitleaks",
+      "usr/local/bin/grype",
+      "usr/local/bin/syft"
+    ]
+  },
+  {
+    "image": "ci-security",
+    "id": "CVE-2026-56864",
+    "package": "golang.org/x/mod",
+    "installed": "v0.37.0",
+    "reason": "Compiled into cosign 3.1.3, the latest upstream release and pinned as such in ci-security, so only a new release built with a fixed golang.org/x/mod can carry the fix.",
+    "upstream": "https://github.com/sigstore/cosign/releases",
+    "expires": "2026-10-26",
+    "paths": [
+      "usr/local/bin/cosign"
+    ]
+  },
+  {
+    "image": "ci-security",
+    "id": "CVE-2026-56865",
+    "package": "golang.org/x/mod",
+    "installed": "v0.37.0",
+    "reason": "Compiled into cosign 3.1.3, the latest upstream release and pinned as such in ci-security, so only a new release built with a fixed golang.org/x/mod can carry the fix.",
+    "upstream": "https://github.com/sigstore/cosign/releases",
+    "expires": "2026-10-26",
+    "paths": [
+      "usr/local/bin/cosign"
+    ]
+  },
+  {
+    "image": "ci-security",
+    "id": "CVE-2026-84304",
+    "package": "google.golang.org/grpc",
+    "installed": "v1.82.0 (cosign), v1.82.1 (trivy)",
+    "reason": "Compiled into cosign 3.1.3, trivy 0.74.0, each the latest upstream release and pinned as such in ci-security, so only new releases built with a fixed google.golang.org/grpc can carry the fix.",
+    "upstream": "https://github.com/sigstore/cosign/releases",
+    "expires": "2026-10-26",
+    "paths": [
+      "usr/local/bin/cosign",
+      "usr/local/bin/trivy"
+    ]
+  },
+  {
+    "image": "ci-security",
+    "id": "CVE-2026-84445",
+    "package": "google.golang.org/grpc",
+    "installed": "v1.82.0 (cosign), v1.82.1 (trivy)",
+    "reason": "Compiled into cosign 3.1.3, trivy 0.74.0, each the latest upstream release and pinned as such in ci-security, so only new releases built with a fixed google.golang.org/grpc can carry the fix.",
+    "upstream": "https://github.com/sigstore/cosign/releases",
+    "expires": "2026-10-26",
+    "paths": [
+      "usr/local/bin/cosign",
+      "usr/local/bin/trivy"
+    ]
+  },
+  {
+    "image": "ci-security",
+    "id": "GHSA-hrxh-6v49-42gf",
+    "package": "google.golang.org/grpc",
+    "installed": "v1.82.0",
+    "reason": "Compiled into cosign 3.1.3, the latest upstream release and pinned as such in ci-security, so only a new release built with a fixed google.golang.org/grpc can carry the fix.",
+    "upstream": "https://github.com/sigstore/cosign/releases",
+    "expires": "2026-10-26",
+    "paths": [
+      "usr/local/bin/cosign"
+    ]
+  }
+]

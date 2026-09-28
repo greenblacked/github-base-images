@@ -22,7 +22,13 @@ ENV DEBIAN_FRONTEND=noninteractive \
 # it does not use -- these SDKs are large.
 #
 # python3 is not optional here: the gcloud CLI is a Python application and the
-# plain linux tarball expects a system interpreter. gnupg is needed to convert
+# plain linux tarball expects a system interpreter. The x86_64 tarball also
+# ships its own Python under platform/bundledpythonunix; CLOUDSDK_PYTHON points
+# gcloud at the system one, so that copy is never used and is deleted below.
+# Kept, it carried its own cryptography 46.0.7 (CVE-2026-69247, CVE-2026-69249,
+# GHSA-537c-gmf6-5ccf) into the image for the vulnerability gate to fail on,
+# for no benefit. The arm64 tarball has no bundled Python at all, so both
+# architectures now run gcloud the same way. gnupg is needed to convert
 # Microsoft's ASCII-armoured signing key into a keyring.
 #
 # DL3008: apt pins would go stale and break the weekly rebuild, which is the
@@ -105,7 +111,8 @@ RUN case "${TARGETARCH}" in \
         --path-update=false \
         --command-completion=false \
     && rm -rf /opt/google-cloud-sdk/.install/.backup \
-    && rm -rf /opt/google-cloud-sdk/platform/gsutil/third_party/urllib3/dummyserver
+    && rm -rf /opt/google-cloud-sdk/platform/gsutil/third_party/urllib3/dummyserver \
+    && rm -rf /opt/google-cloud-sdk/platform/bundledpythonunix
 
 # kubectl is shared with ci-tools and pinned to the same version and checksums,
 # so a cluster deploy behaves identically whichever of the two images runs it.
