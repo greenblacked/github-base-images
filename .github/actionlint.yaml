@@ -1,0 +1,16 @@
+# actionlint configuration. Kept to one narrow exception.
+#
+# `vulnerability-alerts` is the GITHUB_TOKEN scope that reads Dependabot
+# alerts (GitHub's token-permission table: `security-events` covers code
+# scanning only). actionlint 1.7.10, the version scripts/lint.sh pins, predates
+# it and reports "unknown permission scope". The ignore is limited to that
+# exact message and to the two files that need the scope, so every other
+# permissions check -- including a misspelled scope anywhere else -- still
+# fails. Drop this file once the pinned actionlint knows the scope.
+paths:
+  .github/workflows/alerts-report.yml:
+    ignore:
+      - 'unknown permission scope "vulnerability-alerts"'
+  .github/workflows/build-and-push.yml:
+    ignore:
+      - 'unknown permission scope "vulnerability-alerts"'

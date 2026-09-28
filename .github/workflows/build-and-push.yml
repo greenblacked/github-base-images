@@ -27,21 +27,22 @@ on:
       - '.github/workflows/build-and-push.yml'
       - '.github/workflows/build-image.yml'
       - '.github/images.json'
+      # Only the images whose entries changed; see the plan job.
+      - '.github/vuln-exceptions.json'
       - 'scripts/check-published.sh'
       - 'scripts/osv-scan-sbom.sh'
   # PRs run the full lint -> build -> smoke test -> scan pipeline, but every
   # step that writes to the registry is skipped: PR builds use the upstream
   # base instead of the mirror, and nothing is pushed or tagged. A green PR run
   # is the pre-merge proof; publishing happens only on main.
+  #
+  # No `paths:` filter on PRs, unlike push. The `CI result` job at the bottom
+  # is the check the `main` ruleset requires, and a required check that never
+  # starts (its workflow filtered out) leaves a PR waiting forever. Instead,
+  # every PR runs lint, and `plan` selects no images when the diff touches no
+  # image and no pipeline file, so a docs-only PR costs one lint run.
   pull_request:
     branches: [main]
-    paths:
-      - 'ci-*/**'
-      - '.github/workflows/build-and-push.yml'
-      - '.github/workflows/build-image.yml'
-      - '.github/images.json'
-      - 'scripts/check-published.sh'
-      - 'scripts/osv-scan-sbom.sh'
   schedule:
     # Weekly rebuild: re-mirrors the upstream bases, picks up security updates,
     # and re-runs the vulnerability scan.
@@ -128,11 +129,41 @@ jobs:
           fi
 
           dirs=$(grep -oE '^ci-[^/]+' <<<"$changed" | sort -u) || true
+
+          # An exception change re-runs the gate of exactly the images whose
+          # entries differ, added or removed or edited, so a PR that adds or
+          # renews one shows that image's gate going green (or not), and the
+          # merge publishes it instead of leaving it for the weekly rebuild.
+          # Every other image is untouched by the change, and rebuilding all of
+          # them would make each renewal a full republish. The file not existing
+          # at the base counts as `[]`; anything that cannot be compared is a
+          # full rebuild, never a silent "nothing changed".
+          if grep -qx '\.github/vuln-exceptions\.json' <<<"$changed"; then
+            base=${range%%.*}
+            old=$(git show "$base:.github/vuln-exceptions.json" 2>/dev/null) || old='[]'
+            if ! exc_images=$(jq -rn --argjson old "$old" --slurpfile new .github/vuln-exceptions.json '
+                ($new[0] | if type == "array" then . else error("not an array") end) as $new
+                | ($old + $new | map(.image) | unique)[]
+                | . as $i
+                | select(($old | map(select(.image == $i)) | sort) != ($new | map(select(.image == $i)) | sort))'); then
+              select_all "vulnerability exceptions changed and could not be compared"
+            fi
+            dirs=$(printf '%s\n%s\n' "$dirs" "$exc_images" | sed '/^$/d' | sort -u)
+          fi
           subset=$(jq -c --arg dirs "$dirs" \
             '[.[] | select(.image as $i | $dirs | split("\n") | index($i))]' \
             .github/images.json)
 
           if [ "$(jq 'length' <<<"$subset")" -eq 0 ]; then
+            # A PR is no longer path-filtered (see `on:`), so a diff with no
+            # image in it is normal there: build nothing. On push the path
+            # filter guarantees an image or pipeline file changed, so reaching
+            # this is unexpected and rebuilds everything, as before.
+            if [ "$EVENT" = pull_request ]; then
+              echo "images=[]" >> "$GITHUB_OUTPUT"
+              echo "### Plan: no images (no image directory or pipeline file in the diff)" >> "$GITHUB_STEP_SUMMARY"
+              exit 0
+            fi
             select_all "no image directory in the diff (defensive fallback)"
           fi
 
@@ -391,7 +422,9 @@ jobs:
     needs: [plan, lint, mirror]
     # `mirror` is skipped on PRs; run when plan and lint passed and mirror
     # either passed or was skipped, but never after a failure or cancellation.
-    if: ${{ !cancelled() && needs.plan.result == 'success' && needs.lint.result == 'success' && (needs.mirror.result == 'success' || needs.mirror.result == 'skipped') }}
+    # An empty plan (a PR touching no image) skips this job rather than
+    # handing the matrix an empty list, which GitHub rejects as an error.
+    if: ${{ !cancelled() && needs.plan.result == 'success' && needs.lint.result == 'success' && (needs.mirror.result == 'success' || needs.mirror.result == 'skipped') && needs.plan.outputs.images != '[]' }}
     strategy:
       fail-fast: false
       matrix:
@@ -490,3 +523,94 @@ jobs:
           path: digests.json
           if-no-files-found: error
           retention-days: 90
+
+  # The security alerts report (alerts-report.yml), run once this run's
+  # images have been built, scanned and published, so it reads the SARIF they
+  # just uploaded. It does read that: upload-sarif waits for GitHub to finish
+  # processing an upload before the step completes (`wait-for-processing`
+  # defaults to true), and `image` completes only after every job inside it,
+  # the OSV job included.
+  #
+  # `!cancelled()` for the same reason as `digests`: a failed image is exactly
+  # when the report is worth having. And like `digests`, not when `image`
+  # never ran (lint or plan failed): that run already says what broke, and a
+  # report of state it did not touch would only add a second red job. Publish runs only -- a PR's uploads are
+  # not on refs/heads/main, which is what the report reads.
+  #
+  # Neither alerts-report.yml nor scripts/alerts-report.sh is in the push
+  # `paths:` filter or in the plan's full-rebuild list, on purpose. They do
+  # not change any image, so a change to them must not rebuild and republish
+  # every image, and adding them to the push filter alone would do exactly
+  # that: on push, a diff with no image directory in it falls through to the
+  # plan's full-rebuild fallback. (PRs are not path-filtered and build nothing
+  # for such a diff; lint still covers the change.) alerts-report.yml has its own workflow_dispatch to
+  # run a change right away, and its own weekly schedule.
+  alerts:
+    needs: [image, digests]
+    if: ${{ !cancelled() && needs.image.result != 'skipped' && github.event_name != 'pull_request' && github.ref == 'refs/heads/main' }}
+    permissions:
+      contents: read
+      security-events: read
+      # Dependabot alerts. Called-workflow permissions are the intersection
+      # of this grant and the called job's, so both must name it.
+      vulnerability-alerts: read
+    uses: ./.github/workflows/alerts-report.yml
+
+  # The one check the `main` ruleset requires from this workflow. Per-image job
+  # names depend on which images a PR touches, so none of them can be a
+  # required check: an image the PR does not touch never reports, and the PR
+  # would wait on it forever. This job always runs and has a fixed name.
+  #
+  # It passes only when nothing that ran failed or was cancelled. `skipped` is
+  # accepted exactly where a skip is legitimate -- `mirror` off main, `image`
+  # when the plan selected nothing -- and nowhere else: an `image` skipped
+  # because plan or lint failed shows up as that job's failure. `digests` and
+  # `alerts` are included so a publish run's result covers them too; both are
+  # skipped on PRs by their own conditions.
+  ci-result:
+    name: CI result
+    needs: [plan, lint, mirror, image, digests, alerts]
+    if: ${{ always() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions: {}
+    steps:
+      - name: Check every job's result
+        env:
+          PLAN: ${{ needs.plan.result }}
+          LINT: ${{ needs.lint.result }}
+          MIRROR: ${{ needs.mirror.result }}
+          IMAGE: ${{ needs.image.result }}
+          DIGESTS: ${{ needs.digests.result }}
+          ALERTS: ${{ needs.alerts.result }}
+          PLANNED: ${{ needs.plan.outputs.images }}
+        run: |
+          bad=0
+          check() {
+            # $1 job, $2 result, $3 whether `skipped` is acceptable here
+            case "$2" in
+              success) echo "$1: success" ;;
+              skipped)
+                if [ "$3" = yes ]; then
+                  echo "$1: skipped (expected)"
+                else
+                  echo "::error::$1 was skipped, which it should not be on this run"
+                  bad=1
+                fi ;;
+              *) echo "::error::$1 finished as '$2'"; bad=1 ;;
+            esac
+          }
+          check plan "$PLAN" no
+          check lint "$LINT" no
+          check mirror "$MIRROR" yes
+          if [ "$PLANNED" = '[]' ]; then
+            check image "$IMAGE" yes
+          else
+            check image "$IMAGE" no
+          fi
+          check digests "$DIGESTS" yes
+          check alerts "$ALERTS" yes
+          if [ "$bad" -ne 0 ]; then
+            exit 1
+          fi
+          echo "every job that ran passed"

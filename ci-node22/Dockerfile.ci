@@ -36,6 +36,16 @@ RUN apt-get update \
         zstd \
     && rm -rf /var/lib/apt/lists/*
 
+# npm is replaced rather than taken from the base image. The npm bundled with
+# node:22 carries fixable HIGH/CRITICAL advisories in its own dependencies
+# (brace-expansion, ip-address, tar and others), which the vulnerability gate
+# blocks (docs/adr/0006). 12.1.0 bundles fixed versions of all of them and
+# supports Node ^22.22.2 || ^24.15.0. Bump it when a newer npm ships further
+# fixes; test.sh asserts the major version.
+ARG NPM_VERSION=12.1.0
+RUN npm install --global "npm@${NPM_VERSION}" \
+    && rm -rf /root/.npm
+
 # Playwright's *system libraries* only -- no browser binaries.
 #
 # Browser binaries are version-locked to the playwright npm package, so baking
