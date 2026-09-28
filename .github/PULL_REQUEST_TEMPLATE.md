@@ -22,7 +22,7 @@
       one silently goes missing
 - [ ] Nothing project-specific (dependencies, source, credentials) is baked in
 - [ ] For a new image: executable `test.sh`, an `images.json` entry, and a Dependabot entry —
-      see [Adding another image](../README.md#adding-another-image)
+      see [Adding another image](../CONTRIBUTING.md#adding-another-image)
 
 ## Verification
 

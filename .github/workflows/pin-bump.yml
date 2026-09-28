@@ -1,0 +1,155 @@
+# Weekly: bump every hand-pinned tool that has fallen behind its vendor, one
+# pull request per tool, and let the safe ones merge themselves once the full
+# CI is green (docs/adr/0007-automatic-updates.md).
+#
+# pin-drift.yml reports drift; this acts on it. The work is in two scripts,
+# both runnable locally and tested offline by scripts/lint.sh:
+#   scripts/bump-pins.sh      rewrites a version and its vendor checksums
+#   scripts/pin-bump-prs.sh   branch, commit, PR, CI dispatch, auto-merge
+#
+# Nothing here merges anything directly. An `auto` bump (vendor checksum or
+# registry integrity, not a major version, past the seven-day cooldown) gets
+# GitHub auto-merge, which waits for every check the `main` ruleset requires.
+# A `review` bump gets the `needs-review` label and waits for a human.
+#
+# The token is the workflow's own GITHUB_TOKEN; no PAT, no app. Its one catch:
+# a push or PR it creates triggers no workflow, so the required checks would
+# never run. The script therefore dispatches Build and Push and Security on
+# each bump branch -- workflow_dispatch is the exception to that rule -- and
+# the check runs attach to the branch head, which is what the ruleset reads.
+name: Pin bump
+
+on:
+  schedule:
+    # Mondays 08:53 UTC: after the rebuild (04:17), security.yml (05:41) and
+    # pin-drift (07:41), so the drift issue and these PRs describe the same
+    # state, and clear of Tuesday's published-image audit and alerts report.
+    #
+    # GitHub disables scheduled workflows after 60 days without repository
+    # activity, silently. If the last run here is old, trigger it manually.
+    - cron: '53 8 * * 1'
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: >-
+          Print the pushes, PR edits and dispatches instead of making them.
+          A run on any branch but main is always a dry run, with a read-only token
+        type: boolean
+        default: false
+
+# One run at a time: two runs racing on the same pin-bump/* branch would each
+# force-push over the other. The push is also leased to the SHA the run saw.
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
+
+permissions: {}
+
+jobs:
+  bump:
+    name: Open pin bump pull requests
+    # From main only, dry run or not. This job's token can push branches,
+    # open PRs and dispatch workflows, and a branch's copy of the scripts has
+    # not been reviewed: DRY_RUN is an argument those scripts are free to
+    # ignore, so it cannot be what keeps that token away from them. A dry run
+    # from another branch is the `preview` job below, whose token cannot write.
+    # A scheduled run is on the default branch, so it is always this job.
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: write       # push the pin-bump/* branches
+      pull-requests: write  # open and edit the PRs, label them, enable auto-merge
+      actions: write        # `gh workflow run` on each bump branch
+      checks: read          # whether CI ever reported on an existing bump PR
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # Full history: the script compares each bump branch against main.
+          fetch-depth: 0
+          # The script pushes through a credential helper that reads GH_TOKEN
+          # from its environment at call time, so nothing needs to be left in
+          # .git/config (zizmor: artipacked).
+          persist-credentials: false
+
+      # The same check pin-drift.yml runs. Exit 3 (drift) and 1 (a vendor
+      # unreachable) both produce a usable report; the script below reports
+      # unresolved tools as errors, after processing the rest.
+      - name: Check pins
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          rc=0
+          ./scripts/check-pins.sh --format json > drift.json || rc=$?
+          case "$rc" in
+            0|1|3) ;;
+            *) echo "::error::check-pins.sh failed with exit $rc"; exit "$rc" ;;
+          esac
+          jq . drift.json
+
+      - name: Open or refresh pull requests
+        env:
+          GH_TOKEN: ${{ github.token }}
+          # Read by bump-pins.sh for release dates on api.github.com.
+          GITHUB_TOKEN: ${{ github.token }}
+          DRIFT_FILE: drift.json
+          DRY_RUN: ${{ inputs.dry_run && '1' || '' }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: ./scripts/pin-bump-prs.sh
+
+      - name: Upload drift report
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: pin-bump-drift
+          path: drift.json
+          if-no-files-found: warn
+          retention-days: 30
+
+  # A dry run of a branch's changes to the scripts, before they reach main,
+  # whether or not dry_run was ticked: a dispatch from a branch always lands
+  # here rather than doing nothing. The token is read-only, so whatever that
+  # branch's scripts do, they can read the PRs, rules and check runs the real
+  # run reads, and write nothing: a push, PR edit or dispatch fails on
+  # permissions.
+  preview:
+    name: Preview pin bump pull requests (dry run)
+    if: github.ref != 'refs/heads/main' && github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read        # checkout, and fetch main and pin-bump/*
+      pull-requests: read   # gh pr list / pr view
+      checks: read          # check runs on existing bump branches
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Check pins
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          rc=0
+          ./scripts/check-pins.sh --format json > drift.json || rc=$?
+          case "$rc" in
+            0|1|3) ;;
+            *) echo "::error::check-pins.sh failed with exit $rc"; exit "$rc" ;;
+          esac
+          jq . drift.json
+
+      - name: Preview pull requests
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GITHUB_TOKEN: ${{ github.token }}
+          DRIFT_FILE: drift.json
+          # Set here, not from the input: this job is a dry run by definition,
+          # and the read-only token is what makes it one.
+          DRY_RUN: '1'
+          # The branch's scripts compare against main, as the real run does.
+          BASE_BRANCH: main
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: ./scripts/pin-bump-prs.sh

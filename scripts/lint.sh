@@ -27,10 +27,21 @@ set -euo pipefail
 # checksums file, and nothing else in the repository has to move with it.
 #
 # Neither is tracked by Dependabot -- they are plain shell variables, not action
-# pins -- so they drift until a human moves them, exactly like the tool pins in
-# the Dockerfiles. Unlike those, they are not in scripts/check-pins.sh either.
+# pins -- but both are in scripts/check-pins.sh, and scripts/bump-pins.sh moves
+# each version together with its checksums below. That is why every digest is a
+# named variable in `KEY=value` form next to its version, rather than inline in
+# the download call: one spelling, rewritten by one rule, the same as a
+# Dockerfile `ARG`.
 HADOLINT_VERSION=2.15.1
+HADOLINT_SHA256_LINUX_X86_64=c7187db94eeeeca956519a6af171adc31453941a1e777961f6e680f697c8c507
+HADOLINT_SHA256_LINUX_ARM64=f6198ef8090f404dbb771abfee086eb8c48ac177f30da7fd3510aca35b344b5d
+HADOLINT_SHA256_MACOS_ARM64=5c09f3213f8e40406abe048233d985eebef336d4a6a20021be47fadb6cf480a2
+HADOLINT_SHA256_MACOS_X86_64=ffe9bb18b23d5ed1eae50237aecdbb523d016e96da0bd4e7aa432040acfc3fde
 ACTIONLINT_VERSION=1.7.10
+ACTIONLINT_SHA256_LINUX_AMD64=f4c76b71db5755a713e6055cbb0857ed07e103e028bda117817660ebadb4386f
+ACTIONLINT_SHA256_LINUX_ARM64=cd3dfe5f66887ec6b987752d8d9614e59fd22f39415c5ad9f28374623f41773a
+ACTIONLINT_SHA256_DARWIN_AMD64=16782c41f2af264db80f855ee5d09164ca98fc78edf3bcd0f46eecff279682ba
+ACTIONLINT_SHA256_DARWIN_ARM64=004ca87b367b37f4d75c55ab6cf80f9b8c043adbfbd440f31c604d417939c442
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 CACHE="$ROOT/.lint-cache"
@@ -75,31 +86,36 @@ hadolint_bin=""
 case "$os-$arch" in
   Linux-x86_64)
     fetch "https://github.com/hadolint/hadolint/releases/download/v${HADOLINT_VERSION}/hadolint-Linux-x86_64" \
-      "$CACHE/hadolint" c7187db94eeeeca956519a6af171adc31453941a1e777961f6e680f697c8c507 ;;
+      "$CACHE/hadolint" "$HADOLINT_SHA256_LINUX_X86_64" ;;
   Linux-aarch64|Linux-arm64)
     fetch "https://github.com/hadolint/hadolint/releases/download/v${HADOLINT_VERSION}/hadolint-Linux-arm64" \
-      "$CACHE/hadolint" f6198ef8090f404dbb771abfee086eb8c48ac177f30da7fd3510aca35b344b5d ;;
+      "$CACHE/hadolint" "$HADOLINT_SHA256_LINUX_ARM64" ;;
   Darwin-arm64)
     fetch "https://github.com/hadolint/hadolint/releases/download/v${HADOLINT_VERSION}/hadolint-macos-arm64" \
-      "$CACHE/hadolint" 5c09f3213f8e40406abe048233d985eebef336d4a6a20021be47fadb6cf480a2 ;;
+      "$CACHE/hadolint" "$HADOLINT_SHA256_MACOS_ARM64" ;;
   Darwin-x86_64)
     fetch "https://github.com/hadolint/hadolint/releases/download/v${HADOLINT_VERSION}/hadolint-macos-x86_64" \
-      "$CACHE/hadolint" ffe9bb18b23d5ed1eae50237aecdbb523d016e96da0bd4e7aa432040acfc3fde ;;
+      "$CACHE/hadolint" "$HADOLINT_SHA256_MACOS_X86_64" ;;
   *) die "unsupported platform $os-$arch" ;;
 esac
 chmod +x "$CACHE/hadolint"; hadolint_bin="$CACHE/hadolint"
 
 # --- actionlint: pinned on all four platforms.
 case "$os-$arch" in
-  Linux-x86_64)  al_asset=linux_amd64  al_sum=f4c76b71db5755a713e6055cbb0857ed07e103e028bda117817660ebadb4386f ;;
-  Linux-aarch64|Linux-arm64) al_asset=linux_arm64 al_sum=cd3dfe5f66887ec6b987752d8d9614e59fd22f39415c5ad9f28374623f41773a ;;
-  Darwin-x86_64) al_asset=darwin_amd64 al_sum=16782c41f2af264db80f855ee5d09164ca98fc78edf3bcd0f46eecff279682ba ;;
-  Darwin-arm64)  al_asset=darwin_arm64 al_sum=004ca87b367b37f4d75c55ab6cf80f9b8c043adbfbd440f31c604d417939c442 ;;
+  Linux-x86_64)  al_asset=linux_amd64  al_sum="$ACTIONLINT_SHA256_LINUX_AMD64" ;;
+  Linux-aarch64|Linux-arm64) al_asset=linux_arm64 al_sum="$ACTIONLINT_SHA256_LINUX_ARM64" ;;
+  Darwin-x86_64) al_asset=darwin_amd64 al_sum="$ACTIONLINT_SHA256_DARWIN_AMD64" ;;
+  Darwin-arm64)  al_asset=darwin_arm64 al_sum="$ACTIONLINT_SHA256_DARWIN_ARM64" ;;
 esac
-if [ ! -x "$CACHE/actionlint" ]; then
+# Cached per version. A bare `.lint-cache/actionlint` survived a version bump:
+# the binary was only fetched when absent, so after a bump this script kept
+# running the old engine locally while announcing the new version number.
+actionlint_bin="$CACHE/actionlint-$ACTIONLINT_VERSION"
+if [ ! -x "$actionlint_bin" ]; then
   fetch "https://github.com/rhysd/actionlint/releases/download/v${ACTIONLINT_VERSION}/actionlint_${ACTIONLINT_VERSION}_${al_asset}.tar.gz" \
     "$CACHE/actionlint.tgz" "$al_sum"
   tar -xzf "$CACHE/actionlint.tgz" -C "$CACHE" actionlint
+  mv "$CACHE/actionlint" "$actionlint_bin"
   rm -f "$CACHE/actionlint.tgz"
 fi
 
@@ -117,7 +133,7 @@ note "hadolint $HADOLINT_VERSION (failure-threshold: warning)"
 # --- 3. actionlint: workflow validity, including the workflow_call structure
 # --- and shellcheck over every run: block.
 note "actionlint $ACTIONLINT_VERSION"
-"$CACHE/actionlint" || fail=1
+"$actionlint_bin" || fail=1
 
 # --- 4. images.json validation -- the same checks as the CI lint job, kept in
 # --- sync by hand: if you change one, change the other.
@@ -286,7 +302,20 @@ note "vuln-exceptions.json"
   echo "$(jq length "$exc") exception(s) checked"
 ) || fail=1
 
-# --- 6. zizmor, best-effort and non-gating -- the same posture as CI, where
+# --- 6. scripts/bump-pins.sh, tested offline against fixtures in the vendors'
+# --- own file formats. It writes the checksums an automated bump can merge
+# --- without a human reading them (docs/adr/0007), so a regression in it has
+# --- to fail here, before it writes a wrong pin, not in the bump PR after.
+# --- The same suite drives scripts/pin-bump-prs.sh against a local origin,
+# --- since what it pushes over, dispatches and auto-merges is just as unwatched.
+note "bump-pins and pin-bump-prs offline tests"
+if ./scripts/test-bump-pins.sh > "$CACHE/test-bump-pins.log" 2>&1; then
+  tail -1 "$CACHE/test-bump-pins.log"
+else
+  cat "$CACHE/test-bump-pins.log"; fail=1
+fi
+
+# --- 7. zizmor, best-effort and non-gating -- the same posture as CI, where
 # --- its findings surface through code scanning rather than a red job.
 note "zizmor (best-effort, reported not gating)"
 if command -v zizmor >/dev/null; then
