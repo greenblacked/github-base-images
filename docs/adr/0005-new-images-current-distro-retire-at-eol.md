@@ -35,13 +35,14 @@ and `ci-ruby40` were added:
 
 ## Consequences
 
-- Three version lines coexist: `bookworm-v1`, `trixie-v1` and `noble-v1`. The README's image table
-  is the source of truth for which image carries which.
-- A deprecation is announced in the README with its date ahead of time, so consumers get the
-  signal before their image stops rebuilding, not after.
+- Three version lines coexist: `bookworm-v1`, `trixie-v1` and `noble-v1`. The image table in the
+  [README](../../README.md#image-catalog) is the source of truth for which image carries which.
+- A deprecation is announced in the [README](../../README.md#image-catalog) (detail in
+  [docs/images.md](../images.md#deprecated-ci-dotnet8-and-ci-dotnet9)) with its date ahead of
+  time, so consumers get the signal before their image stops rebuilding, not after.
 - A retired image's package stays pullable until the owner deletes it. It no longer receives
-  rebuilds or re-scans, which is exactly the risk the README's "Tags and rebuilds" section
-  describes.
+  rebuilds or re-scans, which is exactly the risk the "Tags and rebuilds" section of
+  [docs/pipeline.md](../pipeline.md#tags-and-rebuilds) describes.
 - The specific examples in [0001](0001-mirror-upstream-bases.md) (only `ci-dotnet9` named as
   using MCR) and [0002](0002-images-json-reusable-workflow.md) ("everything else is
   `bookworm-v1`") are now historical. Both records are left as written.

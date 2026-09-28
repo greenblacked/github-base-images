@@ -3,7 +3,7 @@
 ## The short version
 
 CI is the source of truth. Open a pull request and the full pipeline runs — lint, build on both
-architectures on native runners, smoke test, three Trivy scans, and both gates — with every
+architectures on native runners, smoke test, all five Trivy scans, and both gates — with every
 registry write skipped. A green PR run is the pre-merge proof.
 
 ## Local loop
@@ -32,20 +32,41 @@ The `lint` job runs these first, so running them locally saves a round trip:
 make lint
 ```
 
-That runs the CI lint job's exact battery -- shellcheck, hadolint pinned to the
-same version `hadolint-action` bundles in CI (DL3008 and DL3006 are ignored
-inline in the Dockerfiles, deliberately), actionlint, the `images.json`
-cross-check, and a best-effort zizmor workflow audit. Engines are downloaded
+That runs the CI lint job's exact battery -- CI runs the same script -- so
+shellcheck, hadolint and actionlint on the versions pinned in `scripts/lint.sh`
+(DL3008 and DL3006 are ignored inline in the Dockerfiles, deliberately; see
+[PR validation and linting](docs/pipeline.md#pr-validation-and-linting)), the
+`images.json` cross-check, the
+[vulnerability exceptions](docs/security.md#vulnerability-exceptions) check, and a
+best-effort zizmor workflow audit. Engines are downloaded
 once into the git-ignored `.lint-cache/` as checksum-verified release binaries.
 
-## Adding an image
+## Adding another image
 
-The README's [Adding another image](README.md#adding-another-image) section is the authoritative
-checklist. In short: a `Dockerfile.ci` and an **executable** `test.sh`, one entry in
-`.github/images.json`, and a `docker` ecosystem entry in `.github/dependabot.yml`. There is no
-workflow to edit — the pipeline reads `images.json`.
+This is the authoritative checklist. There is no workflow to edit: the image list lives in one
+place, [.github/images.json](.github/images.json), an array of `{image, version, mirror, upstream}`
+entries. [build-and-push.yml](.github/workflows/build-and-push.yml) reads it and calls the reusable
+per-image pipeline in [build-image.yml](.github/workflows/build-image.yml) once per entry — there
+are no per-image jobs to copy any more.
 
-Two rules that are easy to miss:
+To add an image:
+
+1. Create `<image-name>/Dockerfile.ci` and `<image-name>/test.sh` following the existing pattern,
+   and `chmod +x` the test script (the workflow and `make test` both execute it directly).
+2. Add one entry to [.github/images.json](.github/images.json).
+3. Add a `docker` ecosystem entry for the directory in
+   [.github/dependabot.yml](.github/dependabot.yml).
+
+Everything else is automatic: the `paths:` filter is the glob `ci-*/**`, the mirror job and the
+build matrix are driven by `images.json`, the lint job cross-checks that every entry has a
+directory and every `ci-*` directory has an entry, and the [Makefile](Makefile) discovers images
+by globbing `*/Dockerfile.ci`. The `version` field is per image, which is how the Noble-based
+images carry `noble-v1` and the Trixie-based ones `trixie-v1` while the rest are `bookworm-v1`.
+A new image starts on its upstream's current distribution
+([ADR 0005](docs/adr/0005-new-images-current-distro-retire-at-eol.md)), and the bar for adding one
+at all is a concrete consumer — see [Future candidates](docs/images.md#future-candidates).
+
+Rules that are easy to miss:
 
 - **`chmod +x` the test script.** Both CI and `make test` execute it directly — and the lint job
   fails if it is missing or not executable.
@@ -56,6 +77,9 @@ Two rules that are easy to miss:
   identical, so updating one and not the other fails the build rather than shipping a version skew.
 - **Bump Composer in both places.** It is pinned in `ci-php84` *and* `ci-php85`, with the same lint
   assertion on the version and checksum, for the same reason.
+- **Make the new packages public** after the first publish: the `ci-*` image, and its `mirror-*`
+  base if that is new too. See
+  [Visibility and authentication](docs/images.md#visibility-and-authentication).
 
 ## What does not belong in an image
 
@@ -67,9 +91,9 @@ Pinned tool versions (Terraform, kubectl, AWS CLI, Docker client in `ci-tools`; 
 `ci-php84` and `ci-php85`) are `ARG`s so a bump is a small change that CI revalidates. Dependabot does **not**
 track these — it only updates each Dockerfile's `ARG BASE_IMAGE` — so they still move when a human
 moves them. What has changed is that you no longer have to *notice*: the weekly
-[pin drift](../.github/workflows/pin-drift.yml) job compares every one of them against its vendor's
+[pin drift](.github/workflows/pin-drift.yml) job compares every one of them against its vendor's
 current release and maintains a single tracking issue, opened when something falls behind and
-closed when everything is current.
+closed when everything is current ([details](docs/pipeline.md#pin-drift)).
 
 Run it yourself any time:
 
