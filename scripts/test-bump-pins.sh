@@ -513,15 +513,18 @@ check "title and body rewritten" grep -q -- '^pr edit 7 --repo o/r --title Bump 
 # The lease: kubectl is processed first, and its first gh call moves
 # pin-bump/trivy on origin after this run fetched it. trivy's push must fail.
 scenario b2
-seed trivy "$BOT" "$BOT" > /dev/null
+seeded=$(seed trivy "$BOT" "$BOT")
 pr trivy 7 OPEN 0.74.5 auto
-export FAKE_GH_HOOK="git -C '$d/seed-trivy' commit -q --allow-empty -m moved && git -C '$d/seed-trivy' push -q origin HEAD:refs/heads/pin-bump/trivy"
+# An explicit identity: a CI runner has no git user configured, and a commit
+# that fails there would leave nothing to race against.
+export FAKE_GH_HOOK="GIT_AUTHOR_NAME=m GIT_AUTHOR_EMAIL=m@example.com GIT_COMMITTER_NAME=m GIT_COMMITTER_EMAIL=m@example.com git -C '$d/seed-trivy' commit -q --allow-empty -m moved && git -C '$d/seed-trivy' push -q origin HEAD:refs/heads/pin-bump/trivy"
 run_prs <<'EOF'
 kubectl 1.38.0
 trivy 0.75.0
 EOF
 unset FAKE_GH_HOOK
 moved=$(git -C "$d/seed-trivy" rev-parse HEAD)
+check "the hook moved the branch, so there was a race to lose" [ "$moved" != "$seeded" ]
 check "exit 1" [ "$rc" -eq 1 ]
 expect_row kubectl status ok
 expect_row trivy status error
