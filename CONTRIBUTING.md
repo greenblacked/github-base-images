@@ -46,8 +46,7 @@ once into the git-ignored `.lint-cache/` as checksum-verified release binaries.
 **A new line of a runtime already here is added for you.** When Python, Node.js, PHP, Ruby, Java or
 .NET ships a new supported line, the daily [image lifecycle](docs/images.md#image-lifecycle)
 workflow opens a pull request that adds its image, and it merges itself when green; it also
-deprecates and retires images at upstream end of support. The one step left to you is making the
-new package public after its first publish (below). What follows is the manual path: a new
+deprecates and retires images at upstream end of support. What follows is the manual path: a new
 *kind* of image, or a line the workflow does not add (an odd Node.js major, a non-LTS Java).
 `./scripts/image-lifecycle.sh apply add --image <name> --upstream <tag>` scaffolds a new line of an
 existing runtime by hand exactly as the workflow would.
@@ -93,10 +92,9 @@ Rules that are easy to miss:
 - **Pins shared between images move together.** Composer is pinned in every PHP image, npm and
   Playwright in every Node image; the lint job asserts every `ARG` pinned in more than one
   `Dockerfile.ci` has the same value in each, and `scripts/bump-pins.sh` moves them all at once.
-- **Make the new packages public** after the first publish: the `ci-*` image, and its `mirror-*`
-  base if that is new too. No workflow can do this (GitHub has no API for package visibility), so
-  it applies to the images the lifecycle workflow adds as well. See
-  [Visibility and authentication](docs/images.md#visibility-and-authentication).
+- **New packages come out public.** No visibility step: the first publish checks the new `ci-*`
+  package can be pulled anonymously and fails, naming the fix, if not (the mirror job warns for a
+  new `mirror-*` one). See [Visibility and authentication](docs/images.md#visibility-and-authentication).
 
 ## What does not belong in an image
 

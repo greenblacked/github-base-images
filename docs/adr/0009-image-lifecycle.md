@@ -156,14 +156,14 @@ So, within `GITHUB_TOKEN` (a dispatch made with it does start a run):
 
 ## Consequences
 
-- **One step stays manual: package visibility.** GHCR creates a new package private, and
-  `GITHUB_TOKEN` cannot change that. GitHub's REST API for packages has no endpoint that changes
-  visibility at all (its package endpoints list, get, delete and restore). The add pull request
-  says so, and [docs/images.md](../images.md#visibility-and-authentication) has the step. Until
-  then pulls from other repositories fail with `denied`, and the published-image audit reports the
-  package. A new line reuses its runtime's existing `mirror-*` package, so only the `ci-*` package
-  needs it.
-- **Deleting a retired package stays manual** too, as in 0005; the retire pull request says so.
+- **Package visibility needs no step.** GitHub's documentation says a new package starts private,
+  and no API changes visibility, so this was written with a manual step. But a package first
+  published from this repository (public, user-owned) with `GITHUB_TOKEN` comes out public:
+  observed 2026-10-06, workflow run 37528439871. Since that contradicts the documentation, the
+  publish verifies it (`scripts/check-public.sh` fails the run if the new digest cannot be pulled
+  anonymously) and the published-image audit repeats the check daily for every image. The fix if
+  it ever fails is in [docs/images.md](../images.md#visibility-and-authentication).
+- **Deleting a retired package stays manual**, as in 0005; the retire pull request says so.
 - **An add pull request rebuilds every image**, since it changes `images.json`. A retirement does
   too. A deprecation builds nothing.
 - **A new image can be held up by upstream.** Against an empty baseline every fixable finding
@@ -184,7 +184,8 @@ So, within `GITHUB_TOKEN` (a dispatch made with it does start a run):
 
 ## Revisit if
 
-- GitHub adds an API, or a repository setting, for package visibility: the manual step goes.
+- The anonymous-pull check starts failing on new packages: GitHub's documented behaviour has
+  taken over, and adding an image needs a manual visibility step again.
 - endoflife.date stops publishing a product, changes its API version, or proves wrong for one: the
   family table can point a family at another source.
 - An upstream starts publishing images for a family on a distribution this rule would not pick, or

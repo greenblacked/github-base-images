@@ -12,7 +12,12 @@
 # published artifact alone, the same facts the build already claimed were
 # true the moment it pushed --  pullable, correctly signed by the expected
 # workflow, carrying both SBOM and provenance attestations, and no older than
-# the daily rebuild allows, with margin.
+# the daily rebuild allows, with margin. And pullable by anyone: the audit
+# logs in with GITHUB_TOKEN, which can read this repository's packages
+# whether or not they are public, so a package flipped to private would
+# still pull here. Each image is therefore also checked anonymously, by
+# scripts/check-public.sh (curl only, no credentials), and one that is not
+# public is an issue like any other.
 #
 # Deliberately out of scope: enumerating every ci-* package this owner has
 # ever published to find ones no longer in images.json. GitHub's Packages
@@ -40,17 +45,19 @@
 # second copy -- the identity regexp and the present-vs-could-not-check
 # distinction in check_attestations were each fixed here against real cosign
 # and buildx output, and a parallel implementation is how those fixes would
-# quietly fail to reach the pipeline. Freshness is the one check it skips:
+# quietly fail to reach the pipeline. Freshness is one check it skips:
 # the caller built the image minutes ago, so an age check could only ever
-# pass, and a check that can only pass is not worth reporting as one.
+# pass, and a check that can only pass is not worth reporting as one. The
+# anonymous-pull check is the other: build-image.yml runs check-public.sh as
+# its own step, with its own message, rather than inside this retry.
 #
 # Exit codes:
 #   0  every image is healthy and current
 #   1  a script-level failure -- a broken checker, not a broken registry: an
-#      image whose attestations or freshness could not be determined at all,
-#      with no confirmed issue elsewhere
+#      image whose attestations, freshness or anonymous pullability could not
+#      be determined at all, with no confirmed issue elsewhere
 #   2  bad usage, or .github/images.json could not be read at all
-#   3  one or more images unhealthy or stale -- a normal, expected outcome,
+#   3  one or more images unhealthy, stale or not public -- a normal, expected outcome,
 #      not an error. Outranks exit 1: a confirmed problem must still reach
 #      the tracking issue even if some other, unrelated check was itself
 #      broken this run.
@@ -75,7 +82,8 @@ usage: check-published.sh [--format table|json] [--quiet] [--ref REPO@sha256:DIG
   --format   output shape on stdout (default: table)
   --quiet    suppress progress logging on stderr
   --ref      audit only this digest reference (signature + attestations;
-             no freshness check) instead of every image in images.json
+             no freshness or anonymous-pull check) instead of every image
+             in images.json
 
 Reads:
   OWNER            GHCR namespace to audit (default: repository owner from
@@ -83,6 +91,10 @@ Reads:
   REPO_SLUG         owner/repo of the signing workflow's identity, used to
                     build the cosign --certificate-identity-regexp (default:
                     GITHUB_REPOSITORY, or "greenblacked/github-base-images")
+  CHECK_PUBLIC_DELAYS  retry waits for the anonymous-pull check (default
+                    here "10": one retry; see scripts/check-public.sh)
+  CHECK_PUBLIC_BUDGET  seconds the anonymous-pull checks may take in all
+                    before the rest are reported unknown (default 240)
 
 Exit: 0 clean, 1 script failure, 2 usage, 3 issues found.
 EOF
@@ -124,6 +136,9 @@ for cmd in docker cosign jq date awk; do
 done
 
 repo_root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
+check_public_script="$repo_root/scripts/check-public.sh"
+public_budget="${CHECK_PUBLIC_BUDGET:-240}"
+[[ "$public_budget" =~ ^[0-9]+$ ]] || { echo "error: CHECK_PUBLIC_BUDGET must be whole seconds, got '$public_budget'" >&2; exit 2; }
 cd "$repo_root" || { echo "error: cannot enter repo root" >&2; exit 1; }
 
 # Both branches of this default have their own fallback, so neither side ever
@@ -152,6 +167,44 @@ failed=0
 checked=0
 
 # --- per-image checks --------------------------------------------------------
+#
+# check_anonymous sets: public_state (ok|private|unknown) and public_detail,
+# from scripts/check-public.sh's exit (0 public, 3 not public, else could not
+# check) and the last line it printed. Its output goes to a file, never to
+# stdout, which is the table or the JSON report. One retry, not its default
+# three: an audit is not racing a first push, and a package that is private
+# stays private for the second look.
+#
+# Time budget: check-public.sh caps each request at 10s, so one image takes
+# at most 50s here -- but 21 of them against an anonymous endpoint that hangs
+# is over 17 minutes, near the workflow's 20-minute timeout on top of the
+# other checks. So no new anonymous check starts once CHECK_PUBLIC_BUDGET
+# seconds (default 240) have gone into them; the rest are `unknown`, a
+# checker error like any other (exit 1, never a pass). Worst case: the
+# budget plus one check in flight, under five minutes. A budget rather than
+# running them in parallel: it keeps one check at a time, in the report's
+# order, and an endpoint slow enough to spend it would fail them all anyway.
+public_spent=0
+check_anonymous() {
+  local ref="$1" rc=0 start
+  if [ "$public_spent" -ge "$public_budget" ]; then
+    public_state=unknown
+    public_detail="not checked: the anonymous checks used up their ${public_budget}s budget (the registry answered slowly or not at all)"
+    return 0
+  fi
+  start=$SECONDS
+  CHECK_PUBLIC_DELAYS="${CHECK_PUBLIC_DELAYS-10}" \
+    "$check_public_script" "$ref" > "$tmp/public.txt" 2>&1 || rc=$?
+  public_spent=$((public_spent + SECONDS - start))
+  public_detail=$(tail -n 1 "$tmp/public.txt" | sed 's/^::[a-z]*:://' | cut -c1-400)
+  case "$rc" in
+    0) public_state=ok ;;
+    3) public_state=private ;;
+    *) public_state=unknown ;;
+  esac
+  return 0
+}
+
 #
 # check_pull sets: pull_state (ok|missing|private|error), digest, inspect_text
 check_pull() {
@@ -362,6 +415,19 @@ audit_target() {
   log info "auditing $ref"
   check_pull "$ref"
 
+  # Independent of check_pull, which is authenticated: run whether or not
+  # that pull worked, and only in the full audit (see the header).
+  # Not for a package that does not exist (pull_state=missing, already an
+  # issue): its fix is to publish or retire it, not to make it public.
+  public_state=skipped; public_detail=""
+  if [ "$check_age" = true ]; then
+    if [ "$pull_state" = missing ]; then
+      public_detail="not checked: the package was not found"
+    else
+      check_anonymous "$ref"
+    fi
+  fi
+
   sig_state=skipped; sig_identity=""
   has_sbom=false; has_provenance=false; attest_detail=""
   created=""; age_days=""; freshness_state=unknown
@@ -412,15 +478,21 @@ audit_target() {
     unknown) has_unknown=true ;;
   esac
 
+  case "$public_state" in
+    ok|skipped) ;;
+    private) has_issue=true ;;
+    *) has_unknown=true ;;
+  esac
+
   local status healthy
   if [ "$has_issue" = true ]; then
     status=issue; healthy=false
     issues=$((issues + 1))
-    log info "$ref: unhealthy (pull=$pull_state sig=$sig_state sbom=$has_sbom provenance=$has_provenance freshness=$freshness_state)"
+    log info "$ref: unhealthy (pull=$pull_state public=$public_state sig=$sig_state sbom=$has_sbom provenance=$has_provenance freshness=$freshness_state)"
   elif [ "$has_unknown" = true ]; then
     status=error; healthy=false
     failed=$((failed + 1))
-    log info "$ref: could not fully audit (sbom=$has_sbom provenance=$has_provenance freshness=$freshness_state) -- ${attest_detail}${freshness_detail}"
+    log info "$ref: could not fully audit (public=$public_state sbom=$has_sbom provenance=$has_provenance freshness=$freshness_state) -- ${attest_detail}${freshness_detail}${public_detail:+ $public_detail}"
   else
     status=healthy; healthy=true
   fi
@@ -428,6 +500,7 @@ audit_target() {
   jq -nc \
     --arg image "$image" --arg version "$version" --arg ref "$ref" \
     --arg pull_state "$pull_state" --arg pull_detail "${pull_detail:-}" \
+    --arg public_state "$public_state" --arg public_detail "${public_detail:-}" \
     --arg digest "${digest:-}" \
     --arg sig_state "$sig_state" --arg sig_identity "$sig_identity" \
     --arg has_sbom "$has_sbom" --arg has_provenance "$has_provenance" --arg attest_detail "${attest_detail:-}" \
@@ -436,6 +509,7 @@ audit_target() {
     --arg freshness_detail "${freshness_detail:-}" \
     --arg status "$status" --argjson healthy "$healthy" \
     '{image:$image, version:$version, ref:$ref, pull_state:$pull_state, pull_detail:$pull_detail,
+      public_state:$public_state, public_detail:$public_detail,
       digest:$digest, sig_state:$sig_state, sig_identity:$sig_identity,
       has_sbom:$has_sbom, has_provenance:$has_provenance, attest_detail:$attest_detail,
       created:$created, age_days:$age_days, freshness_state:$freshness_state, freshness_detail:$freshness_detail,
@@ -472,10 +546,10 @@ if [ "$format" = json ]; then
     '{issues:$issues, failed:$failed, images:.}' \
     "$tmp/rows.jsonl"
 else
-  printf '%-14s %-14s %-8s %-8s %-6s %-6s %-9s %-7s %s\n' IMAGE VERSION PULL SIG SBOM PROV FRESH STATUS AGE_D
-  jq -r '[.image,.version,.pull_state,.sig_state,.has_sbom,.has_provenance,.freshness_state,.status,(.age_days // "?")] | @tsv' "$tmp/rows.jsonl" \
-    | while IFS=$'\t' read -r i v p s sb pr fr st ad; do
-        printf '%-14s %-14s %-8s %-8s %-6s %-6s %-9s %-7s %s\n' "$i" "$v" "$p" "$s" "$sb" "$pr" "$fr" "$st" "$ad"
+  printf '%-14s %-14s %-8s %-8s %-8s %-6s %-6s %-9s %-7s %s\n' IMAGE VERSION PULL PUBLIC SIG SBOM PROV FRESH STATUS AGE_D
+  jq -r '[.image,.version,.pull_state,.public_state,.sig_state,.has_sbom,.has_provenance,.freshness_state,.status,(.age_days // "?")] | @tsv' "$tmp/rows.jsonl" \
+    | while IFS=$'\t' read -r i v p pu s sb pr fr st ad; do
+        printf '%-14s %-14s %-8s %-8s %-8s %-6s %-6s %-9s %-7s %s\n' "$i" "$v" "$p" "$pu" "$s" "$sb" "$pr" "$fr" "$st" "$ad"
       done
   echo
   printf 'issues=%d failed=%d\n' "$issues" "$failed"

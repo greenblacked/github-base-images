@@ -378,7 +378,30 @@ else
   cat "$CACHE/test-verify-ref.log"; fail=1
 fi
 
-# --- 11. zizmor, best-effort and non-gating -- the same posture as CI, where
+# --- 11. scripts/check-public.sh, the anonymous-pull check run after every
+# --- publish and by the published-image audit, tested offline with a fake
+# --- curl and a fake sleep. It must call a private package private, retry
+# --- what may be lag, and never use a credential, so each is checked here.
+note "check-public offline tests"
+if ./scripts/test-check-public.sh > "$CACHE/test-check-public.log" 2>&1; then
+  tail -1 "$CACHE/test-check-public.log"
+else
+  cat "$CACHE/test-check-public.log"; fail=1
+fi
+
+# --- 12. The anonymous-pull part of scripts/check-published.sh, the
+# --- published-image audit, tested offline with fake docker, cosign and
+# --- curl: a private package is an issue, a missing one is not told to go
+# --- public, and the time budget stops a hanging registry from running the
+# --- audit past its timeout.
+note "check-published offline tests"
+if ./scripts/test-check-published.sh > "$CACHE/test-check-published.log" 2>&1; then
+  tail -1 "$CACHE/test-check-published.log"
+else
+  cat "$CACHE/test-check-published.log"; fail=1
+fi
+
+# --- 13. zizmor, best-effort and non-gating -- the same posture as CI, where
 # --- its findings surface through code scanning rather than a red job.
 note "zizmor (best-effort, reported not gating)"
 if command -v zizmor >/dev/null; then

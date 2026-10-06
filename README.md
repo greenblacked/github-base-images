@@ -12,7 +12,7 @@ built for `linux/amd64` and `linux/arm64` on native runners, rebuilt daily to pi
 security updates, blocked from publishing if a build adds a fixable HIGH/CRITICAL vulnerability or
 bakes in a secret, and signed with keyless cosign plus a GitHub build provenance attestation. Base
 images are re-resolved by every rebuild, and pinned-tool and action updates merge and publish
-themselves once every check is green, so the images stay current with nobody tending them. The packages are public, so pulling needs no credentials.
+themselves once every check is green, so the images stay current with nobody tending them. The packages are public, so pulling needs no credentials, and every publish checks they still are.
 
 The two workflow badges track **`main`**, not the latest run on any branch — so a red build badge
 means the published images are stale or broken, not that someone's pull request is failing.

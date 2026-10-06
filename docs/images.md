@@ -202,12 +202,8 @@ every other automated update ([Automatic updates](pipeline.md#automatic-updates)
 - **`ci-go`, `ci-rust` and the tool images are not part of this.** Go and Rust track current
   stable ([why](#go-and-rust)); the tool images have no runtime line.
 
-**One step stays manual:** a new image's GHCR package is created private, and no workflow token
-can make it public (GitHub has no API for package visibility). After the first publish of an added
-image, make its package public as described in
-[Visibility and authentication](#visibility-and-authentication). Until then pulls from other
-repositories fail with `denied`, and the published-image audit reports the package as private.
-The pull request that adds the image says so too.
+**No manual visibility step:** a new image's package comes out public, and its first publish
+checks that ([Visibility and authentication](#visibility-and-authentication)).
 <!-- lifecycle:status:begin -->
 
 ### Deprecated: `ci-dotnet8` and `ci-dotnet9`
@@ -323,17 +319,19 @@ tooling — there is nothing proprietary in them, and `test.sh` enforces that no
 dependencies, or credentials are ever baked in. Making them private would buy nothing and cost a
 manual access grant for every consuming repository, forever.
 
-> **One-time manual step, for every new package:** GHCR packages are created **private**, and
-> visibility cannot be changed by the workflow: `GITHUB_TOKEN` lacks the permission, and GitHub's
-> REST API for packages has no endpoint that changes visibility at all (it lists, reads, deletes
-> and restores). After the first successful push: package page → *Package settings* → *Change
-> visibility* → **Public**. Do this for every `ci-*` image in the
-> [catalog](../README.md#image-catalog), including each one the
-> [image lifecycle](#image-lifecycle) adds, and every new `mirror-*` package (see [Mirrored upstream
-> base](pipeline.md#mirrored-upstream-base) for why the mirrors can be public too). A new line of
-> an existing runtime reuses its runtime's `mirror-*` package, so it needs only the `ci-*` one.
-> Until then, pulls from other repositories fail with `denied`, and the published-image audit
-> reports the package.
+**New packages come out public.** A package first published from this repository (public, owned
+by a user account) with `GITHUB_TOKEN` is public from its first push: observed 2026-10-06, workflow
+run 37528439871. GitHub's documentation says new packages start private, so this is checked rather
+than assumed: after every publish, [`scripts/check-public.sh`](../scripts/check-public.sh) requests the
+new digest's manifest with no credentials at all (curl, not the job's `docker login`) and fails the
+run if it cannot. The [published-image audit](../.github/workflows/published-audit.yml) repeats the
+check for every `ci-*` image, so a package flipped to private later is reported within a day. The
+mirror job checks each `mirror-*` package the same way, as a warning
+([why](pipeline.md#mirrored-upstream-base)).
+
+If the check ever fails, make the package public by hand:
+`https://github.com/users/greenblacked/packages/container/<image>/settings` → *Danger Zone* →
+*Change visibility* → **Public**. The error names the exact link.
 
 Publishing still authenticates, and always will: writing to any registry requires a bearer token
 regardless of visibility. That is what the `docker/login-action` step plus `packages: write` in

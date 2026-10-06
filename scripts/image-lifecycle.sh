@@ -1103,10 +1103,8 @@ pr_body() { # ACTION-JSON WORKTREE
       echo "as \`$(jq -r .upstream <<<"$a")\` for \`linux/amd64\` and \`linux/arm64\`. This adds \`$img\` on the version line"
       echo "\`$(jq -r '.codename + "-v1"' <<<"$a")\`, copied from its newest sibling with the version, base and distribution moved."
       echo
-      echo "**One manual step after this merges and the image first publishes:** GHCR creates the new"
-      echo "\`$img\` package **private**, and no workflow token can change that (there is no API for package"
-      echo "visibility). Until it is public, pulls from other repositories fail with \`denied\`, and the published-image"
-      echo "audit reports it. Package page → *Package settings* → *Change visibility* → **Public**"
+      echo "The new \`$img\` package comes out public on its first publish, and that publish checks it can be"
+      echo "pulled anonymously; if it cannot, the run fails and names the fix"
       echo "([docs/images.md](docs/images.md#visibility-and-authentication))."
       local copied
       copied=$(jq -r --arg i "$img" '.[] | select(.image == $i) | "- `\(.id)` in `\(.package)` (\(.purls | join(", "))), expires \(.expires)"' "$wt/.github/vuln-exceptions.json")

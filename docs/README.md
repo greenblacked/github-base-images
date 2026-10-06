@@ -5,7 +5,7 @@ publish guarantees, and how to verify an image. These pages hold the detail behi
 
 | Page | Covers |
 |---|---|
-| [images.md](images.md) | What each image contains and why; the image lifecycle: new lines, deprecations and retirements; Playwright; using the tool images; visibility and authentication; running and building an image locally; future candidates |
+| [images.md](images.md) | What each image contains and why; the image lifecycle: new lines, deprecations and retirements; Playwright; using the tool images; visibility and authentication (new packages come out public, and every publish checks it); running and building an image locally; future candidates |
 | [security.md](security.md) | The smoke test and the five Trivy scans; which gate and which report; the Security tab and OSV; vulnerability exceptions; verifying signatures and attestations; repository security checks; required checks; the alerts report |
 | [pipeline.md](pipeline.md) | Mirrored upstream bases; PR validation and linting; which images a run builds; native multi-arch builds; tags and rebuilds; `digests.json`; pin drift; automatic updates; the image lifecycle workflow |
 

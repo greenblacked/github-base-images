@@ -9,10 +9,11 @@
 # the same code as this audit), but only for the digest it just produced, at
 # publish time. Nothing re-checks the artifact a
 # consumer actually pulls in the days afterwards. A package flipped to
-# private, a signature whose identity has drifted (a workflow rename, a ref
-# that stopped being `main`), a rebuild that silently stopped firing -- none
-# of that fails a build, because none of it happens during one. This is that
-# other half, on a timer of its own.
+# private (checked anonymously, by scripts/check-public.sh -- the login below
+# would pull a private package just fine), a signature whose identity has
+# drifted (a workflow rename, a ref that stopped being `main`), a rebuild
+# that silently stopped firing -- none of that fails a build, because none
+# of it happens during one. This is that other half, on a timer of its own.
 #
 # Deliberately not covered: whether an old, retired image name (one no longer
 # in .github/images.json) is still being served by GHCR. Finding that
@@ -88,11 +89,12 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
 
-      # Several published packages are known to be private. GITHUB_TOKEN can
-      # only ever read a package that is linked to this repository -- true
-      # user-level privacy is opaque to it either way -- so this makes the
-      # best access available to a workflow token and leaves the script to
-      # classify what it gets back (401/403 vs 404) rather than assume.
+      # For the signature, attestation and freshness reads. GITHUB_TOKEN can
+      # read a package linked to this repository whether or not it is public,
+      # so this login says nothing about visibility: check-published.sh
+      # judges that separately, anonymously (scripts/check-public.sh, curl
+      # with no credentials), and counts a package that is not public as an
+      # issue -- one flipped to private is caught by the next run.
       - name: Login to GitHub Container Registry
         uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
         with:
@@ -133,9 +135,9 @@ jobs:
           {
             echo "### Published image audit"
             echo
-            echo "| image | pull | signature | sbom | provenance | freshness | age (days) | state |"
-            echo "|---|---|---|---|---|---|---|---|"
-            jq -r '.images[] | "| \(.image):\(.version) | \(.pull_state) | \(.sig_state) | \(.has_sbom) | \(.has_provenance) | \(.freshness_state) | \(.age_days // "—") | \(if .status == "healthy" then "ok" elif .status == "error" then "unknown" else "**ISSUE**" end) |"' report.json
+            echo "| image | pull | public | signature | sbom | provenance | freshness | age (days) | state |"
+            echo "|---|---|---|---|---|---|---|---|---|"
+            jq -r '.images[] | "| \(.image):\(.version) | \(.pull_state) | \(.public_state) | \(.sig_state) | \(.has_sbom) | \(.has_provenance) | \(.freshness_state) | \(.age_days // "—") | \(if .status == "healthy" then "ok" elif .status == "error" then "unknown" else "**ISSUE**" end) |"' report.json
 
             echo
             echo "#### Signature identity mismatches"
@@ -154,14 +156,24 @@ jobs:
             [ -n "$pull_fail" ] && echo "$pull_fail" || echo "None."
 
             echo
+            echo "#### Not public"
+            echo
+            # Not pullable without credentials. The detail names the
+            # package's settings page; the fix is Danger Zone -> Change
+            # visibility -> Public (docs/images.md).
+            not_public=$(jq -r '.images[] | select(.public_state == "private") | "- **\(.image):\(.version)**: \(.public_detail)"' report.json)
+            [ -n "$not_public" ] && echo "$not_public" || echo "None."
+
+            echo
             echo "#### Checks that could not be completed"
             echo
             # A broken checker, not a broken registry: the attestation or
-            # freshness inspect itself failed (network, an unreachable
-            # blob), as opposed to genuinely finding nothing. These do not
-            # count as findings above -- see report.json's top-level
-            # \`failed\` count -- but must not be silently absent either.
-            checker_err=$(jq -r '.images[] | select(.status=="error") | "- **\(.image):\(.version)**: sbom=\(.has_sbom) provenance=\(.has_provenance) freshness=\(.freshness_state) -- \(.attest_detail)\(.freshness_detail)"' report.json)
+            # freshness inspect, or the anonymous-pull check, itself failed
+            # (network, an unreachable blob), as opposed to genuinely finding
+            # nothing. These do not count as findings above -- see
+            # report.json's top-level \`failed\` count -- but must not be
+            # silently absent either.
+            checker_err=$(jq -r '.images[] | select(.status=="error") | "- **\(.image):\(.version)**: public=\(.public_state) sbom=\(.has_sbom) provenance=\(.has_provenance) freshness=\(.freshness_state) -- \(.attest_detail)\(.freshness_detail) \(if .public_state == "unknown" then .public_detail else "" end)"' report.json)
             [ -n "$checker_err" ] && echo "$checker_err" || echo "None."
           } > table.md
           cat table.md >> "$GITHUB_STEP_SUMMARY"
@@ -191,7 +203,8 @@ jobs:
         run: |
           {
             echo "One or more images published to ghcr.io/${{ github.repository_owner }} did not pass"
-            echo "the post-publish audit: pullable, correctly signed, carrying both SBOM and"
+            echo "the post-publish audit: pullable, public (pullable with no credentials), correctly"
+            echo "signed, carrying both SBOM and"
             echo "provenance attestations, and no older than 10 days (rebuilt daily; the margin allows for a few failed rebuilds)."
             echo
             cat table.md
