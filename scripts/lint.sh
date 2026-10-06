@@ -211,11 +211,14 @@ note "images.json cross-check"
 # --- as Trivy prints it). An entry with neither would excuse its id in every
 # --- package of the image, which is not what an exception is for.
 # ---
-# --- An entry that has already expired is a warning, not a failure: the gate
-# --- itself turns that image red again, which is the intended signal, and an
-# --- expiry date passing must not break lint for every unrelated PR. "Expired"
-# --- starts ON the `expires` date, the same boundary Trivy applies to the
-# --- `expired_at` it is turned into.
+# --- An entry that has already expired is a warning, not a failure: an expiry
+# --- date passing must not break lint for every unrelated PR. Nor does it
+# --- break the gate: the gate scans the published image with the same
+# --- exceptions, so a finding the published image already carries is "known
+# --- upstream" whether or not its entry has expired (docs/adr/0008); only a
+# --- build that adds it anew is blocked. The alerts report lists expired
+# --- entries for removal or renewal. "Expired" starts ON the `expires` date,
+# --- the same boundary Trivy applies to the `expired_at` it is turned into.
 # ---
 # --- A subshell rather than the { } used above, so an `exit 1` here fails
 # --- this check without skipping the rest of the battery.
@@ -296,7 +299,7 @@ note "vuln-exceptions.json"
   fi
   if [ -n "$expired" ]; then
     while IFS= read -r line; do
-      echo "warning: $exc: expired, so the gate fails on it again -- remove or renew it: $line"
+      echo "warning: $exc: expired, so it no longer excuses the finding in a build that adds it anew -- remove or renew it: $line"
     done <<< "$expired"
   fi
   echo "$(jq length "$exc") exception(s) checked"
@@ -307,7 +310,7 @@ note "vuln-exceptions.json"
 # --- without a human reading them (docs/adr/0007), so a regression in it has
 # --- to fail here, before it writes a wrong pin, not in the bump PR after.
 # --- The same suite drives scripts/pin-bump-prs.sh against a local origin,
-# --- since what it pushes over, dispatches and auto-merges is just as unwatched.
+# --- since what it pushes over and dispatches is just as unwatched.
 note "bump-pins and pin-bump-prs offline tests"
 if ./scripts/test-bump-pins.sh > "$CACHE/test-bump-pins.log" 2>&1; then
   tail -1 "$CACHE/test-bump-pins.log"
@@ -315,7 +318,28 @@ else
   cat "$CACHE/test-bump-pins.log"; fail=1
 fi
 
-# --- 7. zizmor, best-effort and non-gating -- the same posture as CI, where
+# --- 7. scripts/vuln-gate.sh, tested offline against small Trivy JSON
+# --- reports. It decides whether an image publishes (docs/adr/0008), so a
+# --- regression in it -- a comparison that lets a new finding through, or a
+# --- report it cannot read passing as "no findings" -- must fail here.
+note "vuln-gate offline tests"
+if ./scripts/test-vuln-gate.sh > "$CACHE/test-vuln-gate.log" 2>&1; then
+  tail -1 "$CACHE/test-vuln-gate.log"
+else
+  cat "$CACHE/test-vuln-gate.log"; fail=1
+fi
+
+# --- 8. scripts/merge-bot-prs.sh, tested offline against canned API answers
+# --- and a fake gh. It merges without a human (docs/adr/0008), so what it
+# --- merges, refreshes and refuses is checked here, before it runs on main.
+note "merge-bot-prs offline tests"
+if ./scripts/test-merge-bot-prs.sh > "$CACHE/test-merge-bot-prs.log" 2>&1; then
+  tail -1 "$CACHE/test-merge-bot-prs.log"
+else
+  cat "$CACHE/test-merge-bot-prs.log"; fail=1
+fi
+
+# --- 9. zizmor, best-effort and non-gating -- the same posture as CI, where
 # --- its findings surface through code scanning rather than a red job.
 note "zizmor (best-effort, reported not gating)"
 if command -v zizmor >/dev/null; then

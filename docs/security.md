@@ -18,8 +18,9 @@ summary; this page is the detail. Reporting a vulnerability is covered by
 - [Supply-chain pins](#supply-chain-pins)
 
 The reasoning behind the gate/report split is recorded in
-[ADR 0003](adr/0003-gates-vs-reports.md) and
-[ADR 0006](adr/0006-gate-on-fixable-library-vulnerabilities.md).
+[ADR 0003](adr/0003-gates-vs-reports.md),
+[ADR 0006](adr/0006-gate-on-fixable-library-vulnerabilities.md) and
+[ADR 0008](adr/0008-self-updating.md).
 
 ## Tests and security scanning
 
@@ -31,30 +32,43 @@ Each `<image>/test.sh` asserts every tool the image promises is present
 actually works, and that nothing project-specific — dependencies, credentials, state — is baked
 in.
 
-Trivy runs five scans on every build, per architecture. All reports are printed to the log,
-attached to the job summary, and uploaded as a **`security-report-<image>-<arch>` artifact**
-(retained 90 days), including on failed builds:
+Trivy runs five scans on every build, per architecture. All reports are printed to the log and
+uploaded as a **`security-report-<image>-<arch>` artifact** (retained 90 days), including on failed
+builds. The job summary lists them and carries the gate's own table; the full tables are too large
+for it (a step summary is capped at 1 MiB):
 
-- **Vulnerability scan** — full report at every severity, and **a gate that blocks the push** on
-  any **fixable** HIGH/CRITICAL finding, in OS packages *and* in libraries and binaries (Go
-  binaries, npm, pip, gem, jar, …) — `vuln-type: os,library`. That scope is deliberate:
+- **Vulnerability scan** — full report at every severity, and **a gate that blocks the push** when
+  the build **adds** a **fixable** HIGH/CRITICAL finding, in OS packages *and* in libraries and
+  binaries (Go binaries, npm, pip, gem, jar, …) — `vuln-type: os,library`. How it decides:
+  - It scans the candidate and the image published now for the same tag and architecture (its
+    per-arch digest), with the same Trivy, the same database and the same flags, and compares them
+    by vulnerability id, package and package type (`debian`, `node-pkg`, `python-pkg`, …)
+    ([scripts/vuln-gate.sh](../scripts/vuln-gate.sh)). A finding
+    only the candidate has is **new** and blocks. One both have is **known upstream** and is
+    listed. One only the published image has is **fixed by this build** and is listed. The same CVE
+    in the same package at a newer version is still known; the same CVE in an npm package that shares
+    a name with a known Debian package is not.
+  - With nothing to compare against (a new image or a new tag), or when the published image cannot
+    be read (after three retries) or scanned, it runs **strict**: every finding blocks, and the
+    summary says why. The published image is read with the job's own token on every run, pull
+    requests included, so private packages are compared too. An unreadable report fails the
+    gate. It is never read as "no findings".
   - `ignore-unfixed` keeps it honest: red always means there is a version to move to, never a CVE
     with no patch available. Unfixed findings are reported, not enforced.
-  - A fixable OS finding is fixed by the next rebuild — `apt` pulls the patched package.
-  - A fixable library finding is fixed one of two ways. In a tool this repo installs and pins, bump
-    the pin in `Dockerfile.ci`. In the upstream runtime image (the npm, pip or gem packages it
-    bundles), the fix is the upstream's patch release, which the weekly rebuild and Dependabot's
-    base-image bumps pick up.
-  - The cost of the second case is accepted: an image can stay red until upstream ships a patched
-    image, and in exchange nothing known-fixable at HIGH/CRITICAL is ever published.
-    [ADR 0006](adr/0006-gate-on-fixable-library-vulnerabilities.md) records why library
-    findings, report-only until then, now gate.
-  - The one way past it is an **expiring exception** in `.github/vuln-exceptions.json`, for a
-    finding whose fixed version is in no released artifact yet (a module compiled into the latest
-    upstream release binary, a package vendored inside pip). Exceptions are per image, per CVE
-    and per path or package version, last 90 days at most, and are printed in the gate step's
-    log and summary; the reports and SARIF above never use them. See
-    [Vulnerability exceptions](#vulnerability-exceptions).
+  - **Known upstream findings ship until upstream fixes them.** That is the case for a package
+    vendored inside another (pip's urllib3, npm's undici, the libraries inside the Azure CLI) whose
+    advisory names a fixed version that no release contains yet. Blocking the rebuild over them
+    would only withhold the Debian updates and other fixes it carries. They close on their own when
+    the daily rebuild or an automated update picks up the fixed release.
+    [ADR 0008](adr/0008-self-updating.md) records why the gate stopped being absolute;
+    [ADR 0006](adr/0006-gate-on-fixable-library-vulnerabilities.md) why libraries are in scope.
+  - A finding a build adds can only get past the gate through an **expiring exception** in
+    `.github/vuln-exceptions.json`, for a finding whose fixed version is in no released artifact
+    yet (a module compiled into the latest upstream release binary, a package vendored inside pip).
+    Exceptions are per image, per CVE and per path or package version, last 90 days at most, apply
+    to both scans, and are printed in the gate step's log and summary. The reports and SARIF above
+    never use them. See [Vulnerability exceptions](#vulnerability-exceptions).
+  - Both scans and the decision are kept as the `vuln-gate-<image>-<arch>` artifact.
 - **Secret scan** — **gates at any severity**. A baked-in credential in a public CI image is
   always fixable from this repo, with no upstream to wait on, so there is no excuse for shipping
   one.
@@ -146,8 +160,9 @@ Four things about it are less obvious than they look:
 
 `.github/vuln-exceptions.json` is the only way past the vulnerability gate, and it is narrow on
 purpose ([ADR 0006](adr/0006-gate-on-fixable-library-vulnerabilities.md#exceptions-expiring-per-image-per-id)).
-An entry is for a finding whose advisory names a fixed version that **no released artifact
-contains yet**: a Go module compiled into the latest release of a binary the image installs, a
+Since [ADR 0008](adr/0008-self-updating.md) an entry is needed only for a finding a build *adds*
+(one the published image already carries is known upstream and does not block). It is for a
+finding whose advisory names a fixed version that **no released artifact contains yet**: a Go module compiled into the latest release of a binary the image installs, a
 package vendored inside the upstream image's pip, a package inside the newest .NET SDK. It is
 never for "a fix exists and nobody has bumped the pin", nor for "upstream has shipped a patched
 image and this one has not been rebuilt" — those get fixed, not excepted.
@@ -175,7 +190,7 @@ JSON has no comments, so the file's format lives here. It is an array of entries
 - `reason` is one sentence on why this repository cannot take the fix now; `upstream` is where to
   watch for it (a release page, a tracking issue, a vendoring file).
 - `expires` is `YYYY-MM-DD`, at most 90 days from the day it is written. From that date the entry
-  no longer applies — Trivy's `expired_at` semantics — and the image goes red again.
+  no longer applies — Trivy's `expired_at` semantics — to either scan.
 - Every entry needs `paths`, `purls` or both, so it is limited to one package rather than the id
   anywhere in the image. When both are given, a finding must match both.
 - `paths` is the Trivy target (`usr/local/bin/migrate`) or package path (a `.deps.json`,
@@ -197,9 +212,10 @@ duplicate, or an expiry more than 90 days out. A change to the file rebuilds exa
 whose entries changed, on the pull request and again on `main`, and each gate step prints the
 Trivy ignore file it was given in its log and job summary.
 
-**When one expires.** The image fails its gate again, `build-image.yml` warns about the expired
-entry by name, lint warns (without failing), and the [alerts report](#security-alerts-report)
-lists it under *Expired exceptions*. Check `upstream`: if the fix has shipped, take it (bump the
+**When one expires.** `build-image.yml` warns about the expired entry by name, lint warns
+(without failing), and the [alerts report](#security-alerts-report) lists it under *Expired
+exceptions*. If the published image already carries the finding, the gate counts it as known
+upstream and nothing breaks; only a build that adds it anew is blocked. Check `upstream`: if the fix has shipped, take it (bump the
 pin, rebuild) and delete the entry; if it still has not, renew it with a new `expires` and, if
 anything changed, a new `reason`. Delete an entry as soon as the finding is gone, even before it
 expires.
@@ -248,7 +264,7 @@ on the index (`scripts/check-published.sh --ref`, the same code as the
 [post-publish audit](../.github/workflows/published-audit.yml)), and repeats the check once the
 GitHub attestation below has been attached, against the index exactly as consumers see it. A
 signature that stops verifying — a renamed workflow, a changed ref — fails the run that caused it,
-rather than surfacing from the weekly audit. A check that could not run fails too, with its own
+rather than surfacing from the scheduled audit. A check that could not run fails too, with its own
 message; it is never read as a pass.
 
 ### Or with the GitHub CLI
@@ -301,7 +317,8 @@ themselves state.
 `build-and-push.yml` scans the **images**. That is a different threat model: anyone who can
 influence a workflow file controls every image this repo publishes, without touching a Dockerfile.
 It is a separate workflow so a finding can never block an image build, and so it still runs on
-weeks when no image directory changed — `build-and-push.yml` is path-filtered, this is not.
+days when no image directory changed — `build-and-push.yml` is path-filtered, this is not. It runs
+daily, on every push and pull request, and on a dispatch.
 
 - **Repository secret scan** — Trivy over the working tree, covering workflows, docs, and the
   Makefile, none of which the image scan can see (nothing is `COPY`ed in). **Gates**, on the same
@@ -335,9 +352,10 @@ weeks when no image directory changed — `build-and-push.yml` is path-filtered,
   OpenSSF Scorecard lookup it would otherwise make for each changed dependency, against
   `api.deps.dev` and `api.securityscorecards.dev`, is switched off, so it talks only to GitHub.
   It also runs when the workflow is dispatched on a branch other than `main`, comparing `main`
-  with the dispatched commit. That is how the automated bump PRs get a real review: their pushes
-  come from the workflow token, which starts no `pull_request` run, so their checks come from a
-  dispatch ([Automatic updates](pipeline.md#automatic-updates)). Without it the job would be
+  with the dispatched commit. That is how the automated bump PRs, and a Dependabot branch the merge
+  bot brought up to date, get a real review: their pushes come from the workflow token, which
+  starts no `pull_request` run, so their checks come from a dispatch
+  ([Automatic updates](pipeline.md#automatic-updates)). Without it the job would be
   skipped there, and a skipped job satisfies a required check without having looked.
 - **OpenSSF Scorecard** — branch protection, token permissions, pinned dependencies, dangerous
   workflow patterns. Produces the score behind the README badge. Runs on `main` only, since several
@@ -357,8 +375,10 @@ it means when they are not.
 
 ## Required checks
 
-Merging into `main` requires CI to pass. The `main` ruleset (Settings → Rules → Rulesets →
-`main`) requires these status checks:
+These four checks are what a pull request is merged on. The merge bot reads them itself on each
+automated PR's head commit ([Automatic updates](pipeline.md#automatic-updates)), so it does not
+depend on the ruleset. The `main` ruleset (Settings → Rules → Rulesets → `main`) should require
+the same four for human pull requests:
 
 | Check | Workflow | What it covers |
 |---|---|---|
@@ -376,9 +396,9 @@ them would add checks that cannot go red. For the same reason Build and Push is 
 on pull requests: a PR that touches no image and no pipeline file runs lint and builds nothing,
 instead of not running at all.
 
-These four are also what auto-merge waits for. The automated update workflows read the ruleset
-before enabling it, and leave the PR open if any of the four is not required
-([Automatic updates](pipeline.md#automatic-updates)).
+The merge bot merges an automated PR only when the latest GitHub Actions run of each of the four
+has completed with success on its head commit. Missing, still running, skipped, neutral,
+cancelled, failed or unreadable all mean it waits.
 
 ## Security alerts report
 
@@ -406,31 +426,33 @@ code-scanning alert on `main` plus every open Dependabot alert, analysed by
   …). Nothing will upload there again, so they never close on their own; delete the category under
   *Security → Code scanning → Tool status*.
 
-It runs after every publish run on `main` (the `alerts` job in `build-and-push.yml`), weekly on
-Tuesdays, and on demand via *Run workflow*. Read it on the run's summary page; the full
+It runs after every publish run on `main` (the `alerts` job in `build-and-push.yml`), daily, and
+on demand via *Run workflow*. Read it on the run's summary page; the full
 `report.md`, with the raw `code-scanning.json` and `dependabot.json` it was built from, is the
 `code-scanning-report` artifact (90 days). A very large report is cut in the summary, section by
 section, never in the artifact.
 
-**It fails the run when a fix is waiting.** A fixable HIGH/CRITICAL Trivy alert in a current image
-means the last build of that image failed its gate and the published image is older still, or the
-image has not been rebuilt since the fix appeared. A HIGH/CRITICAL Dependabot alert with a patched
-version is the same thing for the repository's own dependencies. Unfixed findings are accepted risk
-waiting on upstream and never fail it; stale categories never fail it either. Nor does an alert
-covered by an active exception — the same image, CVE and path or package version the gate is
-skipping — though it is listed, and counted separately in the summary; an expired entry excuses
-nothing. It also fails, rather than reporting zero, whenever it could not look: an API call that
-failed, Dependabot alerts switched off for the repository (turn them on under *Settings → Code
-security*), input that does not parse (the exceptions file included), or an alert whose fixability
-it cannot read.
+**Open fixable alerts are a warning, not a failure.** A fixable HIGH/CRITICAL Trivy alert in a
+current image is usually *known upstream*: inherited from a runtime image or a vendored package,
+with no release that fixes it yet. It ships until one does
+([ADR 0008](adr/0008-self-updating.md)). Failing on it would keep `main` red for weeks over
+something nothing here can change. So the run shows a warning with the count, and every such alert
+is listed in the report. A HIGH/CRITICAL Dependabot alert with a patched version is treated the
+same way; Dependabot's own pull request for it merges itself once green. Unfixed findings, stale
+categories and alerts covered by an active exception (listed and counted separately) are not
+counted at all; an expired entry excuses nothing.
 
-Because it runs after publishing, a red alerts report never stops an image from being published;
-it marks the run red so the waiting fix is seen.
+It does fail, rather than reporting zero, whenever it could not look: an API call that failed,
+Dependabot alerts switched off for the repository (turn them on under *Settings → Code security*),
+input that does not parse (the exceptions file included), or an alert whose fixability it cannot
+read. None of those is a routine state, and a report that said "nothing open" because it did not
+look is the failure it exists to prevent. It never runs on a pull request, so it is never part of
+the `CI result` a pull request is merged on.
 
 ```bash
 ./scripts/alerts-report.sh code-scanning.json dependabot.json .github/images.json \
   .github/vuln-exceptions.json report.md
-# exit 0 clean, 3 fixable HIGH/CRITICAL open and not excepted,
+# exit 0 clean, 3 fixable HIGH/CRITICAL open and not excepted (the workflow warns),
 # 1 could not produce a trustworthy report, 2 usage
 ```
 
@@ -456,9 +478,9 @@ copied into GHCR by digest and verified
 Dependabot keeps action pins and base images current with a seven-day `cooldown` on every
 ecosystem: nothing is adopted the day it ships, since the window between publication and discovery
 is exactly when a same-day bump would pull in a compromised release. The pinned release binaries
-Dependabot cannot see are compared against their vendors weekly by the pin-drift job, which opens
+Dependabot cannot see are compared against their vendors daily by the pin-drift job, which opens
 a tracking issue rather than failing a build. Both are described in full under
 [Pin drift](pipeline.md#pin-drift). The pin-bump job then turns that drift into pull requests, with
-checksums taken only from the vendor's published files and the same seven-day cooldown; it and
-Dependabot's minor and patch updates merge themselves once every required check passes
-([Automatic updates](pipeline.md#automatic-updates)).
+checksums taken only from the vendor's published files and the same seven-day cooldown. Its pull
+requests and Dependabot's merge themselves once every required check passes, and publish straight
+away ([Automatic updates](pipeline.md#automatic-updates)).

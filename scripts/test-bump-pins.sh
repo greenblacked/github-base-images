@@ -417,8 +417,6 @@ exit 0
 EOF
 chmod +x "$work/bin/gh"
 
-RULES_OK='[{"type":"required_status_checks","parameters":{"required_status_checks":[
-  {"context":"CI result"},{"context":"Repository secret scan"},{"context":"CodeQL (workflows)"},{"context":"Dependency review"}]}}]'
 # CI result red: present, so it must not be dispatched again.
 CHECKS_ALL='{"total_count":4,"check_runs":[{"name":"CI result","conclusion":"failure"},
   {"name":"Repository secret scan","conclusion":"success"},{"name":"CodeQL (workflows)","conclusion":"success"},
@@ -426,7 +424,7 @@ CHECKS_ALL='{"total_count":4,"check_runs":[{"name":"CI result","conclusion":"fai
 CHECKS_NONE='{"total_count":0,"check_runs":[]}'
 
 # scenario NAME -- fresh origin (main at the baseline pins), a clean clone to
-# run in, a stub directory with a qualifying ruleset, and an empty gh log.
+# run in, a stub directory, and an empty gh log.
 scenario() {
   local src
   d="$work/prs-$1"; rm -rf "$d"; mkdir -p "$d/stub"
@@ -437,7 +435,6 @@ scenario() {
   git clone -q --bare "$src" "$d/origin.git"
   git clone -q "$d/origin.git" "$d/clone"
   origin="$d/origin.git"; stub="$d/stub"; log="$d/gh.log"; : > "$log"
-  printf '%s' "$RULES_OK" > "$stub/rules.json"
   echo '[{"name":"needs-review"}]' > "$stub/labels.json"
 }
 # seed UNIT AUTHOR_EMAIL COMMITTER_EMAIL -- put pin-bump/UNIT on origin, one
@@ -494,9 +491,10 @@ check "  with the new version" \
 check "PR created for pin-bump/trivy" grep -q -- '^pr create .*--head pin-bump/trivy ' "$log"
 check "Build and Push dispatched on the branch" logged "workflow run build-and-push.yml --repo o/r --ref pin-bump/trivy"
 check "Security dispatched on the branch" logged "workflow run security.yml --repo o/r --ref pin-bump/trivy"
-check "auto-merge enabled for the auto unit" logged "pr merge 101 --repo o/r --auto --squash"
 check "the review unit is labelled" logged "pr edit 102 --repo o/r --add-label needs-review"
-check "  and gets no auto-merge" not_logged '^pr merge 102 .*--auto'
+check "nothing is merged or given auto-merge here: merge-bot-prs.sh merges" not_logged '^pr merge'
+check "the body says it merges itself, and how to stop it" grep -q "Add the \`hold\` label to stop it" "$log.body"
+check "the review body says the label is information" grep -q "Labelled \`needs-review\` for information" "$log.body"
 check "the body records version and class for the next run" grep -qxF '<!-- pin-bump: unit=syft to=2.0.0 class=review -->' "$log.body"
 check "the body warns against Update branch" grep -q 'do not use \*Update branch\*' "$log.body"
 
@@ -506,7 +504,7 @@ old_sha=$(seed trivy "$BOT" "$BOT")
 pr trivy 7 OPEN 0.74.5 auto
 run_prs <<< 'trivy 0.75.0'
 check "exit 0" [ "$rc" -eq 0 ]
-expect_row trivy action "updated #7 (was 0.74.5), build-and-push.yml dispatched, security.yml dispatched, auto-merge on"
+expect_row trivy action "updated #7 (was 0.74.5), build-and-push.yml dispatched, security.yml dispatched"
 check "the branch moved off the old commit" [ "$(head_of pin-bump/trivy)" != "$old_sha" ]
 check "  onto one new commit on main" [ "$(git -C "$origin" rev-parse pin-bump/trivy^)" = "$(main_sha)" ]
 check "title and body rewritten" grep -q -- '^pr edit 7 --repo o/r --title Bump trivy from 0.74.0 to 0.75.0 --body-file ' "$log"
@@ -536,20 +534,18 @@ scenario c
 sha=$(seed trivy "$BOT" "$BOT")
 pr trivy 8 OPEN 0.75.0 auto
 printf '%s' "$CHECKS_NONE" > "$stub/checks-trivy.json"
-echo '{"autoMergeRequest":{"enabledAt":"2026-09-21T09:00:00Z"}}' > "$stub/automerge-trivy.json"
 run_prs <<< 'trivy 0.75.0'
 check "exit 0" [ "$rc" -eq 0 ]
 expect_row trivy status unchanged
 check "Build and Push re-dispatched" logged "workflow run build-and-push.yml --repo o/r --ref pin-bump/trivy"
 check "Security re-dispatched" logged "workflow run security.yml --repo o/r --ref pin-bump/trivy"
 check "the branch was not pushed" [ "$(head_of pin-bump/trivy)" = "$sha" ]
-check "the PR was not edited, auto-merge already on" not_logged '^pr (edit|merge) '
+check "the PR was not edited or merged" not_logged '^pr (edit|merge) '
 # Only the Security checks missing: only Security is dispatched.
 scenario c2
 seed trivy "$BOT" "$BOT" > /dev/null
 pr trivy 8 OPEN 0.75.0 auto
 echo '{"check_runs":[{"name":"CI result","conclusion":"success"}]}' > "$stub/checks-trivy.json"
-echo '{"autoMergeRequest":{"enabledAt":"2026-09-21T09:00:00Z"}}' > "$stub/automerge-trivy.json"
 run_prs <<< 'trivy 0.75.0'
 check "only security.yml re-dispatched when only its checks are missing" \
   [ "$(grep '^workflow run' "$log")" = "workflow run security.yml --repo o/r --ref pin-bump/trivy" ]
@@ -558,7 +554,6 @@ scenario c3
 seed trivy "$BOT" "$BOT" > /dev/null
 pr trivy 8 OPEN 0.75.0 auto
 echo '{"message":"Server Error"}' > "$stub/checks-trivy.json"; echo 1 > "$stub/checks-trivy.exit"
-echo '{"autoMergeRequest":{"enabledAt":"2026-09-21T09:00:00Z"}}' > "$stub/automerge-trivy.json"
 run_prs <<< 'trivy 0.75.0'
 check "unreadable check runs: exit 1" [ "$rc" -eq 1 ]
 expect_row trivy status error
@@ -568,41 +563,30 @@ scenario c4
 seed trivy "$BOT" "$BOT" > /dev/null
 pr trivy 8 OPEN 0.75.0 auto
 jq '(.check_runs[] | select(.name == "CI result") | .conclusion) = "cancelled"' <<<"$CHECKS_ALL" > "$stub/checks-trivy.json"
-echo '{"autoMergeRequest":{"enabledAt":"2026-09-21T09:00:00Z"}}' > "$stub/automerge-trivy.json"
 run_prs <<< 'trivy 0.75.0'
 check "a cancelled CI result: only build-and-push.yml re-dispatched" \
   [ "$(grep '^workflow run' "$log")" = "workflow run build-and-push.yml --repo o/r --ref pin-bump/trivy" ]
 
-echo "case 6d: same version, CI present (red), auto-merge off, ruleset OK -> auto-merge on"
+echo "case 6d: same version, CI present (red) -> left as it is"
 scenario d
 seed trivy "$BOT" "$BOT" > /dev/null
 pr trivy 9 OPEN 0.75.0 auto
 printf '%s' "$CHECKS_ALL" > "$stub/checks-trivy.json"
-echo '{"autoMergeRequest":null}' > "$stub/automerge-trivy.json"
 run_prs <<< 'trivy 0.75.0'
 check "exit 0" [ "$rc" -eq 0 ]
 expect_row trivy status unchanged
-check "auto-merge enabled" logged "pr merge 9 --repo o/r --auto --squash"
 check "a red CI result is not dispatched again" not_logged '^workflow run'
-# The same PR recorded as review: never auto-merged by the heal.
-scenario d2
-seed trivy "$BOT" "$BOT" > /dev/null
-pr trivy 9 OPEN 0.75.0 review
-printf '%s' "$CHECKS_ALL" > "$stub/checks-trivy.json"
-echo '{"autoMergeRequest":null}' > "$stub/automerge-trivy.json"
-run_prs <<< 'trivy 0.75.0'
-check "a review PR is not given auto-merge by the heal" not_logged '^pr merge'
+check "  and nothing else is written either" not_logged '.'
 
 echo "case 6e: commits not made by this workflow -> skipped, never pushed over"
 scenario e
 sha=$(seed trivy human@example.com "$BOT")
 pr trivy 10 OPEN 0.75.0 auto
 printf '%s' "$CHECKS_NONE" > "$stub/checks-trivy.json"
-echo '{"autoMergeRequest":null}' > "$stub/automerge-trivy.json"
 run_prs <<< 'trivy 0.75.0'
 check "foreign author: exit 0" [ "$rc" -eq 0 ]
 expect_row trivy status skipped
-check "  no dispatch, no auto-merge, no edit" not_logged '.'
+check "  no dispatch, no edit" not_logged '.'
 check "  branch untouched" [ "$(head_of pin-bump/trivy)" = "$sha" ]
 scenario e2
 sha=$(seed trivy "$BOT" maintainer@example.com)
@@ -623,56 +607,24 @@ expect_row trivy status skipped
 check "no PR created, no push" [ -z "$(head_of pin-bump/trivy)" ]
 check "  and no gh write at all" not_logged '.'
 
-echo "case 6g: the ruleset cannot be read -> PR opened, no auto-merge, a warning"
-scenario g
-echo '{"message":"Not Found"}' > "$stub/rules.json"; echo 1 > "$stub/rules.exit"
-drift > "$d/drift.json" <<< 'trivy 0.75.0'
-rc=0
-(cd "$d/clone" && PATH="$work/bin:$PATH" DRIFT_FILE="$d/drift.json" GITHUB_REPOSITORY=o/r GITHUB_ACTIONS=true \
-   PIN_BUMP_GH_STUB="$stub" PIN_BUMP_RESULTS="$d/results.jsonl" FAKE_GH_LOG="$log" "$prs") > "$d/out" 2>&1 || rc=$?
-res="$d/results.jsonl"
-check "exit 0: a missing setting leaves the PR open, it does not fail the run" [ "$rc" -eq 0 ]
-expect_row trivy status ok
-check "PR opened" grep -q '^pr create' "$log"
-check "no auto-merge" not_logged '^pr merge'
-check "summary warning" grep -q 'Warning:\*\* auto-merge was not enabled, because the rules for main could not be read' "$d/out"
-check "run annotation" grep -q '^::warning::trivy: auto-merge not enabled' "$d/out"
-
-echo "case 6i: an auto PR refreshed to a review version -> its auto-merge is turned off"
+echo "case 6i: an auto PR refreshed to a review version -> labelled, nothing merged"
 scenario i
 seed syft "$BOT" "$BOT" > /dev/null
 pr syft 12 OPEN 1.99.0 auto
-echo '{"autoMergeRequest":{"enabledAt":"2026-09-21T09:00:00Z"}}' > "$stub/automerge-syft.json"
 run_prs <<< 'syft 2.0.0'
 check "exit 0" [ "$rc" -eq 0 ]
 expect_row syft status ok
 check "labelled for review" logged "pr edit 12 --repo o/r --add-label needs-review"
-check "auto-merge turned off" logged "pr merge 12 --repo o/r --disable-auto"
-# --disable-auto refused: the old request would merge a major unread.
+check "  and no merge or auto-merge call of any kind" not_logged '^pr merge'
+# The label cannot be set: information lost, not a failed unit.
 scenario i2
 seed syft "$BOT" "$BOT" > /dev/null
 pr syft 12 OPEN 1.99.0 auto
-echo '{"autoMergeRequest":{"enabledAt":"2026-09-21T09:00:00Z"}}' > "$stub/automerge-syft.json"
-FAKE_GH_FAIL='^pr merge 12 .*--disable-auto' run_prs <<< 'syft 2.0.0'
-check "a refused --disable-auto: exit 1" [ "$rc" -eq 1 ]
-expect_row syft status error
-check "  and the note says auto-merge is still on" grep -q 'still has auto-merge on' "$res"
-# Auto-merge already off: nothing to turn off.
-scenario i3
-seed syft "$BOT" "$BOT" > /dev/null
-pr syft 12 OPEN 1.99.0 auto
-echo '{"autoMergeRequest":null}' > "$stub/automerge-syft.json"
-run_prs <<< 'syft 2.0.0'
-check "auto-merge already off: exit 0" [ "$rc" -eq 0 ]
-check "  and no --disable-auto call" not_logged '^pr merge 12 '
-# Whether auto-merge is on cannot be read: an error, not "probably off".
-scenario i4
-seed syft "$BOT" "$BOT" > /dev/null
-pr syft 12 OPEN 1.99.0 auto
-echo '{"message":"Server Error"}' > "$stub/automerge-syft.json"; echo 1 > "$stub/automerge-syft.exit"
-run_prs <<< 'syft 2.0.0'
-check "unreadable auto-merge state: exit 1" [ "$rc" -eq 1 ]
-expect_row syft status error
+FAKE_GH_FAIL='^pr edit 12 .*--add-label' run_prs <<< 'syft 2.0.0'
+check "a refused label: exit 0" [ "$rc" -eq 0 ]
+expect_row syft status ok
+check "  the note says so" grep -q 'could not set the needs-review label' "$res"
+check "  CI was still dispatched" logged "workflow run build-and-push.yml --repo o/r --ref pin-bump/syft"
 
 echo "case 6h: a failed dispatch errors its unit, after every unit was processed"
 scenario h
@@ -688,7 +640,7 @@ check "  the note says which dispatch failed" \
   bash -c "jq -r 'select(.unit == \"kubectl\") | .note' '$res' | grep -q 'gh workflow run build-and-push.yml failed (exit 1)'"
 check "  its other workflow was still dispatched" logged "workflow run security.yml --repo o/r --ref pin-bump/kubectl"
 expect_row trivy status ok
-check "the unit after it was fully processed" logged "pr merge 102 --repo o/r --auto --squash"
+check "the unit after it was fully processed" logged "workflow run security.yml --repo o/r --ref pin-bump/trivy"
 
 echo
 echo "$pass passed, $failures failed"

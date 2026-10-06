@@ -12,7 +12,7 @@
 # published artifact alone, the same facts the build already claimed were
 # true the moment it pushed --  pullable, correctly signed by the expected
 # workflow, carrying both SBOM and provenance attestations, and no older than
-# a weekly rebuild plus margin.
+# the daily rebuild allows, with margin.
 #
 # Deliberately out of scope: enumerating every ci-* package this owner has
 # ever published to find ones no longer in images.json. GitHub's Packages
@@ -58,8 +58,10 @@ set -euo pipefail
 
 readonly EXIT_ISSUES=3
 readonly COSIGN_ISSUER='https://token.actions.githubusercontent.com'
-# A weekly rebuild (build-and-push.yml's own cron) plus enough margin that one
-# missed or delayed run does not itself trip this. Two missed rebuilds should.
+# The rebuild is daily (build-and-push.yml's own cron). Ten days is kept from
+# when it was weekly: generous enough that a few failed or delayed rebuilds
+# (an upstream registry outage, say) do not trip this, while an image that has
+# stopped publishing altogether still does well within two weeks.
 readonly MAX_AGE_DAYS=10
 
 format=table

@@ -170,7 +170,7 @@ support.
 ## Deprecated: `ci-dotnet8` and `ci-dotnet9`
 
 .NET 8 (LTS) and .NET 9 (STS) both reach Microsoft's end of support on **2026-11-10**. After that
-date neither receives security fixes upstream, so rebuilding these images weekly would only keep
+date neither receives security fixes upstream, so rebuilding these images daily would only keep
 producing fresh digests of an unpatched runtime.
 
 - **Move to `ci-dotnet10`** (`ghcr.io/greenblacked/ci-dotnet10:noble-v1`), the current LTS line.

@@ -251,24 +251,34 @@ jobs:
           sarif_file: trivy-${{ inputs.image }}-${{ matrix.arch }}.sarif
           category: ${{ inputs.image }}-${{ matrix.arch }}
 
+      # The full tables go to the log and the artifact below, never to the job
+      # summary. A step's summary is capped at 1 MiB, and one over the cap is
+      # dropped whole ("upload aborted"), not cut: the every-severity table
+      # plus the license table for ci-node22, ci-node24 and ci-cloud came to
+      # about 1.8 MiB, so those jobs lost their summary entirely. The summary
+      # gets one line per report instead, and the vulnerability gate below
+      # writes its own compact table of what blocks and what does not.
       - name: Publish reports to job summary and log
         env:
           IMAGE: ${{ inputs.image }}
           ARCH: ${{ matrix.arch }}
         run: |
+          {
+            echo "### Scan reports: $IMAGE ($ARCH)"
+            echo
+            echo "Full text in this job's log and in the \`security-report-$IMAGE-$ARCH\` artifact."
+            echo
+            echo "| report | lines |"
+            echo "|---|---:|"
+          } >> "$GITHUB_STEP_SUMMARY"
           for report in "trivy-$IMAGE-$ARCH.txt" \
                         "trivy-secrets-$IMAGE-$ARCH.txt" \
                         "trivy-misconfig-$IMAGE-$ARCH.txt" \
                         "trivy-licenses-$IMAGE-$ARCH.txt"; do
+            echo "::group::${report%.txt}"
             cat "$report"
-            {
-              echo "<details><summary>${report%.txt}</summary>"
-              echo
-              echo '```'
-              cat "$report"
-              echo '```'
-              echo "</details>"
-            } >> "$GITHUB_STEP_SUMMARY"
+            echo "::endgroup::"
+            echo "| \`$report\` | $(wc -l < "$report") |" >> "$GITHUB_STEP_SUMMARY"
           done
 
       # Upload before the gates, so the reports survive even when a gate fails
@@ -312,9 +322,13 @@ jobs:
       #
       # `expires` becomes Trivy's `expired_at`, written as an unquoted YAML
       # date because Trivy decodes it into a time.Time. Trivy stops applying
-      # an entry from 00:00 UTC on that date, so the gate goes red again on its
-      # own without anyone having to remember -- that is the point, and the
-      # warning below only says so out loud. Every string is JSON-quoted with
+      # an entry from 00:00 UTC on that date, to the candidate and the
+      # published image alike (the gate below scans both with this file). So
+      # an expired entry for a finding the published image already carries
+      # makes it "known upstream" -- listed, not blocking -- and an expired
+      # entry can only block a build that adds its finding anew. The warning
+      # below says it has expired; the alerts report lists it too. Every
+      # string is JSON-quoted with
       # jq's @json, which is also a valid YAML double-quoted scalar, so no
       # reason text can break the file or add entries to it.
       #
@@ -386,7 +400,7 @@ jobs:
           # so the log still shows what used to be excused and why.
           while IFS= read -r line; do
             if [ -n "$line" ]; then
-              echo "::warning::vulnerability exception for $IMAGE has expired and no longer applies, so the gate fails on it again: $line. Remove or renew it in $src."
+              echo "::warning::vulnerability exception for $IMAGE has expired and no longer applies: $line. The gate now counts it as known upstream if the published image has it, as new otherwise. Remove or renew it in $src."
             fi
           done <<< "$expired"
 
@@ -403,20 +417,56 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
           echo "file=$file" >> "$GITHUB_OUTPUT"
 
-      # The gate: any fixable HIGH/CRITICAL finding, in OS packages AND in
-      # libraries and binaries (Go binaries, npm, pip, gem, jar, ...). See
-      # docs/adr/0006 for why libraries moved from report-only to gating.
+      # The vulnerability gate: fixable HIGH/CRITICAL findings, in OS packages
+      # AND in libraries and binaries (Go binaries, npm, pip, gem, jar, ...),
+      # that THIS BUILD ADDS compared with the image published now for the
+      # same tag and architecture. docs/adr/0008-self-updating.md has the
+      # reasoning; docs/adr/0006 why libraries are in scope at all.
       #
-      # `ignore-unfixed` is what keeps red honest: it always means there is a
-      # version to move to. For a library finding that version comes one of
-      # two ways. In a tool this repo installs and pins (a Dockerfile.ci
-      # `ARG *_VERSION`), the fix is bumping the pin. In the upstream runtime
-      # image (the npm, pip or gem packages it bundles), the fix is the
-      # upstream's patch release, which the weekly rebuild and Dependabot's
-      # base-image bumps pick up. The second means an image can stay red
-      # until upstream ships a patched image; that is accepted, in exchange
-      # for never publishing a known-fixable HIGH/CRITICAL. Unfixed findings
-      # never gate -- they are reported above.
+      # Until 0008 this was absolute: any fixable finding failed the build.
+      # That held whenever the fix was this repo's to take (bump a pin, rebuild
+      # for a Debian update), and failed badly when it was not: urllib3
+      # vendored in pip, brace-expansion and undici bundled in npm, PyJWT
+      # inside the Azure CLI -- each "fixable" by the advisory, none fixed by
+      # any release this repo could install. The gate went red on five images
+      # on both architectures, and stayed red, so the daily rebuild that
+      # delivers Debian's security updates published nothing for them, and
+      # every pull request that rebuilt them was red too.
+      #
+      # So the gate is now a regression check, in four steps:
+      #   1. scan the candidate (this build) to JSON;
+      #   2. find the image published now: the per-arch manifest of
+      #      ghcr.io/<owner>/<image>:<version>;
+      #   3. scan that image the same way;
+      #   4. scripts/vuln-gate.sh compares the two by (VulnerabilityID,
+      #      PkgName, result type) and fails on anything new. What both carry is "known
+      #      upstream" and listed; what only the published image carries is
+      #      "fixed by this build" and listed.
+      # Fail closed: if there is no published image (a new image or a new
+      # contract tag), or it cannot be resolved or scanned for any reason, the
+      # comparison runs against an EMPTY baseline -- every finding blocks,
+      # exactly the old absolute gate -- and the summary says why. Telling
+      # "never published" from "registry error" is done only for that
+      # message: either way the strict gate is the answer, and it can only
+      # fail a build a successful comparison would have passed, never pass one
+      # it would have failed.
+      #
+      # Same scanner, same database, same flags for both scans, or the
+      # comparison would measure the difference between two scans rather than
+      # two images:
+      #   - `skip-setup-trivy: true` -- the Trivy that the report steps above
+      #     installed, already on PATH (setup-trivy adds it), so the same
+      #     binary;
+      #   - `cache: 'false'` and TRIVY_SKIP_DB_UPDATE -- no restore from the
+      #     Actions cache and no download, so both scans read the database
+      #     the report steps above left on disk, byte for byte. Restoring the
+      #     cache between them could swap in a different day's database the
+      #     moment another job saved one. If there is no database on disk,
+      #     Trivy refuses to run with the skip flag, and the step fails
+      #     rather than scanning with nothing;
+      #   - HIGH,CRITICAL, `ignore-unfixed` (red always means a fix exists),
+      #     `vuln-type: os,library`, and the same exception file, so an
+      #     exception excuses a finding in both images or in neither.
       #
       # `vuln-type`, not `pkg-types`. The Trivy CLI renamed this flag, but the
       # action still exposes it under the old name (its own source says "TODO:
@@ -430,17 +480,145 @@ jobs:
       # when this image has none. The pinned action accepts exactly one YAML
       # ignore file and errors on a path that does not exist, which is why an
       # image with no exceptions gets an empty input rather than an empty file.
-      - name: Vulnerability gate (${{ matrix.arch }})
+      #
+      # This step has no continue-on-error: a candidate scan that could not run
+      # fails the job, since there would be nothing to judge.
+      - name: Vulnerability scan for the gate (${{ matrix.arch }})
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        env:
+          TRIVY_SKIP_DB_UPDATE: 'true'
         with:
           image-ref: ${{ inputs.image }}:test
           scanners: vuln
-          format: table
-          exit-code: '1'
+          format: json
+          output: gate-candidate-${{ inputs.image }}-${{ matrix.arch }}.json
+          exit-code: '0'
           ignore-unfixed: true
           severity: HIGH,CRITICAL
           vuln-type: os,library
           trivyignores: ${{ steps.exceptions.outputs.file }}
+          skip-setup-trivy: true
+          cache: 'false'
+
+      # The image a consumer pulls today, for this architecture: the per-arch
+      # manifest in the index behind the rolling tag. scripts/vuln-baseline.sh
+      # has the details: it retries registry errors (5s, 15s, 45s), does not
+      # retry "not found", and never fails the step -- every way of not
+      # finding a baseline becomes `ref=` plus a `note`, which the gate step
+      # turns into the strict comparison. `ref` is a digest reference, so the
+      # scan below reads exactly the bytes resolved here even if the tag
+      # moves in between.
+      #
+      # Authenticated in every context, with this job's own token, so a
+      # private package is a baseline like a public one. The "Login" step
+      # above runs on main only (it is the one publishing needs), and some
+      # packages are private (published-audit.yml); read anonymously, their
+      # gate would run strict on every pull request, and a bot PR for such an
+      # image could never go green. Reading needs only `packages: read`, which
+      # every caller grants: build-and-push.yml's `image` job grants
+      # `packages: write`, and on a Dependabot or fork pull request GitHub
+      # cuts that to read. The script logs in through a throwaway
+      # DOCKER_CONFIG that it deletes on exit, so no later step inherits the
+      # credential; a login that fails is strict, with a warning. Passed
+      # through env, never interpolated into the script.
+      - name: Published baseline (${{ matrix.arch }})
+        id: baseline
+        env:
+          REPO: ghcr.io/${{ github.repository_owner }}/${{ inputs.image }}
+          VERSION: ${{ inputs.version }}
+          ARCH: ${{ matrix.arch }}
+          REGISTRY_USER: ${{ github.actor }}
+          REGISTRY_TOKEN: ${{ github.token }}
+        run: ./scripts/vuln-baseline.sh "$REPO" "$VERSION" "$ARCH"
+
+      # The published image, scanned exactly as the candidate was (see above),
+      # straight from the registry: TRIVY_IMAGE_SRC=remote, so Trivy never
+      # asks the local daemon, which holds only the candidate. Authenticated
+      # with this job's token for the same reason as the step above, through
+      # Trivy's own TRIVY_USERNAME/TRIVY_PASSWORD on this step only: nothing
+      # is written to a Docker config a later step could read.
+      #
+      # continue-on-error, and only here: a baseline that could not be
+      # scanned is not a failed gate but a strict one. The gate step reads
+      # this step's outcome and runs strict on anything but success, saying
+      # so; that never lets through a finding the comparison would have
+      # blocked.
+      - name: Vulnerability scan of the published image (${{ matrix.arch }})
+        id: baseline_scan
+        if: steps.baseline.outputs.ref != ''
+        continue-on-error: true
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        env:
+          TRIVY_SKIP_DB_UPDATE: 'true'
+          TRIVY_IMAGE_SRC: remote
+          TRIVY_USERNAME: ${{ github.actor }}
+          TRIVY_PASSWORD: ${{ github.token }}
+        with:
+          image-ref: ${{ steps.baseline.outputs.ref }}
+          scanners: vuln
+          format: json
+          output: gate-baseline-${{ inputs.image }}-${{ matrix.arch }}.json
+          exit-code: '0'
+          ignore-unfixed: true
+          severity: HIGH,CRITICAL
+          vuln-type: os,library
+          trivyignores: ${{ steps.exceptions.outputs.file }}
+          skip-setup-trivy: true
+          cache: 'false'
+
+      # The decision. scripts/vuln-gate.sh exits 0 when nothing is new, 3 when
+      # something is, 1 when it could not read a report -- and only 0 passes.
+      # It writes a compact summary (counts, the new and fixed findings, the
+      # known ones as a short list), capped far below the step-summary limit
+      # whatever the scan found; every new finding is also in the log.
+      - name: Vulnerability gate (${{ matrix.arch }})
+        env:
+          IMAGE: ${{ inputs.image }}
+          ARCH: ${{ matrix.arch }}
+          BASE_REF: ${{ steps.baseline.outputs.ref }}
+          BASE_NOTE: ${{ steps.baseline.outputs.note }}
+          BASE_SCAN: ${{ steps.baseline_scan.outcome }}
+        run: |
+          args=(--label "$IMAGE ($ARCH)"
+                --candidate "gate-candidate-$IMAGE-$ARCH.json"
+                --summary "gate-$IMAGE-$ARCH.md"
+                --result "gate-$IMAGE-$ARCH.json")
+          if [ -n "$BASE_REF" ] && [ "$BASE_SCAN" = success ]; then
+            args+=(--baseline "gate-baseline-$IMAGE-$ARCH.json" --baseline-ref "$BASE_REF")
+          elif [ -n "$BASE_REF" ]; then
+            echo "::warning::the published image $BASE_REF could not be scanned (outcome: ${BASE_SCAN:-not run}) -- the vulnerability gate runs strict for $ARCH: every finding blocks"
+            args+=(--no-baseline "the published image $BASE_REF could not be scanned (outcome: ${BASE_SCAN:-not run})")
+          else
+            args+=(--no-baseline "${BASE_NOTE:-no published image was resolved}")
+          fi
+          rc=0
+          ./scripts/vuln-gate.sh "${args[@]}" || rc=$?
+          if [ -f "gate-$IMAGE-$ARCH.md" ]; then
+            cat "gate-$IMAGE-$ARCH.md"
+            cat "gate-$IMAGE-$ARCH.md" >> "$GITHUB_STEP_SUMMARY"
+          fi
+          case "$rc" in
+            0) ;;
+            3) echo "::error::$IMAGE ($ARCH) adds fixable HIGH/CRITICAL vulnerabilities that the published image does not have; they are listed in the job summary and the log above"
+               exit 1 ;;
+            *) echo "::error::the vulnerability gate could not decide for $IMAGE ($ARCH) (vuln-gate.sh exit $rc; see the log) -- treated as a failure, not a pass"
+               exit 1 ;;
+          esac
+
+      # Both scans and the decision, for reading a gate result later. always():
+      # a failed gate is exactly when they are wanted.
+      - name: Upload gate reports
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: vuln-gate-${{ inputs.image }}-${{ matrix.arch }}
+          path: |
+            gate-candidate-${{ inputs.image }}-${{ matrix.arch }}.json
+            gate-baseline-${{ inputs.image }}-${{ matrix.arch }}.json
+            gate-${{ inputs.image }}-${{ matrix.arch }}.json
+            gate-${{ inputs.image }}-${{ matrix.arch }}.md
+          if-no-files-found: warn
+          retention-days: 90
 
       # A baked-in credential in a public CI image is always fixable from this
       # repo, so it gates at any severity -- not only HIGH/CRITICAL, and with

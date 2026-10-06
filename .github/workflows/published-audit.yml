@@ -48,10 +48,9 @@ on: # zizmor: ignore[dangerous-triggers]
     # Independent of workflow_run firing at all: if build-and-push.yml's own
     # schedule were ever silently disabled (GitHub does this after 60 days of
     # repository inactivity), no workflow_run event would follow either, and
-    # this would be the only thing left that notices the rebuild stopped. A
-    # day after both the rebuild (Monday 04:17) and pin-drift (Monday 07:41),
-    # so the state this observes has had time to settle rather than racing
-    # either of them.
+    # this would be the only thing left that notices the rebuild stopped.
+    # Tuesdays 06:30, after that day's rebuild (04:17), so the state this
+    # observes has had time to settle rather than racing it.
     - cron: '30 6 * * 2'
   workflow_dispatch:
 
@@ -193,7 +192,7 @@ jobs:
           {
             echo "One or more images published to ghcr.io/${{ github.repository_owner }} did not pass"
             echo "the post-publish audit: pullable, correctly signed, carrying both SBOM and"
-            echo "provenance attestations, and no older than 10 days (weekly rebuild plus margin)."
+            echo "provenance attestations, and no older than 10 days (rebuilt daily; the margin allows for a few failed rebuilds)."
             echo
             cat table.md
             echo
@@ -206,7 +205,7 @@ jobs:
           } > body.md
 
           # Idempotent by construction, same as pin-drift.yml: find the
-          # existing open issue by exact title and edit it, so a weekly run
+          # existing open issue by exact title and edit it, so a scheduled run
           # updates one issue rather than opening a new one every time.
           existing=$(gh issue list --state open --limit 100 --json number,title \
             | jq -r --arg t "$TITLE" 'map(select(.title == $t)) | .[0].number // empty')

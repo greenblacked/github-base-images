@@ -1,33 +1,36 @@
-# Weekly: bump every hand-pinned tool that has fallen behind its vendor, one
-# pull request per tool, and let the safe ones merge themselves once the full
-# CI is green (docs/adr/0007-automatic-updates.md).
+# Daily: bump every hand-pinned tool that has fallen behind its vendor, one
+# pull request per tool (docs/adr/0007-automatic-updates.md). Each one merges
+# itself once the full CI is green, through merge-bot-prs.yml
+# (docs/adr/0008-self-updating.md).
 #
 # pin-drift.yml reports drift; this acts on it. The work is in two scripts,
 # both runnable locally and tested offline by scripts/lint.sh:
 #   scripts/bump-pins.sh      rewrites a version and its vendor checksums
-#   scripts/pin-bump-prs.sh   branch, commit, PR, CI dispatch, auto-merge
+#   scripts/pin-bump-prs.sh   branch, commit, PR, CI dispatch, label
 #
-# Nothing here merges anything directly. An `auto` bump (vendor checksum or
-# registry integrity, not a major version, past the seven-day cooldown) gets
-# GitHub auto-merge, which waits for every check the `main` ruleset requires.
-# A `review` bump gets the `needs-review` label and waits for a human.
+# Nothing here merges anything. merge-bot-prs.yml does, for every bump PR
+# whose four required checks passed on its head commit. A `review` bump (no
+# vendor checksum, or a major version) gets the `needs-review` label as
+# information and merges the same way; add the `hold` label to stop one.
 #
 # The token is the workflow's own GITHUB_TOKEN; no PAT, no app. Its one catch:
 # a push or PR it creates triggers no workflow, so the required checks would
 # never run. The script therefore dispatches Build and Push and Security on
 # each bump branch -- workflow_dispatch is the exception to that rule -- and
-# the check runs attach to the branch head, which is what the ruleset reads.
+# the check runs attach to the branch head, which is what merge-bot-prs.sh
+# reads.
 name: Pin bump
 
 on:
   schedule:
-    # Mondays 08:53 UTC: after the rebuild (04:17), security.yml (05:41) and
+    # Daily 08:53 UTC: after the rebuild (04:17), security.yml (05:41) and
     # pin-drift (07:41), so the drift issue and these PRs describe the same
-    # state, and clear of Tuesday's published-image audit and alerts report.
+    # state, and clear of Tuesday's published-image audit and the alerts
+    # report (08:23).
     #
     # GitHub disables scheduled workflows after 60 days without repository
     # activity, silently. If the last run here is old, trigger it manually.
-    - cron: '53 8 * * 1'
+    - cron: '53 8 * * *'
   workflow_dispatch:
     inputs:
       dry_run:
@@ -59,7 +62,7 @@ jobs:
     timeout-minutes: 30
     permissions:
       contents: write       # push the pin-bump/* branches
-      pull-requests: write  # open and edit the PRs, label them, enable auto-merge
+      pull-requests: write  # open and edit the PRs, label them
       actions: write        # `gh workflow run` on each bump branch
       checks: read          # whether CI ever reported on an existing bump PR
     steps:
@@ -110,7 +113,7 @@ jobs:
   # A dry run of a branch's changes to the scripts, before they reach main,
   # whether or not dry_run was ticked: a dispatch from a branch always lands
   # here rather than doing nothing. The token is read-only, so whatever that
-  # branch's scripts do, they can read the PRs, rules and check runs the real
+  # branch's scripts do, they can read the PRs and check runs the real
   # run reads, and write nothing: a push, PR edit or dispatch fails on
   # permissions.
   preview:

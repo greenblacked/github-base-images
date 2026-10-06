@@ -1,7 +1,10 @@
 # 0006 — The vulnerability gate fails on fixable library findings too
 
 **Status:** accepted; supersedes the library-vulnerability part of
-[0003](0003-gates-vs-reports.md)
+[0003](0003-gates-vs-reports.md). Partially superseded by [0008](0008-self-updating.md): the gate
+now blocks only findings a build adds compared with the published image, and open fixable alerts
+are a warning in the alerts report rather than a failure. The scope (`os,library`, fixable,
+HIGH/CRITICAL) and the exception rules below still hold.
 
 **Date:** 2026-09-26
 

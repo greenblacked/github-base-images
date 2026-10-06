@@ -89,8 +89,8 @@ one to make a build pass, that is usually the bug rather than the test.
 
 Pinned tool versions (Terraform, kubectl, AWS CLI, Docker client in `ci-tools`; Composer in
 `ci-php84` and `ci-php85`) are `ARG`s so a bump is a small change that CI revalidates. Dependabot does **not**
-track these — it only updates each Dockerfile's `ARG BASE_IMAGE` — so they still move when a human
-moves them. What has changed is that you no longer have to *notice*: the weekly
+track these — it only reads each Dockerfile's `ARG BASE_IMAGE` — so they would move only when a human
+moves them. What has changed is that you no longer have to *notice*: the daily
 [pin drift](.github/workflows/pin-drift.yml) job compares every one of them against its vendor's
 current release and maintains a single tracking issue, opened when something falls behind and
 closed when everything is current ([details](docs/pipeline.md#pin-drift)).
@@ -105,13 +105,14 @@ Run it yourself any time:
 Exit codes are `0` current, `3` drift found, `1` a vendor endpoint was unreachable — so drift is
 distinguishable from a broken check.
 
-**Most bumps now make themselves.** The weekly [pin bump](.github/workflows/pin-bump.yml) job
-opens one PR per drifted tool, with the version and its checksums rewritten from the vendor's own
-published files, and dispatches the full CI on it. A bump with a vendor checksum (or registry
-integrity), no major version change, and a release at least seven days old merges itself once every
-required check is green; the rest are labelled `needs-review` and wait for you. The same script
-works locally, and the commands below remain the way to check a checksum by hand
-([ADR 0007](docs/adr/0007-automatic-updates.md)):
+**Bumps make themselves.** The daily [pin bump](.github/workflows/pin-bump.yml) job opens one PR
+per drifted tool whose release is at least seven days old, with the version and its checksums
+rewritten from the vendor's own published files, and dispatches CI on it. Every one merges itself
+once all four required checks are green and is published straight away. One with no vendor
+checksum or a major version is labelled `needs-review` for information; label a PR `hold` to stop
+it merging. The same script works locally, and the commands below remain the way to check a
+checksum by hand ([ADR 0007](docs/adr/0007-automatic-updates.md),
+[ADR 0008](docs/adr/0008-self-updating.md)):
 
 ```bash
 ./scripts/bump-pins.sh --unit kubectl            # both copies, version and checksums
@@ -156,7 +157,8 @@ published — the URL 404s), the AWS CLI installer (detached GPG signature only,
 adding `gnupg` and a pinned AWS public key to the build), and the gcloud CLI in `ci-cloud` (the
 release bucket carries no `.sha256` companions). These stay unverified and labelled rather than
 given a checksum that looks vendor-attested and is not, and their automated bumps are always
-`needs-review`: with no checksum, a human reading the release is the only check on the version.
+labelled `needs-review`. They still merge themselves when green: the full build, smoke tests and
+vulnerability gate are the check on the version, and `hold` stops one.
 
 That is admittedly inconsistent with Composer, which does carry a computed hash until its next
 bump — the difference is historical rather than principled, and worth resolving in one direction
