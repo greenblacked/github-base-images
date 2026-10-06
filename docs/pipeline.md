@@ -67,11 +67,14 @@ defaults (`python:3.13`, `node:22`, `golang:1`, …) stay tag-based on purpose �
 the daily rebuild pick up upstream patches — freezing those to a digest would break the update
 mechanism this repo depends on.
 
-Make each `mirror-*` package public along with its `ci-*` image (the one-time step is in
-[Visibility and authentication](images.md#visibility-and-authentication)). They are byte-identical
-copies of images already public on Docker Hub, so privacy buys nothing — and making them public
-removes any question of whether the build jobs can pull them. If one is left private and a build
-fails to pull the mirror, grant this repository Read on the package via *Manage Actions access*.
+The `mirror-*` packages are kept public like the `ci-*` images: they are byte-identical copies of
+images already public on Docker Hub, so privacy buys nothing. A new one comes out public like any
+new package ([Visibility and authentication](images.md#visibility-and-authentication)), and the
+mirror job checks each one anonymously after mirroring. That check is a warning, not a gate: only
+this repository's build jobs pull the mirrors, and they log in first, so a private mirror breaks
+nothing, and failing would hold back every image's publish over it.
+If a build ever fails to pull a private mirror, grant this repository Read on the package via
+*Manage Actions access*.
 
 Pull requests never touch the mirrors: PR builds use the upstream base directly, so a PR run
 cannot mutate registry state — and the first PR adding a new image does not need its mirror to
@@ -110,7 +113,7 @@ job, is in [Required checks](security.md#required-checks).
 A push or pull request builds **only the images whose directories changed** (a pull request that
 changes none, and no pipeline file, builds nothing) — a one-line fix to `ci-ruby34` does not
 rebuild every other image or move `latest` on them. Changing the pipeline itself (either
-workflow file, `images.json`, or the five scripts `build-image.yml` runs) rebuilds everything; a
+workflow file, `images.json`, or the six scripts `build-image.yml` runs) rebuilds everything; a
 change to `.github/vuln-exceptions.json` rebuilds the images whose entries changed. A
 `workflow_dispatch` on a branch other than `main` is planned the same way as a pull request,
 against where the branch left `main`. That is how the automated update PRs get their checks

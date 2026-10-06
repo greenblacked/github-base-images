@@ -527,7 +527,8 @@ check "PR created" grep -q "^pr create --repo o/r --base main --head $BR --title
 check "Build and Push dispatched on the branch" logged "workflow run build-and-push.yml --repo o/r --ref $BR"
 check "Security dispatched on the branch" logged "workflow run security.yml --repo o/r --ref $BR"
 check "nothing merged here" not_logged '^pr merge'
-check "the body names the one manual step: making the package public" grep -q 'make.*public\|Change visibility' "$log.body"
+check "the body says the publish checks the new package is public" grep -q 'that publish checks it can be' "$log.body"
+check "  and asks for no manual visibility step" bash -c "! grep -qi 'manual step\|\*\*private\*\*\|Change visibility' '$log.body'"
 check "the body says it merges itself, and how to stop it" grep -q 'Add the `hold` label to stop it' "$log.body"
 check "the body records the action for the next run" grep -qxF "<!-- image-lifecycle: action=add image=$PY_IMG key=python:$PY-slim-trixie -->" "$log.body"
 

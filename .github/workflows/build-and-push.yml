@@ -9,7 +9,7 @@
 #   - push / pull_request, and a dispatch on any branch but main -> only the
 #     images whose directories changed (against main, for a pull request or a
 #     dispatched branch), unless the pipeline itself (this file,
-#     build-image.yml, images.json, or the five scripts build-image.yml runs)
+#     build-image.yml, images.json, or the six scripts build-image.yml runs)
 #     changed, in which case everything runs. A one-line fix to ci-ruby34
 #     does not rebuild every image and move `latest` on all of them, and a
 #     bump PR whose CI is dispatched (pin-bump.yml, merge-bot-prs.yml) builds
@@ -40,6 +40,7 @@ on:
       - 'scripts/vuln-gate.sh'
       - 'scripts/vuln-baseline.sh'
       - 'scripts/verify-ref.sh'
+      - 'scripts/check-public.sh'
   # PRs run the full lint -> build -> smoke test -> scan pipeline, but every
   # step that writes to the registry is skipped: PR builds use the upstream
   # base instead of the mirror, and nothing is pushed or tagged. A green PR run
@@ -153,9 +154,9 @@ jobs:
             select_all "diff against $range failed"
           fi
 
-          # A change to the pipeline itself invalidates every image. The five
+          # A change to the pipeline itself invalidates every image. The six
           # scripts count as pipeline: build-image.yml runs them on every image.
-          if grep -qE '^(\.github/(workflows/(build-and-push|build-image)\.yml|images\.json)|scripts/(check-published|osv-scan-sbom|vuln-gate|vuln-baseline|verify-ref)\.sh)$' <<<"$changed"; then
+          if grep -qE '^(\.github/(workflows/(build-and-push|build-image)\.yml|images\.json)|scripts/(check-published|osv-scan-sbom|vuln-gate|vuln-baseline|verify-ref|check-public)\.sh)$' <<<"$changed"; then
             select_all "pipeline definition changed"
           fi
 
@@ -263,6 +264,12 @@ jobs:
       contents: read
       packages: write
     steps:
+      # For scripts/check-public.sh, the last step.
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
       - name: Login to GitHub Container Registry
         uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
         with:
@@ -448,6 +455,28 @@ jobs:
           path: bases.json
           if-no-files-found: error
           retention-days: 90
+
+      # The mirrors are kept public like the ci-* images (docs/pipeline.md,
+      # "Mirrored upstream base"), and a new one comes out public the same
+      # way (docs/images.md, "Visibility and authentication"). The same
+      # anonymous check as build-image.yml's merge job, but a warning, not a
+      # gate: only this repository's own build jobs pull the mirrors, and
+      # they log in first, so a private mirror breaks nothing -- failing here
+      # would hold back every image's publish over it. One retry, not three:
+      # a warning needs less certainty than a gate, and with eighteen tags
+      # the full 70s each could outrun the job's 15 minutes.
+      - name: Check the mirrors are public
+        env:
+          OWNER: ${{ github.repository_owner }}
+          CHECK_PUBLIC_DELAYS: "10"
+        run: |
+          not_public=0
+          for tag in $(jq -r '.[].tag' bases.json); do
+            ./scripts/check-public.sh --warn "ghcr.io/$OWNER/$tag" || not_public=$((not_public + 1))
+          done
+          if [ "$not_public" -gt 0 ]; then
+            echo "$not_public mirror tag(s) not confirmed public -- see the warnings above" >> "$GITHUB_STEP_SUMMARY"
+          fi
 
   # One reusable-workflow call per selected image. Each call fans out into a
   # per-architecture build matrix plus a merge job -- see build-image.yml.

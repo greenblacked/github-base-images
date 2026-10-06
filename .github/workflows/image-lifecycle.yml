@@ -17,9 +17,9 @@
 # depends on which images exist); .github/images.json and
 # .github/dependabot.yml are ordinary files for `contents: write`.
 #
-# The one step this cannot do: a newly published GHCR package is private, and
-# GitHub has no API to change package visibility. The PR that adds an image
-# says so (docs/images.md, "Visibility and authentication").
+# Package visibility needs no step here: a package first published from this
+# repository comes out public, and the publish checks that it can be pulled
+# anonymously (docs/images.md, "Visibility and authentication").
 name: Image lifecycle
 
 on:

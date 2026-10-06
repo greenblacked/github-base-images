@@ -511,10 +511,10 @@ jobs:
       #
       # Authenticated in every context, with this job's own token, so a
       # private package is a baseline like a public one. The "Login" step
-      # above runs on main only (it is the one publishing needs), and some
-      # packages are private (published-audit.yml); read anonymously, their
-      # gate would run strict on every pull request, and a bot PR for such an
-      # image could never go green. Reading needs only `packages: read`, which
+      # above runs on main only (it is the one publishing needs), and a
+      # package can be private (published-audit.yml reports one); read
+      # anonymously, its gate would run strict on every pull request, and a
+      # bot PR for that image could never go green. Reading needs only `packages: read`, which
       # every caller grants: build-and-push.yml's `image` job grants
       # `packages: write`, and on a Dependabot or fork pull request GitHub
       # cuts that to read. The script logs in through a throwaway
@@ -813,7 +813,7 @@ jobs:
 
     steps:
       # For scripts/verify-ref.sh and scripts/check-published.sh, which the
-      # post-sign verification runs.
+      # post-sign verification runs, and scripts/check-public.sh.
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -1027,6 +1027,21 @@ jobs:
           if [ "$rc" -ne 0 ]; then
             exit 1
           fi
+
+      # The packages are meant to be pullable by anyone, with no credentials
+      # (docs/images.md, "Visibility and authentication"). A package first
+      # published from this repository comes out public (observed 2026-10-06,
+      # run 37528439871), although GitHub's documentation says new packages
+      # start private -- so this checks it rather than trusting either.
+      # scripts/check-public.sh asks for an anonymous token and HEADs the
+      # manifest with curl alone: never the `docker login` above, which would
+      # pass on a private package. 3 (not public) and 1 (could not check)
+      # are retried, 10s/20s/40s; either still failing fails the run, with
+      # an ::error:: naming the package and its settings page.
+      - name: Check the package is public
+        env:
+          REF: ghcr.io/${{ github.repository_owner }}/${{ inputs.image }}@${{ steps.resolve.outputs.digest }}
+        run: ./scripts/check-public.sh "$REF"
 
       - name: Report digest and platforms
         env:
