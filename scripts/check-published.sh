@@ -93,6 +93,8 @@ Reads:
                     GITHUB_REPOSITORY, or "greenblacked/github-base-images")
   CHECK_PUBLIC_DELAYS  retry waits for the anonymous-pull check (default
                     here "10": one retry; see scripts/check-public.sh)
+  CHECK_PUBLIC_BUDGET  seconds the anonymous-pull checks may take in all
+                    before the rest are reported unknown (default 240)
 
 Exit: 0 clean, 1 script failure, 2 usage, 3 issues found.
 EOF
@@ -135,6 +137,8 @@ done
 
 repo_root=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
 check_public_script="$repo_root/scripts/check-public.sh"
+public_budget="${CHECK_PUBLIC_BUDGET:-240}"
+[[ "$public_budget" =~ ^[0-9]+$ ]] || { echo "error: CHECK_PUBLIC_BUDGET must be whole seconds, got '$public_budget'" >&2; exit 2; }
 cd "$repo_root" || { echo "error: cannot enter repo root" >&2; exit 1; }
 
 # Both branches of this default have their own fallback, so neither side ever
@@ -169,12 +173,29 @@ checked=0
 # check) and the last line it printed. Its output goes to a file, never to
 # stdout, which is the table or the JSON report. One retry, not its default
 # three: an audit is not racing a first push, and a package that is private
-# stays private for the second look -- 21 images at 70s each would outrun
-# the workflow's timeout.
+# stays private for the second look.
+#
+# Time budget: check-public.sh caps each request at 10s, so one image takes
+# at most 50s here -- but 21 of them against an anonymous endpoint that hangs
+# is over 17 minutes, near the workflow's 20-minute timeout on top of the
+# other checks. So no new anonymous check starts once CHECK_PUBLIC_BUDGET
+# seconds (default 240) have gone into them; the rest are `unknown`, a
+# checker error like any other (exit 1, never a pass). Worst case: the
+# budget plus one check in flight, under five minutes. A budget rather than
+# running them in parallel: it keeps one check at a time, in the report's
+# order, and an endpoint slow enough to spend it would fail them all anyway.
+public_spent=0
 check_anonymous() {
-  local ref="$1" rc=0
+  local ref="$1" rc=0 start
+  if [ "$public_spent" -ge "$public_budget" ]; then
+    public_state=unknown
+    public_detail="not checked: the anonymous checks used up their ${public_budget}s budget (the registry answered slowly or not at all)"
+    return 0
+  fi
+  start=$SECONDS
   CHECK_PUBLIC_DELAYS="${CHECK_PUBLIC_DELAYS-10}" \
     "$check_public_script" "$ref" > "$tmp/public.txt" 2>&1 || rc=$?
+  public_spent=$((public_spent + SECONDS - start))
   public_detail=$(tail -n 1 "$tmp/public.txt" | sed 's/^::[a-z]*:://' | cut -c1-400)
   case "$rc" in
     0) public_state=ok ;;
@@ -396,9 +417,15 @@ audit_target() {
 
   # Independent of check_pull, which is authenticated: run whether or not
   # that pull worked, and only in the full audit (see the header).
+  # Not for a package that does not exist (pull_state=missing, already an
+  # issue): its fix is to publish or retire it, not to make it public.
   public_state=skipped; public_detail=""
   if [ "$check_age" = true ]; then
-    check_anonymous "$ref"
+    if [ "$pull_state" = missing ]; then
+      public_detail="not checked: the package was not found"
+    else
+      check_anonymous "$ref"
+    fi
   fi
 
   sig_state=skipped; sig_identity=""

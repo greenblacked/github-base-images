@@ -75,11 +75,18 @@ run() {
   PATH="$work/bin:$PATH" HOME="$work/home" DOCKER_CONFIG="$work/dockercfg" \
     FAKE_RESPONSES="$work/responses" FAKE_CURL_LOG="$calls" FAKE_SLEEP_LOG="$sleeps" \
     "$script" "$@" > "$out" 2>&1 || rc=$?
+  cat "$calls" >> "$work/allcalls"
 }
 ncalls()  { wc -l < "$calls" | tr -d ' '; }
 call()    { sed -n "${1}p" "$calls"; }
 slept()   { paste -sd, "$sleeps"; }
 has()     { grep -qF -- "$1" "$out"; }
+# every_call OPT VALUE -- every curl call passed OPT immediately followed by VALUE.
+every_call() {
+  [ -s "$calls" ] && awk -F'\t' -v o="$1" -v v="$2" '
+    { f = 0; for (i = 1; i < NF; i++) if ($i == o && $(i + 1) == v) f = 1; if (!f) bad = 1 }
+    END { exit bad }' "$calls"
+}
 hasnt()   { ! grep -qF -- "$1" "$out"; }
 # args N -- call N's arguments, one per line; allargs -- every call's.
 args()    { sed -n "${1}p" "$calls" | tr '\t' '\n'; }
@@ -190,7 +197,29 @@ check "  error says 1 attempt" has "after 1 attempt ("
 CHECK_PUBLIC_DELAYS="10 soon" run "$TOK" 200 -- "$TAG_REF"
 check "a non-numeric delay is a usage error" [ "$rc:$(ncalls)" = "2:0" ]
 
-echo "case 14: usage -- exit 2, nothing requested"
+echo "case 14: every request is bounded in time"
+run 403 "$TOK" 503 "$TOK" 200 -- "$TAG_REF"
+check "exit 0 after 3 attempts" [ "$rc:$(ncalls)" = "0:5" ]
+check "every call: --max-time 10" every_call --max-time 10
+check "every call: --connect-timeout 5" every_call --connect-timeout 5
+CHECK_PUBLIC_MAX_TIME=3 CHECK_PUBLIC_CONNECT_TIMEOUT=2 run "$TOK" 200 -- "$TAG_REF"
+check "CHECK_PUBLIC_MAX_TIME overrides" every_call --max-time 3
+check "CHECK_PUBLIC_CONNECT_TIMEOUT overrides" every_call --connect-timeout 2
+CHECK_PUBLIC_MAX_TIME=0 run "$TOK" 200 -- "$TAG_REF"
+check "a zero max time is a usage error, nothing requested" [ "$rc:$(ncalls)" = "2:0" ]
+CHECK_PUBLIC_CONNECT_TIMEOUT=soon run "$TOK" 200 -- "$TAG_REF"
+check "a non-numeric connect timeout is a usage error" [ "$rc:$(ncalls)" = "2:0" ]
+
+echo "case 15: a redirect is not followed -- could not check"
+CHECK_PUBLIC_DELAYS="10" run "$TOK" 307 "$TOK" 307 -- "$TAG_REF"
+check "exit 1" [ "$rc" -eq 1 ]
+check "4 curl calls: nothing fetched from a Location" [ "$(ncalls)" -eq 4 ]
+check "says manifest HTTP 307" has "could not check whether $TAG_REF is pullable anonymously after 2 attempts (manifest request failed (HTTP 307))"
+check "no settings link" hasnt "Change visibility"
+run 302 302 302 302 -- "$TAG_REF"
+check "a 302 on the token request is could-not-check too" [ "$rc" -eq 1 ]
+
+echo "case 16: usage -- exit 2, nothing requested"
 for bad_ref in "" "docker.io/o/ci-test:v1" "ghcr.io/O/ci-test:v1" "ghcr.io/o/ci-test" "ghcr.io/o/ci-test@sha256:abc" "ghcr.io/ci-test:v1"; do
   run "$TOK" 200 -- "$bad_ref"
   check "rejects '${bad_ref}'" [ "$rc:$(ncalls)" = "2:0" ]
@@ -199,6 +228,11 @@ run "$TOK" 200 --
 check "no argument" [ "$rc:$(ncalls)" = "2:0" ]
 run "$TOK" 200 -- "$TAG_REF" extra
 check "two arguments" [ "$rc:$(ncalls)" = "2:0" ]
+
+echo "across every case above"
+check "curl was called" [ -s "$work/allcalls" ]
+check "no call had -L/--location: a redirect is never followed" bash -c "$(declare -f allargs); calls='$work/allcalls'; ! allargs | grep -qxE -- '-L|--location|--location-trusted'"
+check "no token request had an Authorization header" bash -c "! grep -F 'https://ghcr.io/token?' '$work/allcalls' | grep -qi authorization"
 
 echo
 echo "$pass passed, $failures failed"

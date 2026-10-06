@@ -463,9 +463,16 @@ jobs:
       # gate: only this repository's own build jobs pull the mirrors, and
       # they log in first, so a private mirror breaks nothing -- failing here
       # would hold back every image's publish over it. One retry, not three:
-      # a warning needs less certainty than a gate, and with eighteen tags
-      # the full 70s each could outrun the job's 15 minutes.
+      # a warning needs less certainty than a gate. Each request is capped at
+      # 10s, so a tag takes at most 50s (two attempts of two requests, one
+      # 10s wait) -- but eighteen of them against a registry that hangs
+      # would still be 15 minutes, this whole job's timeout. So the step has
+      # its own 4-minute limit and cannot fail the job (continue-on-error);
+      # the step after it says so when it did not finish cleanly.
       - name: Check the mirrors are public
+        id: mirror-public
+        timeout-minutes: 4
+        continue-on-error: true
         env:
           OWNER: ${{ github.repository_owner }}
           CHECK_PUBLIC_DELAYS: "10"
@@ -477,6 +484,14 @@ jobs:
           if [ "$not_public" -gt 0 ]; then
             echo "$not_public mirror tag(s) not confirmed public -- see the warnings above" >> "$GITHUB_STEP_SUMMARY"
           fi
+
+      - name: Note an incomplete mirror visibility check
+        if: steps.mirror-public.outcome != 'success'
+        env:
+          OUTCOME: ${{ steps.mirror-public.outcome }}
+        run: |
+          echo "::warning::mirror visibility check did not complete (outcome: $OUTCOME); mirrors are only pulled by our own logged-in builds, so publishing continues"
+          echo "Mirror visibility check did not complete (outcome: $OUTCOME); publishing continues." >> "$GITHUB_STEP_SUMMARY"
 
   # One reusable-workflow call per selected image. Each call fans out into a
   # per-architecture build matrix plus a merge job -- see build-image.yml.

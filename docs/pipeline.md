@@ -70,9 +70,9 @@ mechanism this repo depends on.
 The `mirror-*` packages are kept public like the `ci-*` images: they are byte-identical copies of
 images already public on Docker Hub, so privacy buys nothing. A new one comes out public like any
 new package ([Visibility and authentication](images.md#visibility-and-authentication)), and the
-mirror job checks each one anonymously after mirroring. That check is a warning, not a gate: only
-this repository's build jobs pull the mirrors, and they log in first, so a private mirror breaks
-nothing, and failing would hold back every image's publish over it.
+mirror job checks each one anonymously after mirroring. That check is a warning, not a gate, and
+it is time-boxed to four minutes: only this repository's build jobs pull the mirrors, and they log
+in first, so a private mirror breaks nothing, and failing would hold back every image's publish.
 If a build ever fails to pull a private mirror, grant this repository Read on the package via
 *Manage Actions access*.
 

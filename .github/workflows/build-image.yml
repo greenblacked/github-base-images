@@ -1036,8 +1036,9 @@ jobs:
       # scripts/check-public.sh asks for an anonymous token and HEADs the
       # manifest with curl alone: never the `docker login` above, which would
       # pass on a private package. 3 (not public) and 1 (could not check)
-      # are retried, 10s/20s/40s; either still failing fails the run, with
-      # an ::error:: naming the package and its settings page.
+      # are retried, 10s/20s/40s, each request capped at 10s (150s at
+      # worst); either still failing fails the run, with an ::error::
+      # naming the package and its settings page.
       - name: Check the package is public
         env:
           REF: ghcr.io/${{ github.repository_owner }}/${{ inputs.image }}@${{ steps.resolve.outputs.digest }}

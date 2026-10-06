@@ -32,6 +32,13 @@
 # CHECK_PUBLIC_DELAYS overrides the waits (one per retry; "" means a single
 # attempt). The offline tests, scripts/test-check-public.sh, use it.
 #
+# Each request is bounded: 5s to connect, 10s in all (CHECK_PUBLIC_CONNECT_TIMEOUT
+# and CHECK_PUBLIC_MAX_TIME override them). An attempt is at most two
+# requests, so the worst case -- a registry that accepts the connection and
+# then hangs -- is 20s per attempt plus the waits: 150s with the defaults,
+# 50s with CHECK_PUBLIC_DELAYS=10. Callers that check many references budget
+# for that (build-and-push.yml's mirror job, check-published.sh).
+#
 # On failure the last line is a GitHub annotation naming the package and its
 # settings page -- ::error:: by default, ::warning:: with --warn (for callers
 # that report rather than gate).
@@ -61,6 +68,10 @@ for d in ${delays[@]+"${delays[@]}"}; do
   [[ "$d" =~ ^[0-9]+$ ]] || { echo "error: CHECK_PUBLIC_DELAYS must be whole seconds, got '$d'" >&2; exit 2; }
 done
 attempts=$(( ${#delays[@]} + 1 ))
+max_time="${CHECK_PUBLIC_MAX_TIME:-10}" connect_timeout="${CHECK_PUBLIC_CONNECT_TIMEOUT:-5}"
+for v in "$max_time" "$connect_timeout"; do
+  [[ "$v" =~ ^[1-9][0-9]*$ ]] || { echo "error: CHECK_PUBLIC_MAX_TIME and CHECK_PUBLIC_CONNECT_TIMEOUT must be whole seconds above 0, got '$v'" >&2; exit 2; }
+done
 
 command -v curl >/dev/null || { echo "error: curl not found" >&2; exit 1; }
 command -v jq >/dev/null || { echo "error: jq not found" >&2; exit 1; }
@@ -74,7 +85,9 @@ accept='application/vnd.oci.image.index.v1+json, application/vnd.oci.image.manif
 probe() {
   local code token
   # No -H, no -u, no --netrc: this request carries no credential at all.
-  code=$(curl -q -sS --max-time 30 -o "$tmp/token.json" -w '%{http_code}' \
+  # No -L on either request: a redirect is not followed, it is an answer
+  # this does not expect (could not check).
+  code=$(curl -q -sS --connect-timeout "$connect_timeout" --max-time "$max_time" -o "$tmp/token.json" -w '%{http_code}' \
     "https://ghcr.io/token?scope=repository:${name}:pull&service=ghcr.io" 2>"$tmp/curl.err") || true
   case "$code" in
     200) ;;
@@ -86,7 +99,7 @@ probe() {
     rc=1; why="token response had no token"; return 0
   fi
 
-  code=$(curl -q -sS --max-time 30 -I -o /dev/null -w '%{http_code}' \
+  code=$(curl -q -sS --connect-timeout "$connect_timeout" --max-time "$max_time" -I -o /dev/null -w '%{http_code}' \
     -H "Authorization: Bearer $token" -H "Accept: $accept" \
     "https://ghcr.io/v2/${name}/manifests/${reference}" 2>"$tmp/curl.err") || true
   case "$code" in
