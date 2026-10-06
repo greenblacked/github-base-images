@@ -9,7 +9,7 @@
 #   - push / pull_request, and a dispatch on any branch but main -> only the
 #     images whose directories changed (against main, for a pull request or a
 #     dispatched branch), unless the pipeline itself (this file,
-#     build-image.yml, images.json, or the four scripts build-image.yml runs)
+#     build-image.yml, images.json, or the five scripts build-image.yml runs)
 #     changed, in which case everything runs. A one-line fix to ci-ruby34
 #     does not rebuild every image and move `latest` on all of them, and a
 #     bump PR whose CI is dispatched (pin-bump.yml, merge-bot-prs.yml) builds
@@ -39,6 +39,7 @@ on:
       - 'scripts/osv-scan-sbom.sh'
       - 'scripts/vuln-gate.sh'
       - 'scripts/vuln-baseline.sh'
+      - 'scripts/verify-ref.sh'
   # PRs run the full lint -> build -> smoke test -> scan pipeline, but every
   # step that writes to the registry is skipped: PR builds use the upstream
   # base instead of the mirror, and nothing is pushed or tagged. A green PR run
@@ -152,9 +153,9 @@ jobs:
             select_all "diff against $range failed"
           fi
 
-          # A change to the pipeline itself invalidates every image. The four
+          # A change to the pipeline itself invalidates every image. The five
           # scripts count as pipeline: build-image.yml runs them on every image.
-          if grep -qE '^(\.github/(workflows/(build-and-push|build-image)\.yml|images\.json)|scripts/(check-published|osv-scan-sbom|vuln-gate|vuln-baseline)\.sh)$' <<<"$changed"; then
+          if grep -qE '^(\.github/(workflows/(build-and-push|build-image)\.yml|images\.json)|scripts/(check-published|osv-scan-sbom|vuln-gate|vuln-baseline|verify-ref)\.sh)$' <<<"$changed"; then
             select_all "pipeline definition changed"
           fi
 

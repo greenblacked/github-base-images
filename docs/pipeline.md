@@ -110,7 +110,7 @@ job, is in [Required checks](security.md#required-checks).
 A push or pull request builds **only the images whose directories changed** (a pull request that
 changes none, and no pipeline file, builds nothing) — a one-line fix to `ci-ruby34` does not
 rebuild every other image or move `latest` on them. Changing the pipeline itself (either
-workflow file, `images.json`, or the four scripts `build-image.yml` runs) rebuilds everything; a
+workflow file, `images.json`, or the five scripts `build-image.yml` runs) rebuilds everything; a
 change to `.github/vuln-exceptions.json` rebuilds the images whose entries changed. A
 `workflow_dispatch` on a branch other than `main` is planned the same way as a pull request,
 against where the branch left `main`. That is how the automated update PRs get their checks
