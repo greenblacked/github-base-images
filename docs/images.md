@@ -195,7 +195,10 @@ every other automated update ([Automatic updates](pipeline.md#automatic-updates)
   the build, so they are no longer rebuilt or re-scanned. Their packages stay pullable until the
   owner deletes them; no workflow here deletes a package.
 - **Closing one of these pull requests is a veto.** It is not reopened for the same change: an
-  add closed unmerged is not proposed again for that tag, a retirement not for that date.
+  add closed unmerged is not proposed again for that tag, a retirement not for that date. The
+  workflow closes one itself when its change stops being due (an end of support that moved, say),
+  labelled `lifecycle-superseded`; that is not a veto. It never closes one because a source was
+  unreachable.
 - **`ci-go`, `ci-rust` and the tool images are not part of this.** Go and Rust track current
   stable ([why](#go-and-rust)); the tool images have no runtime line.
 

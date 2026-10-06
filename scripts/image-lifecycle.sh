@@ -77,6 +77,7 @@ readonly MIN_NOTICE_DAYS=30
 readonly OWNER_REF=ghcr.io/greenblacked
 readonly BOT_NAME='github-actions[bot]'
 readonly BOT_EMAIL='41898282+github-actions[bot]@users.noreply.github.com'
+readonly SUPERSEDED=lifecycle-superseded
 readonly CHECK_WORKFLOWS=("CI result|build-and-push.yml" "Repository secret scan|security.yml"
   "CodeQL (workflows)|security.yml" "Dependency review|security.yml")
 
@@ -104,7 +105,9 @@ repo=${GITHUB_REPOSITORY:-}
 
 log()  { printf '%s\n' "$*" >&2; }
 die()  { log "error: $*"; exit 2; }
+warn_count=0
 warn() {
+  warn_count=$((warn_count + 1))
   log "warning: $*"
   [ -z "${WARNINGS:-}" ] || printf '%s\n' "$*" >> "$WARNINGS"
 }
@@ -333,7 +336,9 @@ plan() {
   [ -f "$state" ] || state="$tmp/empty-state.json"
   members "$images" > "$tmp/members.tsv"
 
+  local warned_before
   for fam in $(families); do
+    warned_before=$warn_count
     if ! grep -q "$(printf '\t')$fam$(printf '\t')" "$tmp/members.tsv"; then
       log "$fam: no image in this family; nothing to compare a new line with, so nothing is added"
       continue
@@ -426,6 +431,10 @@ plan() {
         --arg was "$st_eol" '{action:"deprecate", image:$i, family:$f, cycle:$c, eol:$e, successor:$s, key:$e}
                              + (if $was == "" then {} else {previous_eol:$was} end)'
     done < <(awk -F'\t' -v f="$fam" '$2 == f' "$tmp/members.tsv")
+    # The family's plan is complete -- every source it needed was read, and
+    # nothing was skipped on a warning -- so what is not in it is really not
+    # due. Only such a family's open pull requests may be closed as stale.
+    if [ "$warn_count" -eq "$warned_before" ] && [ -n "${PLAN_COMPLETE:-}" ]; then echo "$fam" >> "$PLAN_COMPLETE"; fi
   done
 }
 
@@ -935,14 +944,19 @@ one_action() { # ACTION-JSON
 
   remote_sha=$(git rev-parse -q --verify "refs/remotes/origin/$branch" || true)
   pr_all=$(gh_read "pr-$slug" pr list --repo "$repo" --head "$branch" --base "$base" --state all \
-            --limit 50 --json number,state,url,body,headRefName,isCrossRepository)
+            --limit 50 --json number,state,url,body,headRefName,isCrossRepository,labels)
   pr_all=$(jq -c --arg b "$branch" '[.[] | select(.headRefName == $b and (.isCrossRepository | not))]' <<<"$pr_all")
   open_json=$(jq -c '[.[] | select(.state == "OPEN")][0] // empty' <<<"$pr_all")
   if [ -n "$open_json" ]; then
     pr_num=$(jq -r .number <<<"$open_json"); pr_url=$(jq -r .url <<<"$open_json")
-    prev_key=$(jq -r '.body // ""' <<<"$open_json" | sed -nE 's/.*<!-- image-lifecycle: action=[a-z]+ image=[^ ]+ key=([^ ]+) -->.*/\1/p' | head -1)
+    prev_key=$(jq -r '.body // ""' <<<"$open_json" | sed -nE 's/.*<!-- image-lifecycle: action=[a-z]+ image=[^ ]+ .*key=([^ ]+) -->.*/\1/p' | head -1)
   fi
-  closed_same=$(jq -r --arg k "key=$key -->" '[.[] | select(.state == "CLOSED" and ((.body // "") | contains($k)))][0].url // empty' <<<"$pr_all")
+  # A PR closed unmerged is a veto -- unless this workflow closed it as no
+  # longer due, which it marks with the $SUPERSEDED label: then, when the
+  # change is due again, a fresh PR opens. Labels that cannot be read count
+  # as a veto (a person's decision is never overridden on a guess).
+  closed_same=$(jq -r --arg k "key=$key -->" --arg sup "$SUPERSEDED" '[.[] | select(.state == "CLOSED" and ((.body // "") | contains($k))
+      and ((.labels | type) != "array" or (any(.labels[]; .name == $sup) | not)))][0].url // empty' <<<"$pr_all")
   if [ -z "$open_json" ] && [ -n "$closed_same" ]; then
     row skipped "not reopened: $closed_same was closed unmerged for the same change"
     return 0
@@ -1136,7 +1150,83 @@ pr_body() { # ACTION-JSON WORKTREE
   echo "never pushes over a commit it did not make."
   echo
   [ -n "${RUN_URL:-}" ] && { echo "Run: $RUN_URL"; echo; }
-  echo "<!-- image-lifecycle: action=$action image=$img key=$(jq -r .key <<<"$a") -->"
+  # Read back by the next run (key), and for a retirement by merge-bot-prs.sh,
+  # which merges it only while this eol is past and still what main's
+  # .github/lifecycle.json records.
+  echo "<!-- image-lifecycle: action=$action image=$img$( [ "$action" = retire ] && printf ' eol=%s' "$(jq -r .eol <<<"$a")") key=$(jq -r .key <<<"$a") -->"
+}
+
+# Open lifecycle PRs whose change is no longer due -- a retirement whose end
+# of support moved into the future, an add whose line upstream withdrew --
+# would otherwise stay open, and the merge bot would merge them when green.
+# Each is closed, labelled $SUPERSEDED (which keeps the close from counting as
+# a veto) and its branch deleted. Only for a family whose plan today was
+# complete: an outage or any warning on the way leaves every PR open. A PR
+# with someone else's commits is left to them, with a warning.
+close_stale() {
+  local prs n ref action img fam f a body reason emails foreign rc label_ok=""
+  rc=0; prs=$(gh_read open-prs api --paginate "repos/$repo/pulls?state=open&base=$base&per_page=100") || rc=$?
+  if [ "$rc" -ne 0 ] || ! prs=$(jq -sc --arg repo "$repo" '
+        if all(.[]; type == "array") then add // [] else error("not arrays") end
+        | [.[] | select((.head.repo.full_name // "") == $repo and .user.login == "github-actions[bot]"
+                        and (.head.ref | startswith("lifecycle/")))]' <<<"$prs" 2>/dev/null); then
+    warn "could not list the open pull requests (exit $rc), so no stale lifecycle pull request was looked for"
+    return 0
+  fi
+  while IFS=$'\t' read -r n ref; do
+    [ -n "$n" ] || continue
+    action=${ref#lifecycle/}; action=${action%%-*}; img=${ref#lifecycle/"$action"-}
+    jq -e --arg a "$action" --arg i "$img" 'select(.action == $a and .image == $i)' "$work/plan.jsonl" >/dev/null 2>&1 && continue
+    fam=""
+    for f in $(families); do case "$img" in "ci-$f"[0-9]*) fam=$f ;; esac; done
+    case "$action" in add|deprecate|retire) ;; *) fam="" ;; esac
+    if [ -z "$fam" ]; then
+      warn "#$n ($ref): not a lifecycle change this script makes; left open"
+      continue
+    fi
+    if ! grep -qx "$fam" "$PLAN_COMPLETE"; then
+      log "#$n ($ref) is not in today's plan, but the $fam plan was not complete; left open"
+      continue
+    fi
+    rc=0; emails=$(git log --format='%ae%n%ce' "origin/$base..origin/$ref" 2>/dev/null) || rc=$?
+    foreign=$(printf '%s\n' "$emails" | grep -vxF "$BOT_EMAIL" | grep -v '^$' | sort -u | paste -sd, - || true)
+    if [ "$rc" -ne 0 ] || [ -n "$foreign" ]; then
+      warn "#$n ($ref) is no longer due, but it has commits not made by this workflow (${foreign:-the branch could not be read}); left open for its author"
+      continue
+    fi
+    a=$(jq -c --arg i "$img" 'select(.image == $i)' "$work/plan.jsonl" | head -1)
+    if [ -n "$a" ]; then
+      reason="today's plan has \`$(jq -r .action <<<"$a")\` for \`$img\` instead (end of support $(jq -r '.eol // "unknown"' <<<"$a"))"
+    else
+      case "$action" in
+        add) reason="endoflife.date and the registry no longer show this line as due to be added" ;;
+        deprecate) reason="its end of support is no longer within $NOTICE_DAYS days, or already recorded on $base" ;;
+        retire) reason="its end of support, as endoflife.date gives it today, has not passed, or $base no longer records the deprecation it retires" ;;
+      esac
+    fi
+    body="No longer due as of $today: $reason. Closed by the image lifecycle workflow and labelled \`$SUPERSEDED\`, so this is not a veto: if the change becomes due again, a new pull request opens.${RUN_URL:+ Run: $RUN_URL}"
+    if [ -z "$label_ok" ]; then
+      rc=0
+      run gh label create "$SUPERSEDED" --repo "$repo" --color cccccc \
+        --description "Closed by the image lifecycle workflow as no longer due; not a veto" >/dev/null 2>&1 || rc=$?
+      if [ "$rc" -ne 0 ] && ! gh_read labels label list --repo "$repo" --search "$SUPERSEDED" --json name \
+           | jq -e --arg l "$SUPERSEDED" 'any(.[]; .name == $l)' >/dev/null 2>&1; then
+        warn "could not create the $SUPERSEDED label; #$n ($ref) left open, since closing it unlabelled would read as a veto"
+        continue
+      fi
+      label_ok=1
+    fi
+    rc=0
+    run gh pr edit "$n" --repo "$repo" --add-label "$SUPERSEDED" || rc=$?
+    [ "$rc" -eq 0 ] && { run gh pr close "$n" --repo "$repo" --comment "$body" --delete-branch || rc=$?; }
+    if [ "$rc" -eq 0 ]; then
+      jq -nc --arg a "$action" --arg i "$img" --arg n "#$n" --arg r "$reason" \
+        '{action:$a, image:$i, key:"", pr:$n, status:"closed", did:"closed as no longer due, labelled, branch deleted", note:$r}' >> "$RESULTS"
+    else
+      jq -nc --arg a "$action" --arg i "$img" --arg n "#$n" --arg rc "$rc" \
+        '{action:$a, image:$i, key:"", pr:$n, status:"error", did:"none", note:("closing the stale PR failed (exit " + $rc + ")")}' >> "$RESULTS"
+    fi
+  done < <(jq -r '.[] | [(.number | tostring), .head.ref] | @tsv' <<<"$prs")
 }
 
 prs() {
@@ -1155,6 +1245,7 @@ prs() {
     "+refs/heads/$base:refs/remotes/origin/$base" "+refs/heads/lifecycle/*:refs/remotes/origin/lifecycle/*"
   # The plan reads the base branch as it is now, not this checkout.
   local_run git worktree add --quiet --detach "$work/base" "origin/$base"
+  PLAN_COMPLETE="$work/complete.txt"; : > "$PLAN_COMPLETE"
   root="$work/base" plan > "$work/plan.jsonl"
 
   local a rc before
@@ -1166,6 +1257,8 @@ prs() {
       jq -nc --argjson a "$a" --arg rc "$rc" '{action:$a.action, image:$a.image, key:$a.key, pr:"", status:"error", did:"none", note:("aborted, exit " + $rc)}' >> "$RESULTS"
     fi
   done < "$work/plan.jsonl"
+
+  close_stale
 
   {
     echo "### Image lifecycle${dry:+ (dry run)}"

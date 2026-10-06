@@ -660,6 +660,47 @@ check "only #201 merged, and main published once" bash -c "[ \"\$(grep -c '^pr m
 # The waits are real waits by default: 2, 4, 8 and 16 seconds.
 check "the default backoff is about 30s" grep -qF -- "mergeable_delays=\${MERGE_BOT_MERGEABLE_DELAYS:-2 4 8 16}" "$bot"
 
+echo "case 22: a lifecycle retirement merges only while main's record still makes it due"
+# retire_pr N IMAGE BODY-MARKER-EOL ("" for no marker) -- a green lifecycle
+# retirement PR, its body carrying the marker image-lifecycle.sh writes.
+retire_pr() {
+  pr "$1" lifecycle "$H1"
+  jq --argjson n "$1" --arg r "lifecycle/retire-$2" 'map(if .number == $n then .head.ref = $r else . end)' "$stub/prs.json" > "$stub/p.tmp" && mv "$stub/p.tmp" "$stub/prs.json"
+  local body="Retire it."
+  [ -z "$3" ] || body="$body
+<!-- image-lifecycle: action=retire image=$2 eol=$3 key=$3 -->"
+  jq --arg b "$body" '.body = $b' "$stub/pr-$1.json" > "$stub/p.tmp" && mv "$stub/p.tmp" "$stub/pr-$1.json"
+}
+scenario twentytwo
+retire_pr 221 ci-node22 2026-11-10            # due: past, and main records it so
+retire_pr 222 ci-node20 2026-11-10            # main's record moved the date (eol extended upstream)
+retire_pr 223 ci-dotnet9 2026-12-01           # the marker's date has not passed
+retire_pr 224 ci-dotnet8 ""                   # no marker at all
+retire_pr 225 ci-php82 2026-11-10             # main no longer records it as deprecated
+jq -n '[{image: "ci-node22", state: "deprecated", eol: "2026-11-10"}, {image: "ci-node20", state: "deprecated", eol: "2027-05-01"},
+        {image: "ci-dotnet9", state: "deprecated", eol: "2026-12-01"}, {image: "ci-dotnet8", state: "deprecated", eol: "2026-11-10"}]' > "$stub/lifecycle-json.json"
+run_bot MERGE_BOT_TODAY=2026-11-20
+check "exit 0" [ "$rc" -eq 0 ]
+expect 221 status merged
+expect 222 status waiting
+check "  a moved end of support: the note says main records another date" bash -c "jq -r 'select(.pr == 222) | .note' '$res' | grep -q 'does not record ci-node20 as deprecated with end of support 2026-11-10'"
+expect 223 status waiting
+check "  a date still in the future: not due" bash -c "jq -r 'select(.pr == 223) | .action' '$res' | grep -q 'retirement not due'"
+expect 224 status unreadable
+check "  no marker: not merged on a guess" bash -c "jq -r 'select(.pr == 224) | .note' '$res' | grep -q 'no readable end-of-support marker'"
+expect 225 status waiting
+check "only #221 merged" [ "$(grep -c '^pr merge' "$log")" -eq 1 ]
+# On the end-of-support date itself it is not past yet.
+scenario twentytwo-b
+retire_pr 226 ci-node22 2026-11-10
+run_bot MERGE_BOT_TODAY=2026-11-10
+expect 226 status waiting
+scenario twentytwo-c
+retire_pr 227 ci-node22 2026-11-10            # main's record cannot be read (no stub answer)
+run_bot MERGE_BOT_TODAY=2026-11-20
+expect 227 status unreadable
+check "  an unreadable record: not merged" no_writes
+
 echo "case 21: what starts the merge bot (the workflows' request-merge jobs)"
 # YAML the scripts do not run, so read structurally: every workflow that
 # carries a bot PR's checks, or is a daily backstop, ends by dispatching the

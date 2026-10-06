@@ -96,11 +96,13 @@
 #   MERGE_BOT_GH_STUB  directory of canned answers for the read-only queries
 #                      (main.json, prs.json, pr-<n>.json, commits-<n>.json,
 #                      checks-<n>.json, compare-<n>.json, comments-<n>.json,
-#                      head-<n>.json), for the offline tests; a missing file is
+#                      head-<n>.json, lifecycle-json.json), for the offline tests; a missing file is
 #                      a failed read, and <name>.exit, if present, is the
 #                      query's exit status
 #   MERGE_BOT_RESULTS  also write the per-PR results, one JSON object per
 #                      line, to this file (the offline tests read it)
+#   MERGE_BOT_TODAY    YYYY-MM-DD, default today (UTC): when a lifecycle
+#                      retirement's end of support has passed
 #   MERGE_BOT_MERGEABLE_DELAYS
 #                      the waits, in seconds, between re-reads of a green PR
 #                      whose mergeability GitHub has not computed yet (default
@@ -376,6 +378,15 @@ one_pr() {
        row waiting "not merged: GitHub has not worked out whether it merges cleanly yet"; return 0 ;;
   esac
 
+  # A retirement is merged only while it is still due by main's own record.
+  # The lifecycle workflow closes a retirement PR that stopped being due (its
+  # end of support moved upstream), but only on its next daily run; this
+  # closes the window before that. No endoflife.date call here: main's
+  # .github/lifecycle.json is the record the lifecycle run itself updates.
+  if [ "$kind" = lifecycle ] && [[ "$ref" == lifecycle/retire-* ]]; then
+    retire_still_due || return 0
+  fi
+
   recheck || return 0
   note="all four checks passed on ${sha:0:12}"
   rc=0; run gh pr merge "$n" --repo "$repo" --squash --match-head-commit "$sha" 2> "$work/merge-$n.err" || rc=$?
@@ -405,6 +416,40 @@ one_pr() {
     return 1
   fi
   row merged "merged (squash) at ${sha:0:12}"
+}
+
+# For a lifecycle/retire-<image> PR: its body marker names the end of
+# support it retires on (eol=YYYY-MM-DD); merge only when that date has
+# passed AND main's .github/lifecycle.json records the image deprecated with
+# the same date. Anything missing or unreadable is not merged. Writes a row
+# and returns 1 when the merge must not happen. Shares one_pr's locals.
+retire_still_due() {
+  local img=${ref#lifecycle/retire-} eol today state rc=0
+  today=${MERGE_BOT_TODAY:-$(date -u +%Y-%m-%d)}
+  eol=$(jq -r '.body // ""' <<<"$detail" \
+    | sed -nE "s/.*<!-- image-lifecycle: action=retire image=$img eol=([0-9]{4}-[0-9]{2}-[0-9]{2}) key=[^ ]+ -->.*/\\1/p" | head -1)
+  if [ -z "$eol" ]; then
+    note="a retirement whose body has no readable end-of-support marker for $img; not merged on a guess"
+    row unreadable "not merged"
+    return 1
+  fi
+  if ! [[ "$eol" < "$today" ]]; then
+    note="it retires $img on an end of support of $eol, which has not passed ($today)"
+    row waiting "not merged: retirement not due"
+    return 1
+  fi
+  state=$(gh_read lifecycle-json api -H 'Accept: application/vnd.github.raw+json' \
+    "repos/$repo/contents/.github/lifecycle.json?ref=$main_sha") || rc=$?
+  if [ "$rc" -ne 0 ] || ! jq -e 'type == "array"' <<<"$state" >/dev/null 2>&1; then
+    note="$base's .github/lifecycle.json could not be read (exit $rc), so whether $img is still due to retire is unknown"
+    row unreadable "not merged"
+    return 1
+  fi
+  if ! jq -e --arg i "$img" --arg e "$eol" 'any(.[]; .image == $i and .state == "deprecated" and .eol == $e)' <<<"$state" >/dev/null; then
+    note="$base's .github/lifecycle.json does not record $img as deprecated with end of support $eol (now: $(jq -c --arg i "$img" '[.[] | select(.image == $i) | {state, eol}]' <<<"$state")); the lifecycle workflow closes this PR if it is no longer due"
+    row waiting "not merged: retirement no longer matches main"
+    return 1
+  fi
 }
 
 # Whether the PR on stdin carries the `hold` label.

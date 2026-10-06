@@ -78,6 +78,18 @@ row go; usage examples that pull it point at its successor; the docs keep a *Ret
 the anchor the notice had, so links to it keep working. An image past end of support that was
 never announced is announced first.
 
+**What stops being due is closed, by the bot, never on an outage.** Each run closes any open
+lifecycle pull request whose change is no longer in its plan (a retirement whose end of support
+moved into the future, an add whose line upstream withdrew), with a comment saying why, the
+`lifecycle-superseded` label, and its branch deleted. It does so only for a runtime whose plan
+that day was complete; an unreadable source, or any warning for that runtime, closes nothing. A PR
+someone else committed to is left open, with a warning. Closing is a veto only when a person did
+it: a PR the bot closed (labelled) does not stop a fresh one when the change is due again, and a
+PR whose labels cannot be read counts as a person's veto. Between a retirement ceasing to be due
+and the next daily run, the merge bot itself refuses a `lifecycle/retire-*` PR unless the
+end-of-support date in its marker has passed and `main`'s `.github/lifecycle.json` still records
+that date; no marker, or a record it cannot read, is not merged.
+
 **Unknowns are never actions.** If endoflife.date cannot be read, nothing is added, deprecated or
 retired for that runtime that day. If the registry errors rather than answering "no such tag", that
 line is not added, and the next distribution is not tried either. Both are warnings in the run
@@ -162,9 +174,11 @@ So, within `GITHUB_TOKEN` (a dispatch made with it does start a run):
 - **Prose that names a specific image** outside the generated parts (an example, a comparison)
   is not rewritten by the add, and only full image references are moved to the successor by the
   retirement. Such mentions go stale until someone edits them.
-- **A lifecycle pull request that is no longer wanted is not closed automatically** (an add
-  overtaken by a newer line, a deprecation whose date moved out of the window). It stays open and
-  green; close it, and it is not reopened for the same change.
+- **A lifecycle pull request that is no longer due is closed by the next daily run** (an add
+  whose line was withdrawn, a retirement or deprecation whose date moved), labelled
+  `lifecycle-superseded`, its branch deleted. Until then the merge bot refuses a retirement that
+  `main`'s record no longer supports. So is an add overtaken by a newer line of the same runtime
+  that merged first: the older line is no longer newer than the newest image (no backfill).
 - Several retirements due on the same day are separate pull requests that touch neighbouring lines,
   so the second conflicts once the first merges; the next daily run rebuilds it from `main`.
 

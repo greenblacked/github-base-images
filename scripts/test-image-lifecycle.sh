@@ -486,10 +486,27 @@ not_logged() { ! grep -qE -- "$1" "$log"; }
 head_of()    { git -C "$origin" rev-parse -q --verify "refs/heads/$1" || true; }
 main_sha()   { git -C "$origin" rev-parse refs/heads/main; }
 # pr_stub BRANCH NUMBER STATE KEY ACTION IMAGE
+# pr_stub BRANCH NUMBER STATE KEY ACTION IMAGE [LABELS-JSON] -- without
+# LABELS-JSON the answer carries no labels field at all (unknown labels).
 pr_stub() {
-  jq -n --arg b "$1" --argjson n "$2" --arg s "$3" --arg k "$4" --arg a "$5" --arg i "$6" \
+  jq -n --arg b "$1" --argjson n "$2" --arg s "$3" --arg k "$4" --arg a "$5" --arg i "$6" --argjson l "${7:-null}" \
     '[{number: $n, state: $s, url: ("https://github.com/o/r/pull/" + ($n | tostring)), headRefName: $b, isCrossRepository: false,
-       body: ("text\n<!-- image-lifecycle: action=" + $a + " image=" + $i + " key=" + $k + " -->")}]' > "$stub/pr-${1//\//_}.json"
+       body: ("text\n<!-- image-lifecycle: action=" + $a + " image=" + $i + " key=" + $k + " -->")}
+      + (if $l == null then {} else {labels: $l} end)]' > "$stub/pr-${1//\//_}.json"
+}
+# open_pr NUMBER BRANCH [LOGIN] -- one more open PR in `GET pulls?state=open`.
+open_pr() {
+  [ -f "$stub/open-prs.json" ] || echo '[]' > "$stub/open-prs.json"
+  jq --argjson n "$1" --arg r "$2" --arg u "${3:-github-actions[bot]}" \
+    '. + [{number: $n, user: {login: $u}, head: {ref: $r, repo: {full_name: "o/r"}}}]' "$stub/open-prs.json" > "$stub/o.tmp" && mv "$stub/o.tmp" "$stub/open-prs.json"
+}
+# seed_branch BRANCH AUTHOR-EMAIL -- a one-commit branch on origin.
+seed_branch() {
+  local s="$d/seed-${1//\//_}"
+  rm -rf "${s:?}"; git clone -q "$origin" "$s"
+  echo "# seeded" >> "$s/README.md"
+  git -C "$s" -c user.name=x -c user.email="$2" commit -qam seed
+  git -C "$s" push -q origin "HEAD:refs/heads/$1"
 }
 py_ga() { release python "{\"name\": \"$PY\", \"releaseDate\": \"$(day -30)\"}"; hub python "$PY-slim-trixie" amd64 arm64; }
 BR="lifecycle/add-$PY_IMG"
@@ -555,6 +572,15 @@ pr_stub "$BR" 77 CLOSED "python:$PY-slim-trixie" add "$PY_IMG"
 run_prs
 check "exit 0, skipped" [ "$rc:$(rrow "$PY_IMG" status)" = "0:skipped" ]
 check "  no branch, no write" bash -c "[ -z '$(head_of "$BR")' ] && [ ! -s '$log' ]"
+fixtures r6b; py_ga; scenario r6b
+pr_stub "$BR" 78 CLOSED "python:$PY-slim-trixie" add "$PY_IMG" '[{"name": "something-else"}]'
+run_prs
+check "closed by a person (no superseded label): still a veto" [ "$rc:$(rrow "$PY_IMG" status)" = "0:skipped" ]
+fixtures r6c; py_ga; scenario r6c
+pr_stub "$BR" 79 CLOSED "python:$PY-slim-trixie" add "$PY_IMG" '[{"name": "lifecycle-superseded"}]'
+run_prs
+check "closed by this workflow as no longer due: not a veto, a fresh PR opens" [ "$rc:$(rrow "$PY_IMG" status)" = "0:ok" ]
+check "  created, not reopened" bash -c "grep -q '^pr create .* --head $BR ' '$log' && ! grep -q '^pr reopen' '$log'"
 
 echo "prs 7: deprecate, then retire, through pull requests"
 with_eol_state() { echo "[$(dep_entry "$OLD_NODE" "$(day -1)" "$(day -60)")]" > "$1/.github/lifecycle.json"; "$lc" render --root "$1"; }
@@ -597,6 +623,44 @@ check "exit 0, nothing written" bash -c "[ $rc -eq 0 ] && [ ! -s '$log' ]"
 check "a ::notice:: annotation names the line and the tag" grep -q "^::notice::python $PY is released and supported upstream, but not yet published as python:$PY-slim-trixie" "$out"
 check "the summary lists it under waiting" grep -q '^Waiting for an upstream tag (checked again tomorrow):' "$out"
 check "  and it is not a warning" bash -c "! grep -q '^::warning::' '$out'"
+
+echo "prs 11: an open lifecycle PR that is no longer due is closed, labelled, its branch deleted"
+# main records ci-<old node> deprecated, and a retirement PR is open for it;
+# then upstream moved its end of support 200 days out.
+moved() { echo "[$(dep_entry "$OLD_NODE" "$(day -1)" "$(day -60)")]" > "$1/.github/lifecycle.json"; "$lc" render --root "$1"; }
+RT="lifecycle/retire-$OLD_NODE"
+fixtures r11; set_rel nodejs "$OLD_NODE_CYC" eolFrom "\"$(day 200)\""; scenario r11 moved
+seed_branch "$RT" "$BOT"; open_pr 600 "$RT"
+echo '[{"name":"lifecycle-superseded"}]' > "$stub/labels.json"
+run_prs
+check "exit 0" [ "$rc" -eq 0 ]
+check "the date correction is today's plan: a deprecation PR" bash -c "grep -q '^pr create .* --head lifecycle/deprecate-$OLD_NODE ' '$log'"
+check "the stale retirement is labelled first" logged "pr edit 600 --repo o/r --add-label lifecycle-superseded"
+check "  then closed with a comment, and its branch deleted" grep -q "^pr close 600 --repo o/r --comment No longer due as of $TODAY: today's plan has \`deprecate\` for \`$OLD_NODE\` instead (end of support $(day 200)).* --delete-branch\$" "$log"
+check "  label before close" bash -c "[ \$(grep -n '^pr edit 600 ' '$log' | cut -d: -f1) -lt \$(grep -n '^pr close 600 ' '$log' | cut -d: -f1) ]"
+check "  and the summary row says so" [ "$(jq -r 'select(.pr == "#600") | .status' "$res")" = closed ]
+echo "prs 12: an outage never closes anything"
+fixtures r12; set_rel nodejs "$OLD_NODE_CYC" eolFrom "\"$(day 200)\""; serve "https://endoflife.date/api/v1/products/nodejs/" @fail
+scenario r12 moved
+seed_branch "$RT" "$BOT"; open_pr 601 "$RT"
+run_prs
+check "exit 0, and no gh write at all" bash -c "[ $rc -eq 0 ] && [ ! -s '$log' ]"
+check "  the branch is still there" [ -n "$(head_of "$RT")" ]
+echo "prs 13: a stale PR someone else committed to is left open, with a warning"
+fixtures r13; set_rel nodejs "$OLD_NODE_CYC" eolFrom "\"$(day 200)\""; scenario r13 moved
+seed_branch "$RT" human@example.com; open_pr 602 "$RT"
+run_prs
+check "exit 0, not closed" bash -c "[ $rc -eq 0 ] && ! grep -q '^pr \(close\|edit\) 602 ' '$log'"
+check "  a warning names it" grep -q "#602 ($RT) is no longer due, but it has commits not made by this workflow (human@example.com)" "$out"
+echo "prs 14: what is still due, and what is not ours, stays open"
+fixtures r14; py_ga; scenario r14
+open_pr 603 "$BR"                                         # due today: handled by the add, not closed
+open_pr 604 "lifecycle/retire-ci-go"                      # not a family this script manages
+open_pr 605 "lifecycle/retire-$OLD_NODE" someone          # a person's branch of that name
+run_prs
+check "exit 0" [ "$rc" -eq 0 ]
+check "none of them closed" not_logged '^pr close'
+check "  the unmanaged one is a warning" grep -q '#604 (lifecycle/retire-ci-go): not a lifecycle change this script makes' "$out"
 
 echo
 echo "$pass passed, $failures failed"

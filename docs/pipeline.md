@@ -426,7 +426,18 @@ pin bump, and keeps the set of images in step with upstream's support lines
   or `lifecycle/retire-<image>`, the same way pin bump does: rebuilt from `main`, one commit by
   `github-actions[bot]`, pushed leased to the SHA it saw, CI dispatched on the branch, healed on
   the next run if a dispatch was lost, never pushed over a commit someone else made, and never
-  reopened once closed unmerged. The merge bot merges it when green, as above.
+  reopened once a person closed it unmerged. The merge bot merges it when green, as above.
+- **Closes what is no longer due.** An open lifecycle PR whose change is not in today's plan (a
+  retirement whose end of support moved into the future upstream, an add whose line was
+  withdrawn) is closed with a comment saying why, labelled `lifecycle-superseded`, and its branch
+  deleted. Only when that runtime's plan was complete: if endoflife.date or a registry could not be
+  read, or anything else raised a warning for it, nothing is closed. A PR someone else committed
+  to is left open with a warning. A PR closed this way is not a veto, so a fresh one opens if the
+  change becomes due again; one a person closed is a veto. And because the merge bot could merge a
+  retirement in the hours before the next daily run closes it, it merges a `lifecycle/retire-*`
+  PR only while the end-of-support date in the PR's marker has passed and `main`'s
+  `.github/lifecycle.json` still records the image deprecated with that date; a missing marker or
+  an unreadable record is never merged.
 - **Adds** copy the family's newest image directory (skipping one that carries a line-specific
   workaround, such as `ci-ruby40`'s json gem replacement), with the version, base, description,
   distribution and version assertions moved, and add the `images.json` entry, the Dependabot
