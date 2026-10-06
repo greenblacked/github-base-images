@@ -366,7 +366,19 @@ else
   cat "$CACHE/test-image-lifecycle.log"; fail=1
 fi
 
-# --- 10. zizmor, best-effort and non-gating -- the same posture as CI, where
+# --- 10. scripts/verify-ref.sh, the bounded retry around build-image.yml's
+# --- post-sign verification, tested offline with a fake check-published.sh
+# --- and a fake sleep. It decides whether a just-published image's
+# --- verification passes, so a retry that swallows a real failure, retries
+# --- what it should not, or waits the wrong amount must fail here.
+note "verify-ref offline tests"
+if ./scripts/test-verify-ref.sh > "$CACHE/test-verify-ref.log" 2>&1; then
+  tail -1 "$CACHE/test-verify-ref.log"
+else
+  cat "$CACHE/test-verify-ref.log"; fail=1
+fi
+
+# --- 11. zizmor, best-effort and non-gating -- the same posture as CI, where
 # --- its findings surface through code scanning rather than a red job.
 note "zizmor (best-effort, reported not gating)"
 if command -v zizmor >/dev/null; then

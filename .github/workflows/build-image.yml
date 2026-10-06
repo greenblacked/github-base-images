@@ -812,7 +812,8 @@ jobs:
       attestations: write
 
     steps:
-      # For scripts/check-published.sh, which the post-sign verification runs.
+      # For scripts/verify-ref.sh and scripts/check-published.sh, which the
+      # post-sign verification runs.
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -921,6 +922,16 @@ jobs:
       # already moved by this point (imagetools create above), so this cannot
       # un-publish -- it makes the run that caused the regression the one that
       # goes red, instead of a scheduled audit days later.
+      #
+      # Bounded retry (scripts/verify-ref.sh): this reads the signature back
+      # seconds after `cosign sign` wrote it, and that read is not reliably
+      # consistent yet -- one publish saw `sig=fail` four seconds after
+      # signing on a single image, and a re-run of the same job passed. So
+      # 3 and 1 are retried, up to 4 attempts, 10s, 20s and 40s apart, every
+      # failed attempt logged as a warning; only the last attempt decides,
+      # and the helper prints the 3-vs-1 messages described above, naming how
+      # many attempts were made. Any other exit (usage, unexpected) fails at
+      # once. A real regression still fails this run, about a minute later.
       - name: Verify signature and attestations
         env:
           REF: ghcr.io/${{ github.repository_owner }}/${{ inputs.image }}@${{ steps.resolve.outputs.digest }}
@@ -928,16 +939,10 @@ jobs:
           REPO_SLUG: ${{ github.repository }}
         run: |
           rc=0
-          ./scripts/check-published.sh --ref "$REF" || rc=$?
-          case "$rc" in
-            0) echo "verified: $REF is signed by the expected identity and carries SBOM and provenance attestations" ;;
-            3) echo "::error::$REF failed post-sign verification: the signature does not verify under the expected identity, or an SBOM/provenance attestation is missing (see the table above)"
-               exit 1 ;;
-            1) echo "::error::could not verify $REF: the signature or attestation check itself failed to run (see the log above) -- treated as a failure, not a pass"
-               exit 1 ;;
-            *) echo "::error::check-published.sh --ref exited $rc (usage or unexpected error)"
-               exit 1 ;;
-          esac
+          ./scripts/verify-ref.sh "$REF" || rc=$?
+          if [ "$rc" -ne 0 ]; then
+            exit 1
+          fi
 
       # GitHub-native build provenance, IN ADDITION to cosign and the buildx
       # attestations, which are untouched. A second, independent verification
@@ -1005,6 +1010,12 @@ jobs:
       # index stop verifying for consumers. Checked here, it turns this run red rather
       # than showing up days later in published-audit.yml. If this step fails
       # but the first one passed, the attestation step is the cause.
+      #
+      # The same bounded retry as the first check, for the same reason: the
+      # attestation step has just written a new referrer to this digest, and
+      # reading it back is no more immediately consistent than the signature
+      # was. 3 and 1 retried, up to 4 attempts, 10s/20s/40s apart; the last
+      # attempt decides; anything else fails at once.
       - name: Re-verify signature and attestations after attestation
         env:
           REF: ghcr.io/${{ github.repository_owner }}/${{ inputs.image }}@${{ steps.resolve.outputs.digest }}
@@ -1012,16 +1023,10 @@ jobs:
           REPO_SLUG: ${{ github.repository }}
         run: |
           rc=0
-          ./scripts/check-published.sh --ref "$REF" || rc=$?
-          case "$rc" in
-            0) echo "verified: $REF still verifies with the GitHub attestation attached" ;;
-            3) echo "::error::$REF passed post-sign verification before the GitHub attestation was attached and fails it now: the signature no longer verifies under the expected identity, or an SBOM/provenance attestation is no longer found (see the table above)"
-               exit 1 ;;
-            1) echo "::error::could not re-verify $REF after attestation: the signature or attestation check itself failed to run (see the log above) -- treated as a failure, not a pass"
-               exit 1 ;;
-            *) echo "::error::check-published.sh --ref exited $rc (usage or unexpected error)"
-               exit 1 ;;
-          esac
+          ./scripts/verify-ref.sh --after-attestation "$REF" || rc=$?
+          if [ "$rc" -ne 0 ]; then
+            exit 1
+          fi
 
       - name: Report digest and platforms
         env:
