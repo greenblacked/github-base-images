@@ -177,23 +177,34 @@ note "images.json cross-check"
     fi
   done
 
-  # Composer is pinned in both PHP images -- ci-php84 and ci-php85 -- and
-  # scripts/check-pins.sh reads only ci-php84's copy. Same reasoning as kubectl
-  # above: assert the two agree, so the pin-drift report covers both and a bump
-  # that moves one cannot leave the other behind unnoticed.
-  for key in COMPOSER_VERSION COMPOSER_SHA256; do
-    a=$(grep -m1 "^ARG $key=" ci-php84/Dockerfile.ci || true)
-    b=$(grep -m1 "^ARG $key=" ci-php85/Dockerfile.ci || true)
-    if [ -z "$a" ] || [ -z "$b" ]; then
-      echo "error: $key not found in ci-php84 and/or ci-php85 Dockerfile.ci"
+  # Every other pin that more than one image carries must agree everywhere:
+  # Composer in every PHP image, npm and Playwright in every Node image.
+  # scripts/check-pins.sh reads the first copy and scripts/bump-pins.sh moves
+  # all of them, so a copy that disagreed would be invisible to the drift
+  # report. The set is read from the Dockerfiles of the images.json images,
+  # not listed here, so an image the lifecycle workflow adds or retires
+  # (scripts/image-lifecycle.sh) changes nothing in this check.
+  shared=$(for img in $(jq -r '.[].image' .github/images.json); do
+             sed -nE 's/^ARG ([A-Z0-9_]+)=.*/\1/p' "$img/Dockerfile.ci" | sort -u
+           done | grep -vxE 'BASE_IMAGE|TARGETARCH' | sort | uniq -d)
+  for key in $shared; do
+    values=$(for img in $(jq -r '.[].image' .github/images.json); do
+               grep -m1 "^ARG $key=" "$img/Dockerfile.ci" | sed "s|^|$img: |" || true
+             done)
+    if [ "$(printf '%s\n' "$values" | sed 's/^[^:]*: //' | sort -u | wc -l)" -ne 1 ]; then
+      echo "error: $key differs between the images that pin it:"
+      printf '%s\n' "$values" | sed 's/^/  /'
       exit 1
     fi
-    if [ "$a" != "$b" ]; then
-      echo "error: $key differs between ci-php84 and ci-php85"
-      echo "  ci-php84: $a"
-      echo "  ci-php85: $b"
-      exit 1
-    fi
+  done
+  # And a runtime's shared pins are in every image of it, so a new line (or a
+  # hand edit) cannot drop one: Composer in every ci-php*, npm and Playwright
+  # in every ci-node*.
+  for rule in node:NPM_VERSION node:PLAYWRIGHT_VERSION php:COMPOSER_VERSION php:COMPOSER_SHA256; do
+    for img in $(jq -r --arg f "${rule%%:*}" '.[].image | select(test("^ci-" + $f + "[0-9]+$"))' .github/images.json); do
+      grep -q "^ARG ${rule#*:}=" "$img/Dockerfile.ci" \
+        || { echo "error: $img/Dockerfile.ci does not pin ${rule#*:}, which every ci-${rule%%:*} image does"; exit 1; }
+    done
   done
 } || fail=1
 
@@ -339,7 +350,23 @@ else
   cat "$CACHE/test-merge-bot-prs.log"; fail=1
 fi
 
-# --- 9. zizmor, best-effort and non-gating -- the same posture as CI, where
+# --- 9. The image lifecycle (docs/adr/0009). `check` holds the files an
+# --- image is spread across to images.json: the Dependabot docker
+# --- directories, every ARG BASE_IMAGE default, the README catalog rows (base
+# --- and tag) and count, the docs/images.md bullets, and the deprecation
+# --- markers and notices generated from .github/lifecycle.json. The offline
+# --- suite then drives scripts/image-lifecycle.sh -- which adds and retires
+# --- images without a human -- against endoflife.date and registry fixtures,
+# --- a fake gh and a local git origin, and scaffolds one image per family.
+note "image lifecycle: consistency check and offline tests"
+./scripts/image-lifecycle.sh check || fail=1
+if ./scripts/test-image-lifecycle.sh > "$CACHE/test-image-lifecycle.log" 2>&1; then
+  tail -1 "$CACHE/test-image-lifecycle.log"
+else
+  cat "$CACHE/test-image-lifecycle.log"; fail=1
+fi
+
+# --- 10. zizmor, best-effort and non-gating -- the same posture as CI, where
 # --- its findings surface through code scanning rather than a red job.
 note "zizmor (best-effort, reported not gating)"
 if command -v zizmor >/dev/null; then

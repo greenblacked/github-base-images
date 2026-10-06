@@ -91,10 +91,21 @@ trap 'rm -rf "$tmp"' EXIT INT TERM
 # The pinned value is read from the file rather than duplicated here, so this
 # script cannot disagree with what actually builds.
 #
-# kubectl and composer are each pinned in two Dockerfiles (ci-tools/ci-cloud,
-# ci-php84/ci-php85) but listed once: scripts/lint.sh fails if the copies ever
-# differ, so checking one checks both. npm and playwright are likewise listed
-# once for ci-node22 and ci-node24; scripts/bump-pins.sh moves both copies.
+# kubectl is pinned in two Dockerfiles (ci-tools, ci-cloud) but listed once,
+# and so are composer (every PHP image), npm and playwright (every Node image):
+# scripts/lint.sh fails if the copies of a pin ever differ, so checking one
+# checks all, and scripts/bump-pins.sh moves them all.
+#
+# A file written `*/Dockerfile.ci` is the first image in .github/images.json
+# whose Dockerfile.ci pins the key, so no image name is spelled here for the
+# pins a runtime's images share: an image the lifecycle workflow adds or
+# retires (scripts/image-lifecycle.sh) needs no change here.
+#
+# No image carrying the key is an error -- a typo in this table, or a pin a
+# runtime's images lost, must not quietly drop a tool from the drift report --
+# except for a row written `*?/Dockerfile.ci`: a workaround pin that is meant
+# to go away with the image that needs it (the json gem replacement in
+# ci-ruby40). That one is skipped once no image carries it.
 #
 # gitleaks is the exception, listed twice: the copy security.yml runs over the
 # git history is a separate pin that nothing forces to agree with the image's,
@@ -105,8 +116,8 @@ kubectl    | ci-tools/Dockerfile.ci               | KUBECTL_VERSION    | k8s    
 awscli     | ci-tools/Dockerfile.ci               | AWSCLI_VERSION     | githubtag | aws/aws-cli
 docker     | ci-tools/Dockerfile.ci               | DOCKER_VERSION     | dockerstatic | -
 gcloud     | ci-cloud/Dockerfile.ci               | GCLOUD_VERSION     | gcs       | -
-playwright | ci-node22/Dockerfile.ci              | PLAYWRIGHT_VERSION | npm       | playwright
-composer   | ci-php84/Dockerfile.ci               | COMPOSER_VERSION   | github    | composer/composer
+playwright | */Dockerfile.ci                      | PLAYWRIGHT_VERSION | npm       | playwright
+composer   | */Dockerfile.ci                      | COMPOSER_VERSION   | github    | composer/composer
 trivy      | ci-security/Dockerfile.ci            | TRIVY_VERSION      | github    | aquasecurity/trivy
 syft       | ci-security/Dockerfile.ci            | SYFT_VERSION       | github    | anchore/syft
 grype      | ci-security/Dockerfile.ci            | GRYPE_VERSION      | github    | anchore/grype
@@ -114,8 +125,8 @@ cosign     | ci-security/Dockerfile.ci            | COSIGN_VERSION     | github 
 gitleaks   | ci-security/Dockerfile.ci            | GITLEAKS_VERSION   | github    | gitleaks/gitleaks
 migrate    | ci-db/Dockerfile.ci                  | MIGRATE_VERSION    | github    | golang-migrate/migrate
 osv-scanner | .github/workflows/build-image.yml   | OSV_SCANNER_VERSION | github   | google/osv-scanner
-npm        | ci-node22/Dockerfile.ci              | NPM_VERSION        | npm       | npm
-json       | ci-ruby40/Dockerfile.ci              | JSON_VERSION       | rubygems  | json
+npm        | */Dockerfile.ci                      | NPM_VERSION        | npm       | npm
+json       | *?/Dockerfile.ci                     | JSON_VERSION       | rubygems  | json
 hadolint   | scripts/lint.sh                      | HADOLINT_VERSION   | github    | hadolint/hadolint
 actionlint | scripts/lint.sh                      | ACTIONLINT_VERSION | github    | rhysd/actionlint
 gitleaks-workflow | .github/workflows/security.yml | GITLEAKS_VERSION  | github    | gitleaks/gitleaks
@@ -199,7 +210,7 @@ current_pin() {
 }
 
 # --- main loop --------------------------------------------------------------
-drift=0; failed=0; checked=0
+drift=0; failed=0; checked=0; matched=0
 : > "$tmp/rows.jsonl"
 
 while IFS='|' read -r name file key resolver arg; do
@@ -210,6 +221,24 @@ while IFS='|' read -r name file key resolver arg; do
   arg=$(printf '%s' "$arg" | tr -d ' ')
 
   [ -n "$only" ] && [ "$only" != "$name" ] && continue
+  matched=$((matched + 1))
+  if [ "$file" = '*/Dockerfile.ci' ] || [ "$file" = '*?/Dockerfile.ci' ]; then
+    spec=$file; file=""
+    for img in $(jq -r '.[].image' .github/images.json); do
+      if grep -q "^ARG $key=" "$img/Dockerfile.ci" 2>/dev/null; then file="$img/Dockerfile.ci"; break; fi
+    done
+    if [ -z "$file" ] && [ "$spec" = '*?/Dockerfile.ci' ]; then
+      log info "$name: no image in .github/images.json pins $key any more, and it is optional; skipped"
+      continue
+    fi
+    if [ -z "$file" ]; then
+      log error "$name: no image in .github/images.json pins $key (a typo in this table, or a pin an image lost)"
+      failed=$((failed + 1)); checked=$((checked + 1))
+      jq -nc --arg tool "$name" --arg key "$key" \
+        '{tool:$tool, pinned:"", latest:null, file:"*/Dockerfile.ci", key:$key, state:"unresolved"}' >> "$tmp/rows.jsonl"
+      continue
+    fi
+  fi
   checked=$((checked + 1))
 
   if [ ! -f "$file" ]; then
@@ -267,7 +296,7 @@ while IFS='|' read -r name file key resolver arg; do
     >> "$tmp/rows.jsonl"
 done <<< "$PINS"
 
-if [ "$checked" -eq 0 ]; then
+if [ "$matched" -eq 0 ]; then
   echo "error: no tool matched --only '$only'" >&2
   exit 2
 fi

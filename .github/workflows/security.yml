@@ -346,3 +346,36 @@ jobs:
           path: gitleaks.log
           retention-days: 90
           if-no-files-found: warn
+
+  # Ask the merge bot to look, now that this run's checks are in
+  # (docs/adr/0008-self-updating.md, docs/adr/0009-image-lifecycle.md).
+  #
+  # merge-bot-prs.yml listens for this workflow finishing (workflow_run), but
+  # GitHub does not start a workflow_run for a run that a GITHUB_TOKEN dispatch
+  # started -- which is exactly how the CI of every pin-bump/*, lifecycle/*
+  # and refreshed dependabot/* branch is started -- and the hourly schedule is
+  # only a backstop (GitHub delays and drops scheduled runs under load). A
+  # workflow_dispatch made with GITHUB_TOKEN does start a run, so the last job
+  # dispatches the merge bot itself. Whichever of Build and Push and Security
+  # finishes second finds all four checks complete. It runs after every other
+  # job, whatever their result: a red branch is the merge bot's to report (and,
+  # for a Dependabot PR, to refresh).
+
+  request-merge:
+    name: Ask the merge bot to look
+    needs: [repo-secrets, workflow-audit, dependency-review, scorecard, codeql-actions, git-history-secrets]
+    if: >-
+      always() && (
+        (github.event_name == 'workflow_dispatch' && github.ref != 'refs/heads/main' && (
+          startsWith(github.ref, 'refs/heads/pin-bump/') ||
+          startsWith(github.ref, 'refs/heads/lifecycle/') ||
+          startsWith(github.ref, 'refs/heads/dependabot/'))))
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      actions: write   # `gh workflow run merge-bot-prs.yml`; nothing is checked out
+    steps:
+      - name: Dispatch the merge bot on main
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run merge-bot-prs.yml --repo "$GITHUB_REPOSITORY" --ref main

@@ -1,0 +1,20 @@
+[
+  {
+    "image": "ci-dotnet8",
+    "state": "deprecated",
+    "runtime": ".NET 8",
+    "eol": "2026-11-10",
+    "announced": "2026-09-26",
+    "successor": "ci-dotnet10",
+    "notice": "deprecated-ci-dotnet8-and-ci-dotnet9"
+  },
+  {
+    "image": "ci-dotnet9",
+    "state": "deprecated",
+    "runtime": ".NET 9",
+    "eol": "2026-11-10",
+    "announced": "2026-09-26",
+    "successor": "ci-dotnet10",
+    "notice": "deprecated-ci-dotnet8-and-ci-dotnet9"
+  }
+]

@@ -10,7 +10,7 @@ before anything is pushed is in [security.md](security.md).
   [Java](#java), [PHP](#php), [.NET SDK](#net-sdk)
 - [Tool images](#tool-images): `ci-tools`, `ci-cloud`, `ci-security`, `ci-db`
 - [Patterns worth naming](#patterns-worth-naming)
-- [Deprecated: `ci-dotnet8` and `ci-dotnet9`](#deprecated-ci-dotnet8-and-ci-dotnet9)
+- [Image lifecycle](#image-lifecycle): new lines, deprecation, retirement
 - [Running Playwright tests](#running-playwright-tests)
 - [Using the tool images](#using-the-tool-images)
 - [Visibility and authentication](#visibility-and-authentication)
@@ -39,14 +39,14 @@ container target is ever added (Cloudflare Containers, Fly, Kubernetes), that is
 
 ### Node.js
 
-- **`ci-node22`** — Node.js 22, npm, and Playwright's system libraries (Chromium only, no browser
-  binaries; see [Running Playwright tests](#running-playwright-tests)).
 - **`ci-node24`** — the same image on Node.js 24, for repositories that have moved to the newer
   LTS line or that test against both in a matrix.
+- **`ci-node22`** — Node.js 22, npm, and Playwright's system libraries (Chromium only, no browser
+  binaries; see [Running Playwright tests](#running-playwright-tests)).
 
-For `ci-node22` specifically, "no project-specific build tools" also rules out Next.js and
-Wrangler. Wrangler in particular is a locked devDependency, so `npm run deploy:artifact` uses the
-consuming repository's exact version rather than one frozen into this image.
+For the Node images, "no project-specific build tools" also rules out Next.js and Wrangler.
+Wrangler in particular is a locked devDependency, so `npm run deploy:artifact` uses the consuming
+repository's exact version rather than one frozen into the image.
 
 `actions/setup-node` is not needed — Node is already in the image.
 
@@ -56,7 +56,7 @@ consuming repository's exact version rather than one frozen into this image.
   `ci-python313`, including the absent compiler toolchain.
 - **`ci-python313`** — Python 3.13 and pip. No compiler toolchain: projects that build native
   wheels add `build-essential` in their own workflow, for the same reason browsers are not baked
-  into `ci-node22`.
+  into the Node images.
 - **`ci-python312`** — the same image on Python 3.12, for the still-common case of a library that
   supports both and tests each in a matrix.
 
@@ -69,10 +69,10 @@ consuming repository's exact version rather than one frozen into this image.
   named for a Rust version — see below.
 
 **Why `ci-go` and `ci-rust` carry no version, when every other image does.** The versioned names
-are not decoration — they are the choice a consumer makes between *parallel supported lines*. Node
-22 and 24, Python 3.12 to 3.14, Java 17, 21 and 25, PHP 8.4 and 8.5, Ruby 3.4 and 4.0, and .NET 8
-to 10 are all patched independently by upstream, so `ci-python313` is not "behind" `ci-python314`
-any more than `ci-node22` is behind 24; you pick the line your project targets.
+are not decoration — they are the choice a consumer makes between *parallel supported lines*. The
+Node.js, Python, Java, PHP, Ruby and .NET lines in the catalog are each patched independently by
+upstream, so an image for an older Python line is not "behind" the newest one any more than Node
+22 is behind 24; you pick the line your project targets.
 
 Go and Rust have no such lines. Rust patches exactly one version — the current stable — and never
 backports. Go patches only the two newest minors. Both promise that code building on one 1.x builds
@@ -91,7 +91,8 @@ What this means for the rolling tag is in [Tags and rebuilds](pipeline.md#tags-a
 - **`ci-ruby40`** — Ruby 4.0, RubyGems, and Bundler, on Debian Trixie. Otherwise identical to
   `ci-ruby34`.
 - **`ci-ruby34`** — Ruby 3.4, RubyGems, and Bundler. No compiler toolchain: projects with gems
-  that build native extensions add `build-essential` in their own workflow, same as `ci-python313`.
+  that build native extensions add `build-essential` in their own workflow, same as the Python
+  images.
 
 ### Java
 
@@ -116,10 +117,11 @@ What this means for the rolling tag is in [Tags and rebuilds](pipeline.md#tags-a
 - **`ci-dotnet10`** — the .NET SDK 10.0, the current LTS release, on Ubuntu Noble. No global
   tools: those are pinned per project in `.config/dotnet-tools.json` and restored by the project's
   own workflow.
-- **`ci-dotnet9`** — the .NET SDK 9.0 (STS). **Deprecated, retiring after 2026-11-10** — see
-  [below](#deprecated-ci-dotnet8-and-ci-dotnet9).
-- **`ci-dotnet8`** — the .NET SDK 8.0 (the previous LTS). **Deprecated, retiring after
-  2026-11-10** — see [below](#deprecated-ci-dotnet8-and-ci-dotnet9).
+- **`ci-dotnet9`** — the .NET SDK 9.0 (STS).
+- **`ci-dotnet8`** — the .NET SDK 8.0 (the previous LTS).
+
+Which images are deprecated, and when each retires, is in [Image lifecycle](#image-lifecycle) and
+in the catalog.
 
 ## Tool images
 
@@ -150,41 +152,85 @@ Examples are in [Using the tool images](#using-the-tool-images).
 
 Some of these images break a pattern worth naming explicitly:
 
-- **The Java images and `ci-dotnet10` are not Debian.** Temurin publishes no Debian tag — only
-  Ubuntu and Alpine — and installing a JDK onto a Debian slim image would pin us to whatever Debian
-  ships. Microsoft likewise publishes no Debian SDK image for .NET 10; its Linux default moved to
-  Ubuntu. All of them are built on Noble and carry their own **`noble-v1`** version line. The
-  version tag is per image, so this costs nothing structurally.
-- **The newest Debian-based images are Trixie, not Bookworm.** `ci-python314`, `ci-php85` and
-  `ci-ruby40` start on Debian 13 and carry **`trixie-v1`**. Debian 12 Bookworm's regular security
-  support has ended and it is on reduced Debian LTS coverage, so starting a brand-new image on it
-  would be migration debt from day one. The existing Bookworm images are unchanged by this.
+- **Each image carries the distribution line it started on.** A new image starts on the newest
+  Debian stable if upstream publishes the exact tag for it, otherwise on the newest Ubuntu LTS
+  (only for Java and .NET, whose upstreams publish Ubuntu images); older releases of either are
+  never used. Temurin publishes no Debian tag at all (only Ubuntu and Alpine), and Microsoft has
+  published no Debian SDK image since .NET 10, so those lines land on Ubuntu unless that changes. Installing a JDK or an SDK onto a Debian
+  slim image instead would replace an official, upstream-maintained build with one this
+  repository maintains. Existing images never move, so `bookworm-v1`, `trixie-v1` and `noble-v1`
+  coexist, and Ubuntu 26.04 adds `resolute-v1` with the first image built on it. The version tag
+  is per image, so this costs nothing structurally.
+- **Starting a new image on an older distribution would be migration debt from day one.** Debian
+  12 Bookworm's regular security support has ended and it is on reduced Debian LTS coverage, so a
+  brand-new image starts on Debian 13 Trixie (`trixie-v1`), the newest stable.
 - **The .NET images do not come from Docker Hub.** Microsoft publishes .NET only to
   `mcr.microsoft.com`. They are still [mirrored](pipeline.md#mirrored-upstream-base), so builds
   depend on one registry rather than two.
 
 [ADR 0005](adr/0005-new-images-current-distro-retire-at-eol.md) records the rule behind the first
-two: new images start on the upstream's current distribution, and retire at upstream end of
-support.
+two, and [ADR 0009](adr/0009-image-lifecycle.md) the newest-Ubuntu-LTS amendment.
 
-## Deprecated: `ci-dotnet8` and `ci-dotnet9`
+## Image lifecycle
 
-.NET 8 (LTS) and .NET 9 (STS) both reach Microsoft's end of support on **2026-11-10**. After that
-date neither receives security fixes upstream, so rebuilding these images daily would only keep
-producing fresh digests of an unpatched runtime.
+The catalog follows upstream's support lines without anyone tending it
+([ADR 0009](adr/0009-image-lifecycle.md)). The daily
+[image lifecycle workflow](../.github/workflows/image-lifecycle.yml) reads each runtime's support
+dates from [endoflife.date](https://endoflife.date) and its tags from the upstream registry, and
+opens a pull request for whatever is due. Each one merges itself when its checks are green, like
+every other automated update ([Automatic updates](pipeline.md#automatic-updates)).
 
-- **Move to `ci-dotnet10`** (`ghcr.io/greenblacked/ci-dotnet10:noble-v1`), the current LTS line.
-  It is Ubuntu Noble rather than Debian Bookworm, so a job that installs extra packages with
-  `apt-get` should check that their names still resolve.
-- **Both images will be retired after 2026-11-10** — removed from this repository's build, so they
-  stop being rebuilt and re-scanned. Until then they are built, scanned and published as normal.
-- Retiring an image does not delete its published package (see
-  [Tags and rebuilds](pipeline.md#tags-and-rebuilds)); deleting the GHCR packages is a separate
-  decision for the repository owner.
+- **New lines are added.** When upstream ships a line newer than the newest image of its runtime,
+  generally available and published for `linux/amd64` and `linux/arm64`, a pull request adds
+  `ci-<runtime><version>`. Node.js only for even majors, once they are LTS; Java only for LTS
+  releases; .NET for every release, STS included. It starts on the newest Debian stable if the
+  exact upstream tag exists for it, else on the newest Ubuntu LTS (Java and .NET only), on the
+  version line `<codename>-v1`; older distribution releases are never tried. A line that is GA
+  but has no tag on either yet waits, and the daily run shows it as a notice. Older lines are
+  never added, and nothing before its GA release.
+- **Deprecation is announced 120 days ahead** of upstream end of support (the end of security
+  fixes): the catalog row is marked with the date, and a notice goes into the README,
+  [SECURITY.md](../SECURITY.md) and below.
+- **Images retire after end of support**, and no sooner than 30 days after the notice: they leave
+  the build, so they are no longer rebuilt or re-scanned. Their packages stay pullable until the
+  owner deletes them; no workflow here deletes a package.
+- **Closing one of these pull requests is a veto.** It is not reopened for the same change: an
+  add closed unmerged is not proposed again for that tag, a retirement not for that date. The
+  workflow closes one itself when its change stops being due (an end of support that moved, say),
+  labelled `lifecycle-superseded`; that is not a veto. It never closes one because a source was
+  unreachable.
+- **`ci-go`, `ci-rust` and the tool images are not part of this.** Go and Rust track current
+  stable ([why](#go-and-rust)); the tool images have no runtime line.
+
+**One step stays manual:** a new image's GHCR package is created private, and no workflow token
+can make it public (GitHub has no API for package visibility). After the first publish of an added
+image, make its package public as described in
+[Visibility and authentication](#visibility-and-authentication). Until then pulls from other
+repositories fail with `denied`, and the published-image audit reports the package as private.
+The pull request that adds the image says so too.
+<!-- lifecycle:status:begin -->
+
+### Deprecated: `ci-dotnet8` and `ci-dotnet9`
+
+.NET 8 and .NET 9 reach end of support upstream on **2026-11-10**. After that date they receive no
+security fixes upstream, so rebuilding these images daily would only keep producing fresh digests
+of an unpatched runtime.
+
+- **Move to `ci-dotnet10`** (`ghcr.io/greenblacked/ci-dotnet10:noble-v1`). It is Ubuntu Noble
+  rather than Debian Bookworm, so a job that installs extra packages with `apt-get` should check
+  that their names still resolve.
+- **Retired automatically after 2026-11-10**, and no sooner than 30 days after this notice: the
+  image lifecycle workflow opens a pull request that removes them from the build, so they stop
+  being rebuilt and re-scanned. Until then they are built, scanned and published as normal.
+- Retiring an image does not delete its published package (see [Tags and
+  rebuilds](pipeline.md#tags-and-rebuilds)); deleting the GHCR package is a separate decision for
+  the repository owner.
+
+<!-- lifecycle:status:end -->
 
 ## Running Playwright tests
 
-`ci-node22` and `ci-node24` ship Playwright's **system libraries but no browser binaries**.
+The Node images ship Playwright's **system libraries but no browser binaries**.
 Browsers are version-locked to the `playwright` package in your lockfile, so baking them here
 would pin every consuming repo to this image's Playwright version and break the moment one bumped
 it.
@@ -207,9 +253,9 @@ Cache the browser download to keep this cheap:
           key: playwright-${{ hashFiles('package-lock.json') }}
 ```
 
-The library set is pinned via the `PLAYWRIGHT_VERSION` build arg in each Node image's Dockerfile
-([ci-node22](../ci-node22/Dockerfile.ci), [ci-node24](../ci-node24/Dockerfile.ci)). It only determines which libraries get
-installed — it does not constrain the Playwright version consumers run. These libraries are why
+The library set is pinned via the `PLAYWRIGHT_VERSION` build arg in each Node image's
+`Dockerfile.ci`, the same version in every one. It only determines which libraries get installed —
+it does not constrain the Playwright version consumers run. These libraries are why
 the image is ~660MB rather than ~240MB.
 
 **Chromium only.** The image runs `playwright install-deps chromium`, so only Chromium's system
@@ -277,15 +323,17 @@ tooling — there is nothing proprietary in them, and `test.sh` enforces that no
 dependencies, or credentials are ever baked in. Making them private would buy nothing and cost a
 manual access grant for every consuming repository, forever.
 
-> **One-time manual step:** GHCR packages are created **private**, and visibility cannot be
-> changed by the workflow — `GITHUB_TOKEN` lacks the permission. After the first successful push:
-> package page → *Package settings* → *Change visibility* → **Public**. Do this for every `ci-*`
-> image (`ci-node22`, `ci-node24`, `ci-python314`, `ci-python313`, `ci-python312`, `ci-go`,
-> `ci-rust`, `ci-ruby40`, `ci-ruby34`, `ci-java25`, `ci-java21`, `ci-java17`, `ci-php85`,
-> `ci-php84`, `ci-dotnet10`, `ci-dotnet9`, `ci-dotnet8`, `ci-tools`, `ci-cloud`, `ci-security`,
-> `ci-db`) and every `mirror-*` package (see [Mirrored upstream
-> base](pipeline.md#mirrored-upstream-base) for why the mirrors can be public too).
-> Until then, pulls from other repositories fail with `denied`.
+> **One-time manual step, for every new package:** GHCR packages are created **private**, and
+> visibility cannot be changed by the workflow: `GITHUB_TOKEN` lacks the permission, and GitHub's
+> REST API for packages has no endpoint that changes visibility at all (it lists, reads, deletes
+> and restores). After the first successful push: package page → *Package settings* → *Change
+> visibility* → **Public**. Do this for every `ci-*` image in the
+> [catalog](../README.md#image-catalog), including each one the
+> [image lifecycle](#image-lifecycle) adds, and every new `mirror-*` package (see [Mirrored upstream
+> base](pipeline.md#mirrored-upstream-base) for why the mirrors can be public too). A new line of
+> an existing runtime reuses its runtime's `mirror-*` package, so it needs only the `ci-*` one.
+> Until then, pulls from other repositories fail with `denied`, and the published-image audit
+> reports the package.
 
 Publishing still authenticates, and always will: writing to any registry requires a bearer token
 regardless of visibility. That is what the `docker/login-action` step plus `packages: write` in
@@ -324,7 +372,7 @@ build-then-smoke-test loop a PR does — from the upstream base, so no `ghcr.io`
 registry writes and Trivy scans that stay CI's job:
 
 ```bash
-make list                     # one image per line: ci-cloud, ci-db, ci-dotnet8, ...
+make list                     # one image per line: ci-cloud, ci-db, ...
 make check IMAGE=ci-rust      # build ci-rust:test, then run ci-rust/test.sh against it
 make check-all                # every image
 ```
@@ -347,12 +395,13 @@ Java/JVM, .NET and PHP graduated from this list, alongside Rust and Ruby; `ci-cl
 `ci-security` and `ci-db` followed, along with second runtime versions for Node, Python, Java
 and .NET.
 
-Nothing is queued behind them, and the bar for the next one is **raised**, not unchanged: a
-concrete consumer. That bar was applied loosely when the set grew to sixteen — the second runtime
-versions in particular were added for matrix coverage that nobody had asked for yet. The five
-added since (`ci-dotnet10`, `ci-java25`, `ci-python314`, `ci-php85`, `ci-ruby40`) are the next
-supported line of runtimes already shipped here, not new kinds of image: they are where consumers
-of the older lines move as those reach end of life, as `ci-dotnet8` and `ci-dotnet9` do next.
+Nothing is queued behind them, and the bar for the next *kind* of image is **raised**, not
+unchanged: a concrete consumer. That bar was applied loosely when the set grew to sixteen — the
+second runtime versions in particular were added for matrix coverage that nobody had asked for
+yet. The next supported line of a runtime already shipped here is different: it is where
+consumers of the older lines move as those reach end of life, so the
+[image lifecycle](#image-lifecycle) adds it on its own, and retires the old line after its end of
+support.
 
 An image with no consumer is not free: it is two build jobs, nine Trivy steps per architecture (the
 five scan kinds) on every full rebuild, another base to keep current, and another set of pinned tools nothing tracks.
@@ -360,4 +409,4 @@ The marginal cost of *writing* one is a directory and two config entries; the ma
 *owning* one is considerably higher, and that is the number that matters.
 
 If an image here has no consumer, deleting it is a legitimate and expected change. The mechanics of
-adding one are in [CONTRIBUTING.md](../CONTRIBUTING.md#adding-another-image).
+adding one by hand are in [CONTRIBUTING.md](../CONTRIBUTING.md#adding-another-image).

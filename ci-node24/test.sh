@@ -59,8 +59,12 @@ check "TLS verification works"     'curl -sSf --max-time 15 https://registry.npm
 check "workdir is /workspace"      '[ "$PWD" = /workspace ]'
 
 # Playwright system libraries, so `npx playwright install chromium` works in a
-# consuming repo without root or apt.
-check "playwright libs present"    'dpkg -s libnss3 libgbm1 libatk1.0-0 libasound2 libxkbcommon0 fonts-liberation >/dev/null 2>&1'
+# consuming repo without root or apt. The package names follow the
+# distribution: Debian 13 and Ubuntu 24.04 on renamed two of them for the
+# 64-bit time_t transition (libasound2t64, libatk1.0-0t64), and the old names
+# are not installable there. Which set applies is read from the image itself,
+# so the same check fits every Node image, whichever line it is on.
+check "playwright libs present"    '. /etc/os-release; case "$VERSION_CODENAME" in bullseye|bookworm|focal|jammy) t64= ;; *) t64=t64 ;; esac; dpkg -s libnss3 libgbm1 "libatk1.0-0$t64" "libasound2$t64" libxkbcommon0 fonts-liberation >/dev/null 2>&1'
 
 # ...but no browser binaries. Browsers are version-locked to the consumer's
 # playwright package; baking them would pin every repo to this image's version.

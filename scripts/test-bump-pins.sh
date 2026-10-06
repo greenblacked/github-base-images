@@ -132,11 +132,26 @@ EOF
 serve "https://rubygems.org/api/v1/versions/json.json" json.json
 
 # --- a scratch tree with pins at a fixed baseline -------------------------------
+# The images that carry a runtime's shared pins are read from images.json, the
+# way bump-pins.sh and check-pins.sh read them, so an image the lifecycle
+# workflow adds or retires changes nothing here. carriers KEY -> their
+# Dockerfiles, one per line.
+carriers() {
+  local img
+  for img in $(jq -r '.[].image' "$repo/.github/images.json"); do
+    grep -q "^ARG $1=" "$repo/$img/Dockerfile.ci" && printf '%s\n' "$img/Dockerfile.ci"
+  done
+  return 0
+}
+NODE_FILES=$(carriers NPM_VERSION); PHP_FILES=$(carriers COMPOSER_VERSION); JSON_FILES=$(carriers JSON_VERSION)
+if [ -z "$NODE_FILES" ] || [ -z "$PHP_FILES" ]; then
+  echo "no image pins npm or Composer; these tests need one of each" >&2; exit 1
+fi
+# shellcheck disable=SC2206  # one path per word
 files=(
   ci-tools/Dockerfile.ci ci-cloud/Dockerfile.ci ci-security/Dockerfile.ci ci-db/Dockerfile.ci
-  ci-node22/Dockerfile.ci ci-node24/Dockerfile.ci ci-php84/Dockerfile.ci ci-php85/Dockerfile.ci
-  ci-ruby40/Dockerfile.ci .github/workflows/security.yml .github/workflows/build-image.yml
-  scripts/lint.sh
+  $NODE_FILES $PHP_FILES $JSON_FILES .github/workflows/security.yml .github/workflows/build-image.yml
+  scripts/lint.sh .github/images.json
 )
 force() { # FILE KEY VALUE -- set a baseline, whichever spelling the pin uses
   # Not `sed -i`, whose syntax differs between GNU and BSD sed; cat keeps the mode.
@@ -158,12 +173,10 @@ new_tree() {
   force "$t/ci-tools/Dockerfile.ci" DOCKER_VERSION 29.8.1
   force "$t/ci-db/Dockerfile.ci" MIGRATE_VERSION 4.20.1
   force "$t/scripts/lint.sh" HADOLINT_VERSION 2.15.1
-  force "$t/ci-node22/Dockerfile.ci" NPM_VERSION 12.1.0
-  force "$t/ci-node24/Dockerfile.ci" NPM_VERSION 12.1.0
-  force "$t/ci-php84/Dockerfile.ci" COMPOSER_VERSION 2.10.3
-  force "$t/ci-php85/Dockerfile.ci" COMPOSER_VERSION 2.10.3
+  for f in $NODE_FILES; do force "$t/$f" NPM_VERSION 12.1.0; done
+  for f in $PHP_FILES; do force "$t/$f" COMPOSER_VERSION 2.10.3; done
   force "$t/.github/workflows/build-image.yml" OSV_SCANNER_VERSION 2.6.0
-  force "$t/ci-ruby40/Dockerfile.ci" JSON_VERSION 2.19.9
+  for f in $JSON_FILES; do force "$t/$f" JSON_VERSION 2.19.9; done
   printf '%s' "$t"
 }
 pin() { # FILE KEY
@@ -244,8 +257,11 @@ for f in ci-tools/Dockerfile.ci ci-cloud/Dockerfile.ci; do
   expect_pin "$t" "$f" KUBECTL_SHA256_ARM64 "$(fake kubectl-arm64)"
 done
 check "lint.sh kubectl parity holds" parity "$t" ci-tools/Dockerfile.ci ci-cloud/Dockerfile.ci KUBECTL_VERSION KUBECTL_SHA256_AMD64 KUBECTL_SHA256_ARM64
-check "lint.sh composer parity holds" parity "$t" ci-php84/Dockerfile.ci ci-php85/Dockerfile.ci COMPOSER_VERSION COMPOSER_SHA256
-expect_pin "$t" ci-php85/Dockerfile.ci COMPOSER_SHA256 "$(fake composer)"
+for f in $PHP_FILES; do
+  expect_pin "$t" "$f" COMPOSER_VERSION 2.10.4
+  expect_pin "$t" "$f" COMPOSER_SHA256 "$(fake composer)"
+done
+check "every PHP image carries Composer, so the parity above is not vacuous" [ "$(printf '%s\n' "$PHP_FILES" | wc -l)" -ge 1 ]
 expect_field "$work/r1.json" composer class auto
 
 echo " paired bump (gitleaks in ci-security and security.yml)"
@@ -259,8 +275,14 @@ echo " major version -> review (syft); a minor from the registry -> auto (json)"
 expect_field "$work/r1.json" syft status bumped
 expect_field "$work/r1.json" syft class review
 expect_pin "$t" ci-security/Dockerfile.ci SYFT_SHA256_AMD64 "$(fake syft-amd64)"
-expect_field "$work/r1.json" json class auto
-expect_pin "$t" ci-ruby40/Dockerfile.ci JSON_VERSION 2.20.0
+if [ -n "$JSON_FILES" ]; then
+  expect_field "$work/r1.json" json class auto
+  for f in $JSON_FILES; do expect_pin "$t" "$f" JSON_VERSION 2.20.0; done
+else
+  # No image replaces the json gem any more (it was ci-ruby40's workaround):
+  # the unit has no pin to move, and says so rather than inventing one.
+  expect_field "$work/r1.json" json status error
+fi
 
 echo " no vendor checksum -> review (docker)"
 expect_field "$work/r1.json" docker class review
@@ -268,8 +290,7 @@ expect_pin "$t" ci-tools/Dockerfile.ci DOCKER_VERSION 29.9.0
 
 echo " registry integrity (npm, both images) and lint.sh digests (hadolint, CRLF + '*')"
 expect_field "$work/r1.json" npm class auto
-expect_pin "$t" ci-node22/Dockerfile.ci NPM_VERSION 12.2.0
-expect_pin "$t" ci-node24/Dockerfile.ci NPM_VERSION 12.2.0
+for f in $NODE_FILES; do expect_pin "$t" "$f" NPM_VERSION 12.2.0; done
 expect_pin "$t" scripts/lint.sh HADOLINT_VERSION 2.15.2
 expect_pin "$t" scripts/lint.sh HADOLINT_SHA256_LINUX_X86_64 "$(fake hl-linux-x86_64)"
 expect_pin "$t" scripts/lint.sh HADOLINT_SHA256_MACOS_ARM64 "$(fake hl-macos-arm64)"
@@ -292,9 +313,9 @@ check "a checksum file missing the asset leaves build-image.yml byte-identical" 
   cmp -s "$t/.github/workflows/build-image.yml" "$snap/.github/workflows/build-image.yml"
 
 echo " nothing outside the expected files changed"
+# shellcheck disable=SC2086  # one path per word
 expected=$(printf '%s\n' .github/workflows/security.yml ci-cloud/Dockerfile.ci ci-db/Dockerfile.ci \
-  ci-node22/Dockerfile.ci ci-node24/Dockerfile.ci ci-php84/Dockerfile.ci ci-php85/Dockerfile.ci \
-  ci-ruby40/Dockerfile.ci ci-security/Dockerfile.ci ci-tools/Dockerfile.ci scripts/lint.sh | sort)
+  $NODE_FILES $PHP_FILES $JSON_FILES ci-security/Dockerfile.ci ci-tools/Dockerfile.ci scripts/lint.sh | sort)
 check "changed files are exactly the bumped units' files" [ "$(changed_files "$t" "$snap")" = "$expected" ]
 check "every changed line is a pin line" \
   bash -c "cd '$work' && diff -r one.snap one | grep -E '^[<>]' | grep -vE '^[<>] (ARG )?[A-Z0-9_]+=|^[<>] +[A-Z0-9_]+: ' | { ! grep -q .; }"
@@ -314,6 +335,10 @@ npm 12.2.0
 composer 2.10.4
 json 2.20.0
 EOF
+# Without an image that pins json, its unit has nothing to be current at.
+if [ -z "$JSON_FILES" ]; then
+  jq '.tools |= map(select(.tool != "json"))' "$work/drift2.json" > "$work/d2" && mv "$work/d2" "$work/drift2.json"
+fi
 rc=0
 "$bump" --root "$t" --drift "$work/drift2.json" --format json --quiet > "$work/r2.json" 2>/dev/null || rc=$?
 check "exit 0" [ "$rc" -eq 0 ]
@@ -387,6 +412,47 @@ gh_release kubernetes/kubernetes v1.38.1 "$OLD"
 rc=0; "$bump" --root "$t" --unit kubectl --to 1.38.1 --quiet --format json > "$work/r5c.json" 2>/dev/null || rc=$?
 check "a bare-hash file with a second field is an error (exit 1)" [ "$rc:$(field "$work/r5c.json" kubectl status)" = "1:error" ]
 check "none of the three edited anything" [ -z "$(changed_files "$t" "$work/five.snap")" ]
+
+echo "case 5b: which images carry a shared pin is read from images.json"
+t=$(new_tree fiveb)
+# An image added by the lifecycle: a third Node image, pinning npm like the others.
+first_node=$(printf '%s\n' "$NODE_FILES" | head -1)
+mkdir -p "$t/ci-node99"; cp "$t/$first_node" "$t/ci-node99/Dockerfile.ci"
+jq '. + [{image: "ci-node99", version: "trixie-v1", mirror: "mirror-node:99-trixie-slim", upstream: "node:99-trixie-slim"}]' \
+  "$t/.github/images.json" > "$t/i.json" && mv "$t/i.json" "$t/.github/images.json"
+# And one retired: every image that pinned json leaves images.json.
+# shellcheck disable=SC2086  # one path per word
+jq --arg drop "$(printf '%s\n' $JSON_FILES | sed 's|/.*||')" 'map(select(.image as $i | $drop | split("\n") | index($i) | not))' \
+  "$t/.github/images.json" > "$t/i.json" && mv "$t/i.json" "$t/.github/images.json"
+rc=0; "$bump" --root "$t" --unit npm --to 12.2.0 --quiet --format json > "$work/r5d.json" 2>/dev/null || rc=$?
+check "an added image's copy of the pin moves with the others" [ "$rc:$(pin "$t/ci-node99/Dockerfile.ci" NPM_VERSION)" = "0:12.2.0" ]
+for f in $NODE_FILES; do expect_pin "$t" "$f" NPM_VERSION 12.2.0; done
+rc=0; "$bump" --root "$t" --unit json --to 2.20.0 --quiet --format json > "$work/r5e.json" 2>/dev/null || rc=$?
+check "a pin no image in images.json carries is an error, not a guess" [ "$rc:$(field "$work/r5e.json" json status)" = "1:error" ]
+check "  and says so" bash -c "jq -r '.[0].error' '$work/r5e.json' | grep -q 'no image in .github/images.json pins'"
+if [ -n "$JSON_FILES" ]; then
+  for f in $JSON_FILES; do expect_pin "$t" "$f" JSON_VERSION 2.19.9; done
+fi
+
+echo "case 5c: check-pins -- a key no image carries is an error, unless the row is optional"
+# Offline: both paths end before any vendor is asked. check-pins reads the
+# tree it sits in, so it runs from a copy of itself inside the scratch tree.
+t=$(new_tree fivec)
+cp -p "$here/check-pins.sh" "$t/scripts/check-pins.sh"
+sed 's/| NPM_VERSION  /| NPM_VERISON  /' "$here/check-pins.sh" > "$t/scripts/check-pins-typo.sh"; chmod +x "$t/scripts/check-pins-typo.sh"
+check "  (the typo was planted)" grep -q 'NPM_VERISON' "$t/scripts/check-pins-typo.sh"
+rc=0; "$t/scripts/check-pins-typo.sh" --only npm --format json > "$work/c5c.json" 2> "$work/c5c.err" || rc=$?
+check "a typo'd key: exit 1, not a silent skip" [ "$rc" -eq 1 ]
+check "  reported unresolved, so pin-bump turns it into an error row" \
+  [ "$(jq -r '.tools[0].state + " " + .tools[0].key' "$work/c5c.json")" = "unresolved NPM_VERISON" ]
+check "  and the log says why" grep -q 'no image in .github/images.json pins NPM_VERISON' "$work/c5c.err"
+# The optional json row, once no image carries the replacement any more.
+for f in $JSON_FILES; do sed '/^ARG JSON_VERSION=/d' "$t/$f" > "$t/x" && mv "$t/x" "$t/$f"; done
+rc=0; "$t/scripts/check-pins.sh" --only json --format json > "$work/c5d.json" 2> "$work/c5d.err" || rc=$?
+check "an optional key no image carries: exit 0, skipped" [ "$rc:$(jq '.tools | length' "$work/c5d.json")" = "0:0" ]
+check "  and the log says so" grep -q 'json: no image in .github/images.json pins JSON_VERSION any more, and it is optional; skipped' "$work/c5d.err"
+rc=0; "$t/scripts/check-pins.sh" --only nosuch > /dev/null 2>&1 || rc=$?
+check "an unknown --only is still a usage error" [ "$rc" -eq 2 ]
 
 # --- scripts/pin-bump-prs.sh ---------------------------------------------------
 # Real git against a local bare repository as origin, so pushes, leases and
