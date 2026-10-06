@@ -19,7 +19,10 @@
 # Every other open PR is counted and left alone.
 #
 # For each candidate, in order:
-#   1. `hold` label: never merged, nothing else done. The kill switch.
+#   1. `hold` label: never merged, nothing else done. The kill switch. Read
+#      from the PR itself, fresh, and once more right before any write (a
+#      merge or a refresh), together with the head SHA: a label added or a
+#      commit pushed while the PR was being checked stops the write.
 #   2. Every commit on the PR must be the bot's own, by author AND committer,
 #      as GitHub records them (login and email), or the PR is left alone: a
 #      human is working on it, and merging would merge their commit
@@ -33,16 +36,22 @@
 #      warnings; the rest is waiting.
 #   4. Green and mergeable (no conflict): `gh pr merge --squash
 #      --match-head-commit <sha>`, so a push between the check and the merge
-#      makes GitHub refuse the merge instead of merging unchecked commits.
-#   5. Red, Dependabot, and the branch is behind main: the red result may be
-#      main's old fault rather than the update's (a gate since fixed on main,
-#      say), and Dependabot rebases only on a conflict, so nothing would ever
-#      re-test it. So, at most once per (PR, main commit): a marker comment
+#      makes GitHub refuse the merge instead of merging unchecked commits. A
+#      refusal for want of the `workflows` permission (a PR that changes
+#      .github/workflows/*) is a warning on a skipped PR, not an error: see
+#      the merge step.
+#   5. Red, Dependabot, mergeable, and the branch is behind main: the red
+#      result may be main's old fault rather than the update's (a gate since
+#      fixed on main, say), and Dependabot rebases only on a conflict, so
+#      nothing would ever re-test it. So, at most once per (PR, main commit)
+#      and at most MAX_REFRESHES times per PR in all: a marker comment
 #      recording the branch head and main, then GitHub's update-branch
 #      (merge main in, leased to the head SHA that was read), then CI
-#      dispatched on the branch. Never for pin-bump/*: pin-bump-prs.sh
-#      rebuilds those from main itself, and a merge commit on one would make
-#      it hands-off for good.
+#      dispatched on the branch. After the cap the PR is `stale`: Dependabot
+#      no longer rebases a branch someone else has committed to, so it waits
+#      for Dependabot's next version of the update, which supersedes it.
+#      Never for pin-bump/*: pin-bump-prs.sh rebuilds those from main
+#      itself, and a merge commit on one would make it hands-off for good.
 # After the loop, if anything merged: dispatch build-and-push.yml and
 # security.yml on main, once. A merge made with the workflow token starts no
 # push workflow, so without this the update would publish only with the next
@@ -87,6 +96,18 @@ readonly GHA_EMAIL='41898282+github-actions[bot]@users.noreply.github.com'
 readonly WEBFLOW_LOGIN='web-flow'
 readonly WEBFLOW_EMAIL='noreply@github.com'
 readonly HOLD=hold
+# How many times a red Dependabot PR is refreshed in all (one per main
+# commit, at most this many). main moves with every merge this workflow
+# makes, and each refresh can be a full build of every image, so without a
+# total a PR that is red for its own reasons would be rebuilt after every
+# merge, indefinitely. Two tries against two different mains is enough to
+# tell "main's fault" from "this update's".
+readonly MAX_REFRESHES=2
+# What a conflict means for each kind. Dependabot rebases a conflicting
+# branch of its own -- but only while it still owns it: once a refresh (below)
+# has merged main into it, Dependabot treats the PR as edited and leaves it,
+# and its next version of the update supersedes it.
+readonly CONFLICT_NOTE="merge conflict with main. A Dependabot branch is rebased by Dependabot while no one else has committed to it (after a refresh it is not, and its next version supersedes it); a pin-bump branch is rebuilt by pin-bump.yml"
 # Which workflow reports each required check (docs/security.md, "Required
 # checks"), for dispatching the ones a refreshed branch needs.
 readonly CHECK_WORKFLOWS=("CI result|build-and-push.yml" "Repository secret scan|security.yml"
@@ -114,12 +135,21 @@ run() {
 
 # Read-only GitHub queries, answerable from a stub directory. A stub that has
 # no file for a query fails it: a test that forgot a read must not see an
-# empty answer that happens to look like a clean one.
+# empty answer that happens to look like a clean one. The k-th read of the
+# same query is answered from <name>.<k>.json when that exists, so a test can
+# have the answer change between two reads (a label added, a head moved).
 gh_read() {
   local name="$1"; shift
   if [ -n "$stub" ]; then
-    [ -f "$stub/$name.json" ] || return 1
-    cat "$stub/$name.json"
+    local k=1 f
+    if [ -n "${work:-}" ]; then
+      k=$(( $(cat "$work/reads-$name" 2>/dev/null || echo 0) + 1 ))
+      echo "$k" > "$work/reads-$name"
+    fi
+    f="$stub/$name.json"
+    [ -f "$stub/$name.$k.json" ] && f="$stub/$name.$k.json"
+    [ -f "$f" ] || return 1
+    cat "$f"
     if [ -f "$stub/$name.exit" ]; then return "$(cat "$stub/$name.exit")"; fi
     return 0
   fi
@@ -134,26 +164,24 @@ gh_read() {
 one_pr() {
   local n="$1"
   local pr kind ref sha="" detail commits comments markers foreign
-  local note="" rc
+  local note="" rc warn=false
 
   pr=$(jq -c --argjson n "$n" '.[] | select(.number == $n)' "$work/prs.json")
   ref=$(jq -r '.head.ref' <<<"$pr")
   kind=$(jq -r 'if (.head.ref | startswith("dependabot/")) then "dependabot" else "pin-bump" end' <<<"$pr")
 
-  row() { # STATUS ACTION -- one result line for the summary
+  # One result line for the summary. `warn` makes it a warning annotation
+  # whatever its status (see the end of the script).
+  row() { # STATUS ACTION
     jq -nc --argjson pr "$n" --arg kind "$kind" --arg ref "$ref" --arg head "${sha:0:12}" \
-      --arg status "$1" --arg action "$2" --arg note "$note" \
-      '{pr:$pr, kind:$kind, branch:$ref, head:$head, status:$status, action:$action, note:$note}' >> "$RESULTS"
+      --arg status "$1" --arg action "$2" --arg note "$note" --argjson warn "$warn" \
+      '{pr:$pr, kind:$kind, branch:$ref, head:$head, status:$status, action:$action, note:$note, warn:$warn}' >> "$RESULTS"
   }
 
-  if jq -e --arg l "$HOLD" 'any(.labels[]?; .name == $l)' <<<"$pr" >/dev/null; then
-    sha=$(jq -r '.head.sha' <<<"$pr")
-    row held "not merged: labelled \`$HOLD\`"
-    return 0
-  fi
-
-  # The PR itself, fresh: the head SHA everything below is checked against,
-  # how many commits it has, and whether it merges cleanly.
+  # The PR itself, fresh: its labels, the head SHA everything below is
+  # checked against, how many commits it has, and whether it merges cleanly.
+  # `hold` is read from here, not from the list read at the start of the
+  # run, which can be minutes old by the time this PR's turn comes.
   rc=0; detail=$(gh_read "pr-$n" api "repos/$repo/pulls/$n") || rc=$?
   if [ "$rc" -ne 0 ] || ! jq -e --argjson n "$n" '.number == $n and .state == "open"
         and (.head.sha | type == "string" and test("^[0-9a-f]{40}$"))
@@ -163,6 +191,10 @@ one_pr() {
     return 0
   fi
   sha=$(jq -r '.head.sha' <<<"$detail")
+  if held <<<"$detail"; then
+    row held "not merged: labelled \`$HOLD\`"
+    return 0
+  fi
   if jq -e '.draft == true' <<<"$detail" >/dev/null; then
     row waiting "not merged: draft"
     return 0
@@ -282,19 +314,66 @@ one_pr() {
   # null (GitHub has not computed it yet). Only true merges.
   case "$(jq -r '.mergeable' <<<"$detail")" in
     true) ;;
-    false) note="merge conflict with $base; Dependabot rebases its own branches, pin-bump.yml rebuilds its own"
+    false) note="$CONFLICT_NOTE"
            row waiting "not merged: conflicts with $base"; return 0 ;;
     *) row waiting "not merged: GitHub has not worked out whether it merges cleanly yet"; return 0 ;;
   esac
 
+  recheck || return 0
   note="all four checks passed on ${sha:0:12}"
-  rc=0; run gh pr merge "$n" --repo "$repo" --squash --match-head-commit "$sha" || rc=$?
+  rc=0; run gh pr merge "$n" --repo "$repo" --squash --match-head-commit "$sha" 2> "$work/merge-$n.err" || rc=$?
+  cat "$work/merge-$n.err" >&2
   if [ "$rc" -ne 0 ]; then
-    note="gh pr merge exited $rc. The head may have moved since it was checked (then the next run looks again), or the merge was refused"
+    # The one refusal that is a standing limit rather than a failure: the
+    # workflow token has no `workflows` permission (no GITHUB_TOKEN can be
+    # granted it), and GitHub may refuse a merge that changes
+    # .github/workflows/* without it -- Dependabot's action bumps, or a pin
+    # bump in security.yml or build-image.yml. GitHub's documented
+    # Dependabot recipe merges action bumps with this token, so it is
+    # expected to work; if it ever does not, this PR would fail every hourly
+    # run, and the run going red each time would hide every other problem.
+    # So it is a warning on a skipped PR, for a human to merge. Matched
+    # loosely ("refusing to allow ... workflow", or "workflow" and
+    # "permission" together, any case), because the exact wording is
+    # GitHub's to change.
+    if grep -qiE 'refusing to allow.*workflow' "$work/merge-$n.err" \
+       || { grep -qi 'workflow' "$work/merge-$n.err" && grep -qi 'permission' "$work/merge-$n.err"; }; then
+      warn=true
+      note="GITHUB_TOKEN cannot merge workflow-file changes; merge by hand or provide a token with workflows:write ($(tr '\n' ' ' < "$work/merge-$n.err" | cut -c1-200))"
+      row skipped "not merged: changes workflow files, which the workflow token may not merge"
+      return 0
+    fi
+    note="gh pr merge exited $rc. The head may have moved since it was checked (then the next run looks again), or the merge was refused: $(tr '\n' ' ' < "$work/merge-$n.err" | cut -c1-200)"
     row error "merge failed"
     return 1
   fi
   row merged "merged (squash) at ${sha:0:12}"
+}
+
+# Whether the PR on stdin carries the `hold` label.
+held() { jq -e --arg l "$HOLD" 'any(.labels[]?; .name == $l)' >/dev/null; }
+
+# Right before a merge or a refresh, read the PR once more: a `hold` added,
+# or a head moved, while this PR was being checked stops the write. Writes a
+# row and returns 1 when the write must not happen; 0 to go ahead. Shares
+# one_pr's locals (n, sha, note, row).
+recheck() {
+  local again rc=0
+  again=$(gh_read "pr-$n" api "repos/$repo/pulls/$n") || rc=$?
+  if [ "$rc" -ne 0 ] || ! jq -e '.head.sha | type == "string"' <<<"$again" >/dev/null 2>&1; then
+    note="the pull request could not be read again right before writing (exit $rc)"
+    row unreadable "not merged"
+    return 1
+  fi
+  if held <<<"$again"; then
+    row held "not merged: labelled \`$HOLD\` while it was being checked"
+    return 1
+  fi
+  if [ "$(jq -r '.head.sha' <<<"$again")" != "$sha" ]; then
+    note="the head moved from ${sha:0:12} while it was being checked; the next run checks the new one"
+    row waiting "not merged: new commits"
+    return 1
+  fi
 }
 
 # Reads the PR's commits on stdin; prints one description per commit that is
@@ -360,6 +439,14 @@ dispatch_on() { # REF WORKFLOW...
 # row) through bash's dynamic scoping. PR MARKERS-JSON
 refresh() {
   local pr_n="$1" markers="$2" cmp behind rc body new_head i
+  # Only a branch that merges cleanly: update-branch on a conflict is
+  # refused anyway, and a conflicting branch is Dependabot's to rebase.
+  case "$(jq -r '.mergeable' <<<"$detail")" in
+    true) ;;
+    false) note="$note; $CONFLICT_NOTE"
+           row waiting "not merged: red, and conflicts with $base"; return 0 ;;
+    *) row waiting "not merged: red; GitHub has not worked out whether it merges cleanly yet"; return 0 ;;
+  esac
   rc=0; cmp=$(gh_read "compare-$pr_n" api "repos/$repo/compare/$main_sha...$sha?per_page=1") || rc=$?
   behind=$( { [ "$rc" -eq 0 ] && jq -er '.behind_by | numbers' <<<"$cmp"; } 2>/dev/null) || behind=""
   if [ -z "$behind" ]; then
@@ -371,16 +458,25 @@ refresh() {
     row red "not merged: red on the current $base; waits for a new Dependabot version, or a human"
     return 0
   fi
+  if [ "$(jq length <<<"$markers")" -ge "$MAX_REFRESHES" ]; then
+    warn=true
+    note="$note; refreshed against $base $(jq length <<<"$markers") times already and still red, so not again. Dependabot no longer rebases a branch this workflow has merged into; its next version of this update opens a new PR that supersedes this one"
+    row stale "not merged: red after $MAX_REFRESHES refreshes; waits for Dependabot's next version or a human"
+    return 0
+  fi
   if jq -e --arg m "$main_sha" 'any(.[]; .main == $m)' <<<"$markers" >/dev/null; then
     row red "not merged: already refreshed once against $base ${main_sha:0:12} and red again; next refresh when $base moves"
     return 0
   fi
+  recheck || return 0
 
   # The marker first: if anything below fails, it still stops the next run
   # from trying again against the same main.
   body="$work/marker-$pr_n.md"
   {
-    echo "The required checks failed on \`${sha:0:12}\`, and this branch is $behind commit(s) behind \`$base\`. Merging \`$base\` (\`${main_sha:0:12}\`) in once and re-running CI, in case the failure was \`$base\`'s and not this update's. This happens at most once per \`$base\` commit; if it is red again, it waits for Dependabot or a human."
+    echo "The required checks failed on \`${sha:0:12}\`, and this branch is $behind commit(s) behind \`$base\`. Merging \`$base\` (\`${main_sha:0:12}\`) in and re-running CI, in case the failure was \`$base\`'s and not this update's. This happens at most once per \`$base\` commit and $MAX_REFRESHES times in all."
+    echo
+    echo "Dependabot stops rebasing a branch once someone else has committed to it, and this merge counts, so from here this pull request is updated only by this workflow. If it stays red, Dependabot's next version of this update opens a new pull request that supersedes it."
     echo
     echo "Add the \`$HOLD\` label to stop this pull request from being merged automatically."
     [ -n "${RUN_URL:-}" ] && { echo; echo "Run: $RUN_URL"; }
@@ -490,6 +586,15 @@ for n in $candidates; do
 done
 
 # Publish what merged: one dispatch of each, on main, however many merged.
+#
+# The two workflows queue differently, and both are fine. build-and-push.yml
+# keeps one pending run per ref (cancel-in-progress: false), so this dispatch
+# waits behind a running rebuild, and two dispatches in a row collapse into
+# one pending run -- which builds main as it is when it starts, so it covers
+# every merge before it. security.yml has cancel-in-progress: true, so this
+# dispatch can cancel a scheduled Security run already going on main; the
+# run that survives is newer and scans the same or a later main, so nothing
+# goes unscanned. The cancelled run shows as cancelled, not failed.
 merged=$(jq -s '[.[] | select(.status == "merged")] | length' "$RESULTS")
 publish=""
 if [ "$merged" -gt 0 ]; then
@@ -529,10 +634,11 @@ fi
 [ -n "${GITHUB_STEP_SUMMARY:-}" ] && cat "$work/summary.md" >> "$GITHUB_STEP_SUMMARY"
 cat "$work/summary.md"
 
-# Annotations: red and unreadable PRs are warnings (a state to look at, not a
-# failure of this job); anything this run failed to do is an error.
+# Annotations: red, unreadable and stale PRs, and a merge refused for want of
+# the workflows permission, are warnings (a state to look at, not a failure
+# of this job); anything this run failed to do is an error.
 if [ -n "${GITHUB_ACTIONS:-}" ]; then
-  jq -r 'select(.status == "red" or .status == "unreadable") | "::warning::#\(.pr) \(.branch): \(.status): \(.note)"' "$RESULTS"
+  jq -r 'select(.status == "red" or .status == "unreadable" or .status == "stale" or .warn == true) | "::warning::#\(.pr) \(.branch): \(.status): \(.note)"' "$RESULTS"
   jq -r 'select(.status == "error") | "::error::\(if .pr == 0 then "" else "#\(.pr) " end)\(.branch): \(.action): \(.note)"' "$RESULTS"
 fi
 

@@ -439,7 +439,7 @@ jobs:
       #      ghcr.io/<owner>/<image>:<version>;
       #   3. scan that image the same way;
       #   4. scripts/vuln-gate.sh compares the two by (VulnerabilityID,
-      #      PkgName) and fails on anything new. What both carry is "known
+      #      PkgName, result type) and fails on anything new. What both carry is "known
       #      upstream" and listed; what only the published image carries is
       #      "fixed by this build" and listed.
       # Fail closed: if there is no published image (a new image or a new
@@ -500,54 +500,22 @@ jobs:
           skip-setup-trivy: true
           cache: 'false'
 
-      # The image a consumer pulls today, for this architecture: the index
-      # behind the rolling tag, and in it the one linux/<arch> manifest. Not
-      # the `<version>-<arch>` tag the push step below writes: that tag moves
-      # as soon as one architecture passes, even when the other then fails and
-      # the index is never updated, so it can name an image nobody was given.
-      #
-      # Anonymous on pull requests (the packages are public; this job logs in
-      # to GHCR only on main). Never fails the step: every way of not finding
-      # a baseline becomes `ref=` plus a `note`, and the gate step turns that
-      # into the strict comparison. `ref` is a digest reference, so the scan
-      # below reads exactly the bytes resolved here even if the tag moves in
-      # between.
+      # The image a consumer pulls today, for this architecture: the per-arch
+      # manifest in the index behind the rolling tag. scripts/vuln-baseline.sh
+      # has the details: it retries registry errors (5s, 15s, 45s), does not
+      # retry "not found", and never fails the step -- every way of not
+      # finding a baseline becomes `ref=` plus a `note`, which the gate step
+      # turns into the strict comparison. `ref` is a digest reference, so the
+      # scan below reads exactly the bytes resolved here even if the tag
+      # moves in between. Anonymous on pull requests (the packages are
+      # public; this job logs in to GHCR only on main).
       - name: Published baseline (${{ matrix.arch }})
         id: baseline
         env:
           REPO: ghcr.io/${{ github.repository_owner }}/${{ inputs.image }}
           VERSION: ${{ inputs.version }}
           ARCH: ${{ matrix.arch }}
-        run: |
-          strict() {
-            echo "ref=" >> "$GITHUB_OUTPUT"
-            echo "note=$1" >> "$GITHUB_OUTPUT"
-            echo "$2::$1 -- the vulnerability gate runs strict for $ARCH: every finding blocks"
-            exit 0
-          }
-          rc=0
-          docker buildx imagetools inspect --raw "$REPO:$VERSION" > published-index.json 2> published-index.err || rc=$?
-          if [ "$rc" -ne 0 ]; then
-            err=$(tr '\n' ' ' < published-index.err | cut -c1-200)
-            # A missing tag or package is what a new image looks like. Any
-            # other failure is reported as one; both are strict.
-            if grep -qiE 'not found|manifest unknown|name unknown' published-index.err; then
-              strict "$REPO:$VERSION has never been published (new image or new tag)" "::notice"
-            fi
-            strict "could not read $REPO:$VERSION from the registry (exit $rc: $err)" "::warning"
-          fi
-          rc=0
-          digest=$(jq -r --arg arch "$ARCH" '
-            if (.manifests | type) != "array" then error("not an image index") else . end
-            | [.manifests[] | select(.platform.os == "linux" and .platform.architecture == $arch) | .digest]
-            | if length == 1 and (.[0] | test("^sha256:[0-9a-f]{64}$")) then .[0] else error("\(length) linux/\($arch) manifests") end
-            ' published-index.json 2> published-index.err) || rc=$?
-          if [ "$rc" -ne 0 ]; then
-            strict "the published $REPO:$VERSION has no single linux/$ARCH manifest ($(tr '\n' ' ' < published-index.err | cut -c1-200))" "::warning"
-          fi
-          echo "ref=$REPO@$digest" >> "$GITHUB_OUTPUT"
-          echo "note=" >> "$GITHUB_OUTPUT"
-          echo "baseline for $ARCH: $REPO@$digest ($REPO:$VERSION)"
+        run: ./scripts/vuln-baseline.sh "$REPO" "$VERSION" "$ARCH"
 
       # The published image, scanned exactly as the candidate was (see above),
       # straight from the registry: TRIVY_IMAGE_SRC=remote, so Trivy never

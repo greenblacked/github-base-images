@@ -89,7 +89,7 @@ one to make a build pass, that is usually the bug rather than the test.
 
 Pinned tool versions (Terraform, kubectl, AWS CLI, Docker client in `ci-tools`; Composer in
 `ci-php84` and `ci-php85`) are `ARG`s so a bump is a small change that CI revalidates. Dependabot does **not**
-track these — it only updates each Dockerfile's `ARG BASE_IMAGE` — so they still move when a human
+track these — it only reads each Dockerfile's `ARG BASE_IMAGE` — so they would move only when a human
 moves them. What has changed is that you no longer have to *notice*: the daily
 [pin drift](.github/workflows/pin-drift.yml) job compares every one of them against its vendor's
 current release and maintains a single tracking issue, opened when something falls behind and

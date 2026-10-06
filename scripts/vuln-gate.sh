@@ -30,7 +30,9 @@
 # what it introduces; what it inherits from upstream ships until upstream
 # fixes it, and is listed on every run.
 #
-# A finding's identity is (VulnerabilityID, PkgName):
+# A finding's identity is (VulnerabilityID, PkgName, type), where type is
+# the Trivy result's Type (debian, ubuntu, node-pkg, python-pkg, gobinary,
+# jar, ...), or its Class when there is no Type:
 #   - new     in the candidate, not in the baseline: BLOCKS. This build
 #             introduced it (a new tool, a bumped pin, a newer base that
 #             regressed), and this repository can decide not to ship that.
@@ -41,7 +43,11 @@
 #             version is still known: a patch-level move of a package that is
 #             still vulnerable is not a regression.
 #   - fixed   in the baseline only: listed, as what this build fixes.
-# The identity deliberately ignores the path: the same vulnerable package
+# The type is in the identity so a CVE known in one ecosystem cannot hide the
+# same id newly reported against a same-named package in another: openssl the
+# Debian package and an npm package called openssl are different software,
+# and so are a Go module and a pip package that share a name. The identity
+# deliberately ignores the path: the same vulnerable package of the same type
 # appearing in one more place is not a new decision. That is the one way a
 # known finding can grow without blocking, and it is accepted.
 #
@@ -162,6 +168,7 @@ load() { # FILE DEST WHAT
           [ (.Results // [])[]
             | if type != "object" then error("a Results entry is not an object") else . end
             | (.Target // "") as $target
+            | ((.Type // .Class // "") | tostring) as $type
             | (.Vulnerabilities // [])
             | if type != "array" then error("Vulnerabilities of \($target | tojson) is not an array") else . end
             | .[]
@@ -172,6 +179,7 @@ load() { # FILE DEST WHAT
               else . end
             | { id: .VulnerabilityID,
                 pkg: .PkgName,
+                type: $type,
                 sev: ((.Severity // "UNKNOWN") | tostring),
                 installed: ((.InstalledVersion // "") | tostring),
                 fixed: ((.FixedVersion // "") | tostring),
@@ -192,15 +200,15 @@ fi
 # One entry per identity in each class, with the versions, fixed versions and
 # targets it was seen at gathered into lists. Severity is the worst seen.
 jq -n --slurpfile c "$tmp/cand.json" --slurpfile b "$tmp/base.json" '
-  def key: [.id, .pkg];
+  def key: [.id, .pkg, .type];
   def sevrank: {"CRITICAL": 0, "HIGH": 1, "MEDIUM": 2, "LOW": 3}[.] // 4;
   def grouped: group_by(key) | map({
-      id: .[0].id, pkg: .[0].pkg,
+      id: .[0].id, pkg: .[0].pkg, type: .[0].type,
       sev: (map(.sev) | min_by(sevrank)),
       installed: (map(.installed) | unique | map(select(. != ""))),
       fixed: (map(.fixed) | unique | map(select(. != ""))),
       targets: (map(.target) | unique | map(select(. != "")))
-    }) | sort_by((.sev | sevrank), .id, .pkg);
+    }) | sort_by((.sev | sevrank), .id, .pkg, .type);
   $c[0] as $cand | $b[0] as $base
   | ($base | map(key) | unique) as $bk
   | ($cand | map(key) | unique) as $ck
@@ -231,7 +239,7 @@ readonly JQ_LIB='
   def cell: tostring | gsub("[\r\n]+"; " ") | gsub("\\|"; "\\|")
     | if length > $mc then .[:$mc] + "…" else . end;
   def few($n): if length > $n then (.[:$n] | join(", ")) + ", +\(length - $n) more" else join(", ") end;
-  def row: "| \(.id | cell) | \(.pkg | cell) | \(.sev | cell) | \(.installed | few(3) | cell) | \(.fixed | few(3) | cell) | \(.targets | few(2) | cell) |";
+  def row: "| \(.id | cell) | \(.pkg | cell) | \(.type | cell) | \(.sev | cell) | \(.installed | few(3) | cell) | \(.fixed | few(3) | cell) | \(.targets | few(2) | cell) |";
 '
 
 {
@@ -252,15 +260,15 @@ readonly JQ_LIB='
   echo "| known upstream (published image has them too) | $n_known |"
   echo "| fixed by this build | $n_fixed |"
   echo
-  echo "Counted per (vulnerability, package); $n_cand candidate row(s) in all. Scope: fixable"
+  echo "Counted per (vulnerability, package, package type); $n_cand candidate row(s) in all. Scope: fixable"
   echo "HIGH/CRITICAL, OS packages and libraries, after this image's exceptions."
 
   if [ "$n_new" -gt 0 ]; then
     echo
     echo "#### New in this build -- blocking"
     echo
-    echo "| vulnerability | package | severity | installed | fixed in | where |"
-    echo "|---|---|---|---|---|---|"
+    echo "| vulnerability | package | type | severity | installed | fixed in | where |"
+    echo "|---|---|---|---|---|---|---|"
     jq -r --argjson max "$MAX_ROWS" --argjson mc "$MAX_CELL" "$JQ_LIB"'.new[:$max][] | row' "$tmp/cmp.json"
     if [ "$n_new" -gt "$MAX_ROWS" ]; then
       echo
@@ -272,8 +280,8 @@ readonly JQ_LIB='
     echo
     echo "#### Fixed by this build"
     echo
-    echo "| vulnerability | package | severity | was installed | fixed in | where |"
-    echo "|---|---|---|---|---|---|"
+    echo "| vulnerability | package | type | severity | was installed | fixed in | where |"
+    echo "|---|---|---|---|---|---|---|"
     jq -r --argjson max "$MAX_ROWS" --argjson mc "$MAX_CELL" "$JQ_LIB"'.fixed[:$max][] | row' "$tmp/cmp.json"
     if [ "$n_fixed" -gt "$MAX_ROWS" ]; then
       echo
@@ -286,7 +294,7 @@ readonly JQ_LIB='
     echo "#### Known upstream (not blocking)"
     echo
     printf '%s\n' "$(jq -r --argjson max "$MAX_KNOWN_INLINE" --argjson mc "$MAX_CELL" "$JQ_LIB"'
-      .known | map("\(.id) (\(.pkg))" | cell) | few($max)' "$tmp/cmp.json")."
+      .known | map("\(.id) (\(.pkg), \(.type))" | cell) | few($max)' "$tmp/cmp.json")."
     echo
     echo "Each is also an open alert in *Security → Code scanning* and in the security alerts report."
   fi
@@ -296,7 +304,7 @@ mv "$tmp/summary.md" "$summary"
 # The log gets every new finding, uncapped: the log has no size limit, and a
 # blocked build should name all of what blocked it in one place.
 if [ "$n_new" -gt 0 ]; then
-  jq -r '.new[] | "new: \(.id) in \(.pkg) (\(.sev)), installed \(.installed | join(", ")), fixed in \(.fixed | join(", ")), at \(.targets | join(", "))"' \
+  jq -r '.new[] | "new: \(.id) in \(.pkg) [\(.type)] (\(.sev)), installed \(.installed | join(", ")), fixed in \(.fixed | join(", ")), at \(.targets | join(", "))"' \
     "$tmp/cmp.json" >&2
 fi
 printf 'vuln-gate: %s: %d new, %d known upstream, %d fixed%s\n' \

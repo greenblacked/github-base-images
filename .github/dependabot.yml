@@ -21,20 +21,22 @@ version: 2
 # A `hold` label stops one. Majors are labelled needs-review as information
 # (.github/workflows/dependabot-auto-merge.yml).
 #
-# Docker entries: an update must never change WHAT an image is. Each image
-# directory is one runtime line on one distribution -- ci-python313 is Python
-# 3.13 on Bookworm, its tag says `bookworm-v1`, and consumers chose it for
-# that. Dependabot reads the `ARG BASE_IMAGE` default as a version plus a
-# suffix (`3.13` + `-slim-bookworm`) and would happily propose `3.14`, a
-# different image under the same name. So every docker entry ignores
-# semver-major and semver-minor updates: on these tags those are exactly the
-# runtime line (python 3.13 -> 3.14 is a "minor", node 22 -> 24 a "major",
-# ruby 3.4 -> 4.0 either). The distribution is in the suffix, which Dependabot
-# keeps fixed, so a codename change is never proposed at all. What stays
-# allowed is patch-level movement within the line and digest updates, if a
-# digest is ever pinned; the daily rebuild already re-resolves the floating
-# tag, which is how these images actually move. `dependency-name: "*"` because
-# each directory has exactly one FROM, and Dependabot names registry images
+# Docker entries: in practice these propose nothing, and that is expected.
+# Base images do NOT reach the images through Dependabot. Each `ARG
+# BASE_IMAGE` default is a floating tag (python:3.13-slim-bookworm,
+# node:22-bookworm-slim, golang:1-bookworm, debian:bookworm-slim), and the
+# daily rebuild re-resolves it through the mirror (build-and-push.yml's
+# `mirror` job), which is how upstream's patch releases arrive. Dependabot
+# compares a tag only with tags of the same shape: for 3.13-slim-bookworm
+# that is 3.14-, 3.15-slim-bookworm; for 22-bookworm-slim, 24- and 25-; for
+# 1-bookworm, 2-bookworm; for a bare codename, nothing at all. Every one of
+# those is a different runtime line -- a different image under the same name
+# and tag (`ci-python313:bookworm-v1` is Python 3.13 on Bookworm, and
+# consumers chose it for that) -- and is a semver-minor or semver-major
+# update, which every entry ignores. The ignore rules are the safety net
+# that keeps it so if a tag ever changes shape; the entries stay so that
+# would be noticed. `dependency-name: "*"` because each directory has
+# exactly one FROM, and Dependabot names registry images
 # (mcr.microsoft.com/dotnet/sdk) in a way not worth depending on here.
 # A new runtime line is a new image directory (CONTRIBUTING.md), never a bump.
 
@@ -69,17 +71,17 @@ updates:
         patterns:
           - "github/codeql-action*"
 
-  # Base image bumps arrive as PRs. Dependabot reads the default of the
-  # `ARG BASE_IMAGE` each Dockerfile builds FROM, which is why that default
-  # stays pointed at the real upstream ref rather than the mirror.
+  # Dependabot reads the default of the `ARG BASE_IMAGE` each Dockerfile
+  # builds FROM (the real upstream ref, not the mirror). As the header says,
+  # on these tags it finds nothing it is allowed to propose; the entries are
+  # the safety net, and base images move with the daily rebuild.
   #
   # Note this does NOT track the pinned tool versions in ci-tools/Dockerfile.ci
   # (Terraform, kubectl, AWS CLI, Docker client) -- those are plain ARGs with no
   # ecosystem behind them. .github/workflows/pin-bump.yml moves them instead.
-  # node:22-bookworm-slim: the version is `22`, so node 24 would be a
-  # semver-major, and that is all a one-number tag can be compared with. So
-  # this entry is not expected to propose anything; the floating tag moves to
-  # each Node 22 release with the daily rebuild. Same for ci-node24.
+  # node:22-bookworm-slim: the only same-shape tags are other Node majors
+  # (24-, 25-bookworm-slim), all ignored. Node 22's own releases arrive
+  # through the daily rebuild. Same for ci-node24.
   - package-ecosystem: docker
     directory: /ci-node22
     schedule:
@@ -90,8 +92,9 @@ updates:
       - dependency-name: "*"
         update-types: ["version-update:semver-major", "version-update:semver-minor"]
 
-  # python:3.13-slim-bookworm: 3.14 would be a semver-minor, so minors are
-  # ignored along with majors. Same for ci-python312 and ci-python314.
+  # python:3.13-slim-bookworm: the only same-shape tags are other Python
+  # lines (3.14-, 3.15-slim-bookworm), semver-minors, ignored. Same for
+  # ci-python312 and ci-python314.
   - package-ecosystem: docker
     directory: /ci-python313
     schedule:
@@ -104,9 +107,8 @@ updates:
 
   # golang:1-bookworm (and rust:1-bookworm below): `1` IS the line -- these
   # two images track current stable on purpose (docs/images.md, "Go and
-  # Rust"), and the floating tag already moves to each new toolchain minor.
-  # Only a Go 2 / Rust 2 would be a version update here, and that is a new
-  # image, not a bump.
+  # Rust"), and the floating tag moves to each new toolchain minor with the
+  # daily rebuild. The only same-shape tag is 2-bookworm, a major, ignored.
   - package-ecosystem: docker
     directory: /ci-go
     schedule:
@@ -119,8 +121,8 @@ updates:
 
   # debian:bookworm-slim (ci-tools, ci-cloud, ci-security, ci-db): no version
   # number at all, only a codename, which Dependabot does not read as one, so
-  # it never proposes trixie here. The ignore is there so that stays true
-  # if it ever starts to.
+  # it proposes nothing, trixie included. The ignore is there so that stays
+  # true if it ever starts to.
   - package-ecosystem: docker
     directory: /ci-tools
     schedule:

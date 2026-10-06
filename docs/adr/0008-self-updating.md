@@ -41,7 +41,8 @@ For each image and architecture, `build-image.yml` scans the candidate image and
 currently published for the same tag (its per-arch manifest digest), with the same Trivy binary,
 the same on-disk database, the same flags (HIGH/CRITICAL, `ignore-unfixed`, `os,library`) and the
 same exceptions. [scripts/vuln-gate.sh](../../scripts/vuln-gate.sh) compares the two reports by
-(vulnerability id, package name):
+(vulnerability id, package name, package type), where the type is Trivy's result type (`debian`,
+`node-pkg`, `python-pkg`, `gobinary`, …):
 
 - **new** (candidate only): blocks the publish;
 - **known upstream** (both): listed, does not block;
@@ -50,7 +51,8 @@ same exceptions. [scripts/vuln-gate.sh](../../scripts/vuln-gate.sh) compares the
 It fails closed. A new image or a new tag has no published image, so the comparison runs against
 an empty baseline and every finding blocks, the same as the old gate. The same strict comparison
 runs when the published image cannot be resolved or scanned for any reason, and the summary says
-which reason it was. An unreadable report is a failure, never "no findings". The summary is a
+which reason it was. Registry reads are retried three times (5s, 15s, 45s) before that, so one
+hiccup does not make the gate strict. An unreadable report is a failure, never "no findings". The summary is a
 small table, never the full Trivy output, which had exceeded the 1 MiB step-summary limit.
 
 The alerts report still lists every open fixable alert, but open fixable alerts are now a warning,
@@ -61,9 +63,15 @@ not a failure. It still fails when it could not read the alerts.
 Dependabot (every ecosystem), pin drift, pin bump, the image rebuild, the repository security
 scans and the alerts report run daily. The seven-day cooldown is unchanged everywhere: a version
 is still adopted no sooner than seven days after release, just on the day it qualifies instead of
-up to a week later. Dependabot's docker entries ignore semver-major and semver-minor updates. On
-these tags those are the runtime line (Python 3.13 → 3.14, Node 22 → 24), and the distribution
-is in the tag suffix, which Dependabot never changes. So no update can change what an image is.
+up to a week later.
+
+Base images do not reach the images through Dependabot. Each `ARG BASE_IMAGE` is a floating tag
+(`python:3.13-slim-bookworm`, `node:22-bookworm-slim`, `golang:1-bookworm`), and the daily rebuild
+re-resolves it through the mirror, so upstream's patch releases arrive that way. On tags of that
+shape the only versions Dependabot can propose are a different runtime line (Python 3.14, Node 24,
+Go 2), so in practice its docker entries propose nothing. They ignore semver-major and
+semver-minor updates anyway, as a safety net: no update may change what an image is. Dependabot's
+real work here is the action pins.
 
 A dispatched build on any branch other than `main` is planned like a pull request: it builds only
 the images the branch changes, compared with `main`. A dispatch on `main` stays a full rebuild.
@@ -85,14 +93,25 @@ labelled `needs-review` (AWS CLI, Docker client, gcloud, and any major). The ful
 tests and gate are the safety net, and the label is information only. After a merge it dispatches
 Build and Push and Security on `main`, which publishes the update the same hour.
 
-A red Dependabot PR that is behind `main` is brought up to date once per `main` commit. The bot
-posts a marker comment, calls `update-branch` leased to the head it read, and dispatches CI on the
-branch. The only merge commit the authorship check accepts is one whose parents match a marker
-written by `github-actions[bot]`. Pin-bump branches are never updated this way, because
-`pin-bump-prs.sh` rebuilds them from `main` itself.
+`hold` and the head SHA are read from the PR itself, and read again right before the merge.
+
+A red Dependabot PR that merges cleanly and is behind `main` is brought up to date: at most once
+per `main` commit and twice in all. The bot posts a marker comment, calls `update-branch` leased
+to the head it read, and dispatches CI on the branch. The only merge commit the authorship check
+accepts is one whose parents match a marker written by `github-actions[bot]`. After a refresh,
+Dependabot treats the PR as edited and stops rebasing it. If it stays red after two refreshes it
+is marked stale and waits for Dependabot's next version of the update, which opens a new PR that
+supersedes it. Pin-bump branches are never updated this way, because `pin-bump-prs.sh` rebuilds
+them from `main` itself.
 
 The workflow uses `GITHUB_TOKEN` only, with `contents`, `pull-requests` and `actions` write and
-`checks` read. It needs no PAT, no app, no ruleset and no repository setting.
+`checks` read. It needs no PAT, no app, no ruleset and no auto-merge setting. One limit is
+expected but not yet seen either way: `GITHUB_TOKEN` can never hold the `workflows` permission,
+and GitHub may refuse to merge a PR that changes `.github/workflows/*` without it (Dependabot's
+action bumps, and the gitleaks and osv-scanner pin bumps). GitHub's documented Dependabot recipe
+merges action bumps with this token, so it is expected to work. The first action bump will show
+whether it does. If GitHub refuses, the bot marks that PR skipped with a warning (merge it by
+hand, or give the workflow a token with `workflows: write`), and the run stays green.
 
 ## Why
 
@@ -100,9 +119,11 @@ The workflow uses `GITHUB_TOKEN` only, with `contents`, `pull-requests` and `act
   image already carries is not made worse by publishing a rebuild that still carries it. Blocking
   that rebuild only withholds the fixes it does carry. A finding a build *adds* is the one decision
   this repository actually makes, and that one still blocks.
-- **Identity is (id, package), not version or path.** The same CVE in the same package at a new
-  patch version is upstream moving without fixing it, not a regression. The cost is that one more
-  copy of an already-known vulnerable package in a new path does not block. That is accepted.
+- **Identity is (id, package, type), not version or path.** The same CVE in the same package at a
+  new patch version is upstream moving without fixing it, not a regression. The type keeps a CVE
+  known in a Debian package from hiding the same id newly reported against an npm, PyPI or Go
+  package of the same name. The cost is that one more copy of an already-known vulnerable package,
+  of the same type, in a new path does not block. That is accepted.
 - **Strict on any failure.** Telling "not published yet" from "registry error" is done only for
   the message. Both run strict, and strict can only fail a build that a successful comparison
   would have passed. It can never pass one that the comparison would have failed.
@@ -117,8 +138,9 @@ The workflow uses `GITHUB_TOKEN` only, with `contents`, `pull-requests` and `act
   vulnerability is what the pipeline was built to accept.
 - **Refreshing red Dependabot PRs** because Dependabot rebases only on a conflict. A PR that went
   red under an old `main` (for example the strict gate this record replaces) would otherwise stay
-  red forever. Once per `main` commit, with the attempt recorded first, bounds it, so it can never
-  loop.
+  red forever. `main` moves with every merge, and a refresh can be a full build of every image, so
+  it is bounded twice: once per `main` commit, recorded before the attempt, and two in all. Two
+  tries against two different `main`s is enough to tell `main`'s fault from the update's.
 
 ## Consequences
 
@@ -131,7 +153,10 @@ The workflow uses `GITHUB_TOKEN` only, with `contents`, `pull-requests` and `act
   scans, but they are needed only for a finding a build *adds* that no release fixes. An expired
   exception for a known finding breaks nothing.
 - Every automated update merges without a person. The `hold` label stops one PR, and disabling
-  *Merge bot* stops all of them.
+  *Merge bot* stops all of them. A PR the token is not allowed to merge (workflow files) is left
+  with a warning for a person.
+- A refreshed Dependabot PR is no longer Dependabot's to rebase. If it conflicts later, it waits
+  for Dependabot's next version, which supersedes it.
 - PRs are merged one after another on CI results from their own base. Two updates that each pass
   alone but fail together would turn the post-merge publish on `main` red. Nothing broken
   publishes, and the next update or a person fixes `main`.

@@ -42,12 +42,14 @@ for it (a step summary is capped at 1 MiB):
   binaries (Go binaries, npm, pip, gem, jar, …) — `vuln-type: os,library`. How it decides:
   - It scans the candidate and the image published now for the same tag and architecture (its
     per-arch digest), with the same Trivy, the same database and the same flags, and compares them
-    by vulnerability id and package ([scripts/vuln-gate.sh](../scripts/vuln-gate.sh)). A finding
+    by vulnerability id, package and package type (`debian`, `node-pkg`, `python-pkg`, …)
+    ([scripts/vuln-gate.sh](../scripts/vuln-gate.sh)). A finding
     only the candidate has is **new** and blocks. One both have is **known upstream** and is
     listed. One only the published image has is **fixed by this build** and is listed. The same CVE
-    in the same package at a newer version is still known.
+    in the same package at a newer version is still known; the same CVE in an npm package that shares
+    a name with a known Debian package is not.
   - With nothing to compare against (a new image or a new tag), or when the published image cannot
-    be read or scanned, it runs **strict**: every finding blocks, and the summary says why. An
+    be read (after three retries) or scanned, it runs **strict**: every finding blocks, and the summary says why. An
     unreadable report fails the gate. It is never read as "no findings".
   - `ignore-unfixed` keeps it honest: red always means there is a version to move to, never a CVE
     with no patch available. Unfixed findings are reported, not enforced.

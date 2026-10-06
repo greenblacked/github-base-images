@@ -23,12 +23,13 @@ mkdir -p "$work/bin"
 cat > "$work/bin/gh" <<'EOF'
 #!/usr/bin/env bash
 # The fake: log every call, keep any --body-file, refuse what FAKE_GH_FAIL
-# matches. Reads never get here: they come from the stub directory.
+# matches (saying FAKE_GH_ERR, when set, as GitHub would). Reads never get
+# here: they come from the stub directory.
 printf '%s\n' "$*" >> "$FAKE_GH_LOG"
 prev=""
 for a in "$@"; do [ "$prev" = --body-file ] && cp "$a" "$FAKE_GH_LOG.body"; prev="$a"; done
 if [ -n "${FAKE_GH_FAIL:-}" ] && printf '%s\n' "$*" | grep -qE "$FAKE_GH_FAIL"; then
-  echo "gh (fake): refused: $*" >&2; exit 1
+  echo "${FAKE_GH_ERR:-gh (fake): refused: $*}" >&2; exit 1
 fi
 exit 0
 EOF
@@ -76,16 +77,19 @@ pr() {
     '. + [{number: $n, user: {login: $l, type: "Bot"}, draft: false, labels: $labels,
            head: {ref: $r, sha: $s, repo: {full_name: "o/r"}}, base: {ref: "main"}}]' \
     "$stub/prs.json" > "$stub/prs.tmp" && mv "$stub/prs.tmp" "$stub/prs.json"
-  detail "$n" "$head" 1 true
+  detail "$n" "$head" 1 true "$labels"
   if [ "$kind" = dependabot ]; then dep_commit "$head" | jq -s . > "$stub/commits-$n.json"
   else gha_commit "$head" | jq -s . > "$stub/commits-$n.json"; fi
   checks "$n" success success success success
   echo '[]' > "$stub/comments-$n.json"
 }
-# detail N HEAD COMMITS MERGEABLE
+# detail N HEAD COMMITS MERGEABLE [LABELS-JSON] [FILE] -- the PR as
+# `GET pulls/N` returns it; FILE defaults to pr-N.json (pr-N.2.json is the
+# second read: the re-check right before a write).
 detail() {
-  jq -n --argjson n "$1" --arg s "$2" --argjson c "$3" --argjson m "$4" \
-    '{number: $n, state: "open", draft: false, head: {sha: $s}, commits: $c, mergeable: $m}' > "$stub/pr-$1.json"
+  jq -n --argjson n "$1" --arg s "$2" --argjson c "$3" --argjson m "$4" --argjson l "${5:-[]}" \
+    '{number: $n, state: "open", draft: false, head: {sha: $s}, commits: $c, mergeable: $m, labels: $l}' \
+    > "$stub/${6:-pr-$1.json}"
 }
 # checks N S1 S2 S3 S4 -- the latest run of each required check, in
 # CHECKS order: success, failure, cancelled, in_progress, skipped, or none.
@@ -217,7 +221,7 @@ expect 55 status red
 expect 56 status waiting
 expect 57 status merged
 expect 58 status red
-check "only #57 merged" [ "$(grep -c '^pr merge' "$log")" -eq 1 ] && logged "pr merge 57 --repo o/r --squash --match-head-commit $H1"
+check "only #57 merged" [ "$(grep '^pr merge' "$log")" = "pr merge 57 --repo o/r --squash --match-head-commit $H1" ]
 check "a red PR is a warning annotation" grep -q '^::warning::#54 pin-bump/tool-54: red: failed on' "$out"
 check "a waiting PR is not" bash -c "! grep -q '^::warning::#51' '$out'"
 check "a red pin-bump PR is never update-branched" not_logged 'update-branch'
@@ -429,6 +433,91 @@ check "nothing written" no_writes
 check "the merge is printed" grep -q "DRY-RUN would run: gh pr merge 131 --repo o/r --squash --match-head-commit $H1" "$out"
 check "the refresh is printed" grep -q 'DRY-RUN would run: gh api -X PUT repos/o/r/pulls/132/update-branch' "$out"
 check "the publish is printed" grep -q 'DRY-RUN would run: gh workflow run build-and-push.yml --repo o/r --ref main' "$out"
+
+echo "case 14: a merge GitHub refuses for want of the workflows permission -> skipped, a warning"
+scenario fourteen
+pr 141 dependabot "$H1"
+pr 142 dependabot "$H2"
+FAKE_GH_FAIL='^pr merge 141 ' \
+FAKE_GH_ERR="GraphQL: refusing to allow a GitHub App to create or update workflow \`.github/workflows/security.yml\` without \`workflows\` permission (mergePullRequest)" run_bot
+check "exit 0: a standing limit must not make every run red" [ "$rc" -eq 0 ]
+expect 141 status skipped
+check "  the note says what to do" bash -c "jq -r 'select(.pr == 141) | .note' '$res' | grep -q 'GITHUB_TOKEN cannot merge workflow-file changes; merge by hand or provide a token with workflows:write'"
+check "  a warning annotation, not an error" bash -c "grep -q '^::warning::#141 .*skipped: GITHUB_TOKEN cannot merge' '$out' && ! grep -q '^::error::' '$out'"
+expect 142 status merged
+# Other wording, same meaning: matched on "workflow" and "permission".
+scenario fourteen-b
+pr 143 pin-bump "$H1"
+FAKE_GH_FAIL='^pr merge 143 ' FAKE_GH_ERR='HTTP 403: Resource not accessible: the Workflows permission is required to change .github/workflows/build-image.yml' run_bot
+check "exit 0" [ "$rc" -eq 0 ]
+expect 143 status skipped
+# Any other refusal is still an error (case 8 has the generic one).
+scenario fourteen-c
+pr 144 dependabot "$H1"
+FAKE_GH_FAIL='^pr merge 144 ' FAKE_GH_ERR='GraphQL: Head branch was modified. Review and try the merge again. (mergePullRequest)' run_bot
+check "a different refusal: exit 1" [ "$rc" -eq 1 ]
+expect 144 status error
+
+echo "case 15: refreshes are capped at two per PR in all"
+scenario fifteen
+pr 151 dependabot "$H1"; checks 151 failure success success success
+echo '{"behind_by":1}' > "$stub/compare-151.json"
+marker 151 "$(sha older-head-1)" "$(sha older-main-1)"
+marker 151 "$(sha older-head-2)" "$OLDMAIN"
+run_bot
+check "exit 0" [ "$rc" -eq 0 ]
+expect 151 status stale
+check "  no third refresh, against a main it has never seen" no_writes
+check "  a warning annotation" grep -q '^::warning::#151 .*stale: ' "$out"
+check "  the note says why, and what supersedes it" bash -c "jq -r 'select(.pr == 151) | .note' '$res' | grep -q 'next version of this update opens a new PR that supersedes this one'"
+# Markers by anyone else do not count towards the cap either.
+scenario fifteen-b
+pr 152 dependabot "$H1"; checks 152 failure success success success
+echo '{"behind_by":1}' > "$stub/compare-152.json"
+marker 152 "$(sha older-head-1)" "$(sha older-main-1)" someone User
+marker 152 "$(sha older-head-2)" "$OLDMAIN" someone User
+jq -n --arg s "$MERGE" '{head: {sha: $s}}' > "$stub/head-152.json"
+run_bot
+expect 152 status refreshed
+
+echo "case 16: no refresh of a branch that does not merge cleanly"
+scenario sixteen
+pr 161 dependabot "$H1"; checks 161 failure success success success; detail 161 "$H1" 1 false
+echo '{"behind_by":4}' > "$stub/compare-161.json"
+pr 162 dependabot "$H2"; checks 162 failure success success success; detail 162 "$H2" 1 null
+echo '{"behind_by":4}' > "$stub/compare-162.json"
+run_bot
+check "exit 0" [ "$rc" -eq 0 ]
+expect 161 status waiting
+check "  the conflict is named" bash -c "jq -r 'select(.pr == 161) | .action' '$res' | grep -q 'conflicts with main'"
+expect 162 status waiting
+check "  neither refreshed" no_writes
+
+echo "case 17: hold and the head are read fresh, and again right before writing"
+scenario seventeen
+# The list (minutes old) says hold, the PR now does not: it merges.
+pr 171 dependabot "$H1" hold; detail 171 "$H1" 1 true
+# The list does not say hold, the PR now does: held.
+pr 172 dependabot "$H2"; detail 172 "$H2" 1 true '[{"name":"hold"}]'
+# hold added while it was being checked: the re-check catches it.
+pr 173 pin-bump "$H3"; detail 173 "$H3" 1 true '[{"name":"hold"}]' pr-173.2.json
+# A push while it was being checked: the re-check catches it.
+pr 174 pin-bump "$H1"; detail 174 "$H2" 1 true '[]' pr-174.2.json
+run_bot
+check "exit 0" [ "$rc" -eq 0 ]
+expect 171 status merged
+expect 172 status held
+expect 173 status held
+expect 174 status waiting
+check "  only #171 merged" [ "$(grep '^pr merge' "$log")" = "pr merge 171 --repo o/r --squash --match-head-commit $H1" ]
+# The same re-check guards a refresh.
+scenario seventeen-b
+pr 175 dependabot "$H1"; checks 175 failure success success success
+echo '{"behind_by":2}' > "$stub/compare-175.json"
+detail 175 "$H1" 1 true '[{"name":"hold"}]' pr-175.2.json
+run_bot
+expect 175 status held
+check "  no marker, no update-branch" no_writes
 
 echo
 echo "$pass passed, $failures failed"

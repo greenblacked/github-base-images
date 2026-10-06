@@ -13,6 +13,19 @@
 # merge made with it starts no push workflow. So after merging, the script
 # dispatches Build and Push to GHCR and Security on main, which is what
 # publishes the update (a dispatch on main is a full, publishing rebuild).
+# Security cancels an in-flight run on the same ref (cancel-in-progress), so
+# that dispatch can cancel a scheduled Security run on main; the newer run
+# that replaces it scans the same or a later main, so nothing is missed.
+# Build and Push keeps one pending run per ref instead, which builds main as
+# it is when it starts and so covers every merge queued before it.
+#
+# One limit is expected but unverified: GITHUB_TOKEN can never hold the
+# `workflows` permission, and GitHub may refuse to merge a PR that changes
+# .github/workflows/* without it. GitHub's own Dependabot recipe merges
+# action bumps with this token, so it should work; the first actions bump
+# will show. If it is refused, that PR is reported as skipped with a warning
+# -- merge it by hand, or give the script a token with workflows:write --
+# and the run stays green.
 #
 # Stopping it: label a pull request `hold` and it is never merged. To stop
 # everything, disable this workflow (Actions -> Merge bot -> Disable).

@@ -71,8 +71,8 @@ window X" is answerable later without a rebuild.
 
 This is deliberately scoped to the mirror boundary only. The Dockerfiles' `ARG BASE_IMAGE`
 defaults (`python:3.13`, `node:22`, `golang:1`, …) stay tag-based on purpose — that's what lets
-Dependabot propose base bumps and the daily rebuild pick up upstream patches — freezing those to
-a digest would break the update mechanism this repo depends on.
+the daily rebuild pick up upstream patches — freezing those to a digest would break the update
+mechanism this repo depends on.
 
 Make each `mirror-*` package public along with its `ci-*` image (the one-time step is in
 [Visibility and authentication](images.md#visibility-and-authentication)). They are byte-identical
@@ -104,10 +104,10 @@ the host). `make lint` runs the same battery locally; see
 [Building and testing an image locally](images.md#building-and-testing-an-image-locally).
 
 **Dependabot** ([.github/dependabot.yml](../.github/dependabot.yml)) keeps the workflow's action
-pins and each image's base-image ref current with daily PRs. Because PR validation runs the full
-build/test/scan stack, a Dependabot bump arrives pre-verified — green means the updated base
-already built, passed the smoke tests, and cleared both gates on both architectures. It then
-merges itself; see [Automatic updates](#automatic-updates).
+pins current with daily PRs. It also watches each image's `ARG BASE_IMAGE`, but on these tags it
+can only propose a different runtime line, which it is told to ignore, so base images move with
+the daily rebuild instead ([Automatic updates](#automatic-updates)). Because PR validation runs
+the full build/test/scan stack, a Dependabot bump arrives pre-verified, and it then merges itself.
 
 Which four checks a pull request is merged on, and why `CI result` stands in for every per-image
 job, is in [Required checks](security.md#required-checks).
@@ -117,7 +117,7 @@ job, is in [Required checks](security.md#required-checks).
 A push or pull request builds **only the images whose directories changed** (a pull request that
 changes none, and no pipeline file, builds nothing) — a one-line fix to `ci-ruby34` does not
 rebuild the other twenty images or move `latest` on them. Changing the pipeline itself (either
-workflow file, `images.json`, or the three scripts `build-image.yml` runs) rebuilds everything; a
+workflow file, `images.json`, or the four scripts `build-image.yml` runs) rebuilds everything; a
 change to `.github/vuln-exceptions.json` rebuilds the images whose entries changed. A
 `workflow_dispatch` on a branch other than `main` is planned the same way as a pull request,
 against where the branch left `main`. That is how the automated update PRs get their checks
@@ -230,9 +230,9 @@ verify it before running it: see [Verifying a signature](security.md#verifying-a
 
 ## Pin drift
 
-Most of this repository's supply chain is watched by something: Dependabot tracks the action pins
-and each Dockerfile's `ARG BASE_IMAGE`, and the daily rebuild plus the Trivy gate cover the OS
-packages and the libraries the images carry. Its config carries a seven-day `cooldown` on every
+Most of this repository's supply chain is watched by something: Dependabot tracks the action
+pins, the daily rebuild re-resolves each Dockerfile's floating `ARG BASE_IMAGE` tag, and the
+rebuild plus the Trivy gate cover the OS packages and the libraries the images carry. Its config carries a seven-day `cooldown` on every
 ecosystem — nothing is adopted the day it ships, since the window between publication and
 discovery is exactly when a same-day bump would pull in a compromised release — and one `groups`
 rule for `github/codeql-action`, whose `init`, `analyze` and `upload-sarif` subpaths are one action
@@ -280,9 +280,13 @@ Each image stays current without anyone watching it ([ADR 0007](adr/0007-automat
 pipeline and the four [required checks](security.md#required-checks). It merges itself once all
 four are green, and is published the same hour. Nothing merges red.
 
-**Where the updates come from.** Dependabot, daily, for the action pins and each image's
-`ARG BASE_IMAGE`. Its docker entries never propose a different runtime line or distribution
-(Python 3.13 stays 3.13, Bookworm stays Bookworm): a new line is a new image. And
+**Where the updates come from.** Base images come from the daily rebuild, not from Dependabot.
+Each `ARG BASE_IMAGE` is a floating tag (`python:3.13-slim-bookworm`, `golang:1-bookworm`), and
+the rebuild re-resolves it through the [mirror](#mirrored-upstream-base) every day, so upstream's
+patch releases arrive that way. On tags of that shape the only versions Dependabot could propose
+are a different runtime line (Python 3.14, Node 25, Go 2), which its docker entries ignore, so in
+practice they propose nothing. They stay as a safety net: no update may change what an image is,
+and a new line is a new image. Dependabot, daily, keeps the action pins current. And
 [pin-bump.yml](../.github/workflows/pin-bump.yml), daily after pin drift, for the hand-pinned tools.
 For each tool that is behind, it opens (or refreshes) one PR on a `pin-bump/<tool>` branch, with
 the version and its checksums rewritten by `scripts/bump-pins.sh`. Pins kept in more than one
@@ -313,18 +317,30 @@ commit it checked) when:
 - the latest run of `CI result`, `Repository secret scan`, `CodeQL (workflows)` and
   `Dependency review` on the head commit each completed with success;
 - the branch merges cleanly;
-- the PR is not labelled `hold`.
+- the PR is not labelled `hold`, read from the PR itself, and again together with the head commit
+  right before the merge.
 
 After merging it dispatches *Build and Push to GHCR* and *Security* on `main`, which rebuilds and
 publishes every image. It needs no ruleset, no *Allow auto-merge* setting, no PAT and no app. Its
-run summary has one row per PR: merged, waiting (and on what), red, or left alone (and why). A red
-or unreadable PR is a warning there; a merge or dispatch that failed turns the run red.
+run summary has one row per PR: merged, waiting (and on what), red, stale, or left alone (and
+why). A red, stale or unreadable PR is a warning there; a merge or dispatch that failed turns the
+run red.
 
-A red Dependabot PR whose branch is behind `main` gets one fresh try against `main`. The bot
-records the attempt in a PR comment, merges `main` into the branch with GitHub's *update branch*,
-and dispatches CI on it. This happens at most once per `main` commit, so a PR that is red again
-waits for Dependabot's next version or a person. Pin-bump branches are not updated this way: the
-daily pin-bump run rebuilds a branch that fell behind `main` from scratch.
+One limit is expected but unverified until the first action bump: the workflow token can never
+hold the `workflows` permission, and GitHub may refuse to merge a PR that changes
+`.github/workflows/*` without it. That covers Dependabot's action bumps and the gitleaks and
+osv-scanner pin bumps. GitHub's documented Dependabot recipe merges action bumps with this token,
+so it is expected to work. If GitHub refuses, the PR is reported as skipped with a warning, and the
+run stays green. Merge it by hand, or give the workflow a token with `workflows: write`.
+
+A red Dependabot PR that merges cleanly and whose branch is behind `main` gets a fresh try against
+`main`. The bot records the attempt in a PR comment, merges `main` into the branch with GitHub's
+*update branch*, and dispatches CI on it. This happens at most once per `main` commit and twice in
+all; after that the PR is *stale*. From the first refresh on, Dependabot treats the PR as edited
+and no longer rebases it, so a stale or conflicting refreshed PR waits for Dependabot's next
+version of the update, which opens a new PR that supersedes it, or for a person. Pin-bump branches
+are not updated this way: the daily pin-bump run rebuilds a branch that fell behind `main` from
+scratch.
 
 **Stopping it.** Label a PR `hold` and it is never merged. To stop all merging, disable the
 *Merge bot* workflow under *Actions*. Every PR still runs its checks.
@@ -357,7 +373,8 @@ has a `dry_run` input for the same purpose.
 
 **Settings the repository needs.** *Settings → Actions → General → Workflow permissions*: **Allow
 GitHub Actions to create and approve pull requests** (without it, no pin-bump PR can be opened),
-and *Settings → General → Pull Requests*: **Allow squash merging**. Nothing else.
+and *Settings → General → Pull Requests*: **Allow squash merging**. Nothing else, unless GitHub
+turns out to refuse workflow-file merges with the workflow token (above).
 
 ```bash
 ./scripts/bump-pins.sh --unit kubectl          # bump one tool in your working tree
