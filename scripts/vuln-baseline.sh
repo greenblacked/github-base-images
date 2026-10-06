@@ -20,6 +20,17 @@
 # comparison (every finding blocks). It does not tell the gate what to do; it
 # only says what it found.
 #
+# Authenticated when REGISTRY_USER and REGISTRY_TOKEN are set (build-image.yml
+# passes the job's own GITHUB_TOKEN, which needs only `packages: read`), so a
+# private package can be read as a baseline too -- anonymously it could not,
+# the gate would run strict on every pull request, and a bot PR for that image
+# could never go green. The login goes into a throwaway DOCKER_CONFIG made
+# here and deleted when this script exits, so nothing that runs after it (the
+# build steps, third-party actions) inherits the credential. A login that
+# fails is treated like an unreadable registry: strict, with a warning. With
+# neither variable set (a local run), the reads are anonymous, which works
+# for the public packages.
+#
 # Registry reads are retried: up to four, 5s, 15s and 45s apart, so one
 # hiccup does not make the gate strict -- which, for an image carrying known
 # upstream findings, means red. "Not found" is an answer, not a hiccup, and
@@ -47,6 +58,26 @@ strict() {
   echo "::$1::$2 -- the vulnerability gate runs strict for $arch: every finding blocks"
   exit 0
 }
+
+if [ -n "${REGISTRY_USER:-}" ] && [ -n "${REGISTRY_TOKEN:-}" ]; then
+  # Inside $tmp, so the EXIT trap removes it with the credential in it. The
+  # CLI plugins (buildx) are found through the config dir, so the user's are
+  # linked in, read-only use.
+  export DOCKER_CONFIG="$tmp/docker-config"
+  mkdir -p "$DOCKER_CONFIG"
+  # buildx keeps its builder instances under the config dir too, so a builder
+  # named by BUILDX_BUILDER (setup-buildx-action may export one) does not
+  # exist in this one; `imagetools inspect` needs no particular builder, and
+  # the default one always exists.
+  unset BUILDX_BUILDER
+  [ -d "${HOME:-/nonexistent}/.docker/cli-plugins" ] && ln -s "$HOME/.docker/cli-plugins" "$DOCKER_CONFIG/cli-plugins"
+  rc=0
+  printf '%s' "$REGISTRY_TOKEN" | docker login "${repo%%/*}" --username "$REGISTRY_USER" --password-stdin \
+    > /dev/null 2> "$tmp/err" || rc=$?
+  if [ "$rc" -ne 0 ]; then
+    strict warning "could not log in to ${repo%%/*} to read $repo:$version (exit $rc: $(tr '\n' ' ' < "$tmp/err" | cut -c1-200))"
+  fi
+fi
 
 attempts=$(( ${#delays[@]} + 1 ))
 rc=0

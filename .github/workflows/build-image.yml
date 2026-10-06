@@ -507,19 +507,36 @@ jobs:
       # finding a baseline becomes `ref=` plus a `note`, which the gate step
       # turns into the strict comparison. `ref` is a digest reference, so the
       # scan below reads exactly the bytes resolved here even if the tag
-      # moves in between. Anonymous on pull requests (the packages are
-      # public; this job logs in to GHCR only on main).
+      # moves in between.
+      #
+      # Authenticated in every context, with this job's own token, so a
+      # private package is a baseline like a public one. The "Login" step
+      # above runs on main only (it is the one publishing needs), and some
+      # packages are private (published-audit.yml); read anonymously, their
+      # gate would run strict on every pull request, and a bot PR for such an
+      # image could never go green. Reading needs only `packages: read`, which
+      # every caller grants: build-and-push.yml's `image` job grants
+      # `packages: write`, and on a Dependabot or fork pull request GitHub
+      # cuts that to read. The script logs in through a throwaway
+      # DOCKER_CONFIG that it deletes on exit, so no later step inherits the
+      # credential; a login that fails is strict, with a warning. Passed
+      # through env, never interpolated into the script.
       - name: Published baseline (${{ matrix.arch }})
         id: baseline
         env:
           REPO: ghcr.io/${{ github.repository_owner }}/${{ inputs.image }}
           VERSION: ${{ inputs.version }}
           ARCH: ${{ matrix.arch }}
+          REGISTRY_USER: ${{ github.actor }}
+          REGISTRY_TOKEN: ${{ github.token }}
         run: ./scripts/vuln-baseline.sh "$REPO" "$VERSION" "$ARCH"
 
       # The published image, scanned exactly as the candidate was (see above),
       # straight from the registry: TRIVY_IMAGE_SRC=remote, so Trivy never
-      # asks the local daemon, which holds only the candidate.
+      # asks the local daemon, which holds only the candidate. Authenticated
+      # with this job's token for the same reason as the step above, through
+      # Trivy's own TRIVY_USERNAME/TRIVY_PASSWORD on this step only: nothing
+      # is written to a Docker config a later step could read.
       #
       # continue-on-error, and only here: a baseline that could not be
       # scanned is not a failed gate but a strict one. The gate step reads
@@ -534,6 +551,8 @@ jobs:
         env:
           TRIVY_SKIP_DB_UPDATE: 'true'
           TRIVY_IMAGE_SRC: remote
+          TRIVY_USERNAME: ${{ github.actor }}
+          TRIVY_PASSWORD: ${{ github.token }}
         with:
           image-ref: ${{ steps.baseline.outputs.ref }}
           scanners: vuln

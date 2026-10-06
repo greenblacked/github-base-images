@@ -202,6 +202,16 @@ mkdir -p "$work/bin"
 # each call. sleep is faked too, logging how long it was asked to wait.
 cat > "$work/bin/docker" <<'EOF2'
 #!/usr/bin/env bash
+# `docker login`: record where the credential went and what it was, then
+# succeed or fail as FAKE_LOGIN says.
+if [ "$1" = login ]; then
+  printf '%s %s %s\n' "$*" "${DOCKER_CONFIG:-unset}" "$(cat)" >> "$FAKE_LOGIN_LOG"
+  [ -n "${DOCKER_CONFIG:-}" ] && echo '{"auths":{"ghcr.io":{}}}' > "$DOCKER_CONFIG/config.json"
+  [ "${FAKE_LOGIN:-ok}" = ok ] || { echo "Error response from daemon: denied" >&2; exit 1; }
+  exit 0
+fi
+# Every other call: which config it read its credentials from.
+echo "${DOCKER_CONFIG:-unset}" >> "$FAKE_LOGIN_LOG.reads"
 n=$(( $(cat "$FAKE_DOCKER_COUNT" 2>/dev/null || echo 0) + 1 )); echo "$n" > "$FAKE_DOCKER_COUNT"
 read -r -a plan <<< "$FAKE_DOCKER"
 case "${plan[$((n - 1))]:-err}" in
@@ -222,9 +232,10 @@ jq -n --arg a "$AMD" --arg r "$ARM" '{mediaType: "application/vnd.oci.image.inde
   {digest: "sha256:\(("3" * 64))", platform: {os: "unknown", architecture: "unknown"}}]}' > "$work/index.json"
 # run_base PLAN ARCH -- sets rc, bout (stdout), gho (the GITHUB_OUTPUT file).
 run_base() {
-  gho="$work/gho"; bout="$work/bout"; : > "$gho"; rm -f "$work/count" "$work/sleeps"; rc=0
+  gho="$work/gho"; bout="$work/bout"; : > "$gho"; rm -f "$work/count" "$work/sleeps" "$work/login" "$work/login.reads"; rc=0
   PATH="$work/bin:$PATH" FAKE_DOCKER="$1" FAKE_INDEX="${INDEX:-$work/index.json}" FAKE_DOCKER_COUNT="$work/count" \
-    FAKE_SLEEP_LOG="$work/sleeps" GITHUB_OUTPUT="$gho" "$baseline" ghcr.io/o/ci-test v1 "$2" > "$bout" 2>&1 || rc=$?
+    FAKE_SLEEP_LOG="$work/sleeps" FAKE_LOGIN_LOG="$work/login" GITHUB_OUTPUT="$gho" \
+    "$baseline" ghcr.io/o/ci-test v1 "$2" > "$bout" 2>&1 || rc=$?
 }
 outv() { sed -n "s/^$1=//p" "$gho"; }
 calls() { cat "$work/count" 2>/dev/null || echo 0; }
@@ -257,6 +268,23 @@ INDEX="$work/single.json" run_base "ok" amd64
 check "a single manifest, not an index: strict" [ -z "$(outv ref)" ]
 rc=0; "$baseline" only-two args > /dev/null 2>&1 || rc=$?
 check "usage: exit 2" [ "$rc" -eq 2 ]
+check "no credentials given: anonymous, no login" [ ! -e "$work/login" ]
+# With credentials: logged in to the registry, through a throwaway config.
+REGISTRY_USER=bot REGISTRY_TOKEN=s3cret run_base "ok" amd64
+check "with credentials: found" [ "$(outv ref)" = "ghcr.io/o/ci-test@$AMD" ]
+cfg=$(awk '{print $(NF-1)}' "$work/login" 2>/dev/null || true)
+check "  logged in to ghcr.io as the user, token on stdin, not argv" bash -c "grep -q '^login ghcr.io --username bot --password-stdin .* s3cret\$' '$work/login'"
+check "  into a throwaway DOCKER_CONFIG, not the user's" bash -c "[ -n '$cfg' ] && [ '$cfg' != unset ] && [ '$cfg' != \"\$HOME/.docker\" ]"
+check "  the registry read used that config" [ "$(sort -u "$work/login.reads")" = "$cfg" ]
+check "  and it is gone afterwards, credential and all" [ ! -e "$cfg" ]
+check "  the token is not in the output" bash -c "! grep -q s3cret '$bout' '$gho'"
+# The login fails: strict, with a warning, and no registry read.
+REGISTRY_USER=bot REGISTRY_TOKEN=s3cret FAKE_LOGIN=fail run_base "ok" amd64
+check "login refused: exit 0, strict" [ "$rc:$(outv ref)" = "0:" ]
+check "  a warning naming the login" grep -q '^::warning::could not log in to ghcr.io to read ghcr.io/o/ci-test:v1 (exit 1: Error response from daemon: denied' "$bout"
+check "  nothing read after it" [ "$(calls)" -eq 0 ]
+cfg=$(awk '{print $(NF-1)}' "$work/login")
+check "  and the throwaway config is gone" [ ! -e "$cfg" ]
 
 echo
 echo "$pass passed, $failures failed"

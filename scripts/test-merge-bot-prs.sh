@@ -82,6 +82,12 @@ pr() {
   else gha_commit "$head" | jq -s . > "$stub/commits-$n.json"; fi
   checks "$n" success success success success
   echo '[]' > "$stub/comments-$n.json"
+  files "$n" "ci-node22/Dockerfile.ci"
+}
+# files N PATH... -- the PR's changed files, as `GET pulls/N/files` lists them.
+files() {
+  local n="$1"; shift
+  printf '%s\n' "$@" | jq -R '{filename: ., status: "modified"}' | jq -s . > "$stub/files-$n.json"
 }
 # detail N HEAD COMMITS MERGEABLE [LABELS-JSON] [FILE] -- the PR as
 # `GET pulls/N` returns it; FILE defaults to pr-N.json (pr-N.2.json is the
@@ -518,6 +524,64 @@ detail 175 "$H1" 1 true '[{"name":"hold"}]' pr-175.2.json
 run_bot
 expect 175 status held
 check "  no marker, no update-branch" no_writes
+
+echo "case 18: CI is never dispatched on a Dependabot branch that changes .github/"
+scenario eighteen
+# An action bump, red and behind main: not refreshed, not dispatched.
+pr 181 dependabot "$H1"; checks 181 failure success success success
+echo '{"behind_by":3}' > "$stub/compare-181.json"
+files 181 .github/workflows/build-image.yml .github/workflows/security.yml
+# A file moved out of .github/ counts too.
+pr 182 dependabot "$H2"; checks 182 failure success success success
+echo '{"behind_by":3}' > "$stub/compare-182.json"
+jq -n '[{filename: "docs/x.yml", previous_filename: ".github/workflows/x.yml", status: "renamed"}]' > "$stub/files-182.json"
+run_bot
+check "exit 0" [ "$rc" -eq 0 ]
+expect 181 status stale
+expect 182 status stale
+check "  no marker, no update-branch, no dispatch" no_writes
+check "  the note says why" bash -c "jq -r 'select(.pr == 181) | .note' '$res' | grep -q 'touches .github/: not re-run with write tokens; Dependabot rebases it on conflict or supersedes it with its next version'"
+check "  a warning annotation" grep -q '^::warning::#181 .*stale: ' "$out"
+# The same PR, green: it still merges -- on its own pull_request CI.
+scenario eighteen-b
+pr 183 dependabot "$H1"; files 183 .github/workflows/build-image.yml
+run_bot
+expect 183 status merged
+# Red and behind, changing only an image directory: refreshed.
+scenario eighteen-c
+pr 184 dependabot "$H1"; checks 184 failure success success success
+echo '{"behind_by":3}' > "$stub/compare-184.json"
+files 184 ci-python313/Dockerfile.ci
+jq -n --arg s "$MERGE" '{head: {sha: $s}}' > "$stub/head-184.json"
+run_bot
+expect 184 status refreshed
+check "  update-branch and dispatch on the branch" bash -c "grep -q 'update-branch' '$log' && grep -q '^workflow run build-and-push.yml --repo o/r --ref dependabot/github_actions/x-184$' '$log'"
+# The file list cannot be read: no refresh on a guess.
+scenario eighteen-d
+pr 185 dependabot "$H1"; checks 185 failure success success success
+echo '{"behind_by":3}' > "$stub/compare-185.json"
+echo '{"message":"Server Error"}' > "$stub/files-185.json"; echo 1 > "$stub/files-185.exit"
+# Or is shorter than the PR says it is.
+pr 186 dependabot "$H2"; checks 186 failure success success success
+echo '{"behind_by":3}' > "$stub/compare-186.json"
+jq '.changed_files = 2' "$stub/pr-186.json" > "$stub/p.tmp" && mv "$stub/p.tmp" "$stub/pr-186.json"
+run_bot
+check "exit 0" [ "$rc" -eq 0 ]
+expect 185 status unreadable
+expect 186 status unreadable
+check "  neither refreshed" no_writes
+# The heal path obeys the same rule: a refresh merge commit with no checks,
+# on a branch that (now) changes .github/, is not dispatched on.
+scenario eighteen-e
+pr 187 dependabot "$MERGE"
+{ dep_commit "$H1"; refresh_commit "$MERGE" "$H1" "$MAIN"; } | jq -s . > "$stub/commits-187.json"
+detail 187 "$MERGE" 2 true
+marker 187 "$H1" "$MAIN"
+checks 187 none success success success
+files 187 .github/workflows/security.yml
+run_bot
+expect 187 status stale
+check "  nothing dispatched" no_writes
 
 echo
 echo "$pass passed, $failures failed"

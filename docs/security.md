@@ -49,8 +49,10 @@ for it (a step summary is capped at 1 MiB):
     in the same package at a newer version is still known; the same CVE in an npm package that shares
     a name with a known Debian package is not.
   - With nothing to compare against (a new image or a new tag), or when the published image cannot
-    be read (after three retries) or scanned, it runs **strict**: every finding blocks, and the summary says why. An
-    unreadable report fails the gate. It is never read as "no findings".
+    be read (after three retries) or scanned, it runs **strict**: every finding blocks, and the
+    summary says why. The published image is read with the job's own token on every run, pull
+    requests included, so private packages are compared too. An unreadable report fails the
+    gate. It is never read as "no findings".
   - `ignore-unfixed` keeps it honest: red always means there is a version to move to, never a CVE
     with no patch available. Unfixed findings are reported, not enforced.
   - **Known upstream findings ship until upstream fixes them.** That is the case for a package

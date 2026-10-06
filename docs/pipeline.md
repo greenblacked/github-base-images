@@ -333,9 +333,14 @@ osv-scanner pin bumps. GitHub's documented Dependabot recipe merges action bumps
 so it is expected to work. If GitHub refuses, the PR is reported as skipped with a warning, and the
 run stays green. Merge it by hand, or give the workflow a token with `workflows: write`.
 
-A red Dependabot PR that merges cleanly and whose branch is behind `main` gets a fresh try against
-`main`. The bot records the attempt in a PR comment, merges `main` into the branch with GitHub's
-*update branch*, and dispatches CI on it. This happens at most once per `main` commit and twice in
+A red Dependabot PR that merges cleanly, whose branch is behind `main`, and that changes nothing
+under `.github/` gets a fresh try against `main`. The bot records the attempt in a PR comment,
+merges `main` into the branch with GitHub's *update branch*, and dispatches CI on it. A
+dispatched run executes the branch's own workflow files with write tokens, so a PR that touches
+`.github/` (every action bump) is never refreshed or dispatched on. It would run the proposed
+action version with more access than Dependabot's read-only `pull_request` run. Such a PR, when
+red, is reported *stale*: Dependabot rebases it on a conflict or supersedes it with its next
+version, and it merges whenever its own CI is green. This happens at most once per `main` commit and twice in
 all; after that the PR is *stale*. From the first refresh on, Dependabot treats the PR as edited
 and no longer rebases it, so a stale or conflicting refreshed PR waits for Dependabot's next
 version of the update, which opens a new PR that supersedes it, or for a person. Pin-bump branches

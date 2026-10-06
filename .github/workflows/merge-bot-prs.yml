@@ -86,7 +86,7 @@ jobs:
     permissions:
       contents: write       # merge pull requests; update a Dependabot branch with main
       pull-requests: write  # read pull requests and their comments; post the refresh marker
-      actions: write        # `gh workflow run`: CI on a refreshed branch, publish on main
+      actions: write        # `gh workflow run`: CI on a refreshed branch (never one changing .github/), publish on main
       checks: read          # the four required checks on each head commit
     steps:
       # main's copy of the script, at the commit this run was started for.

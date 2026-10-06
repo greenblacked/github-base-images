@@ -52,7 +52,9 @@ It fails closed. A new image or a new tag has no published image, so the compari
 an empty baseline and every finding blocks, the same as the old gate. The same strict comparison
 runs when the published image cannot be resolved or scanned for any reason, and the summary says
 which reason it was. Registry reads are retried three times (5s, 15s, 45s) before that, so one
-hiccup does not make the gate strict. An unreadable report is a failure, never "no findings". The summary is a
+hiccup does not make the gate strict. The reads are authenticated with the job's own token in
+every context, pull requests included, through a throwaway Docker config deleted straight after,
+so private packages have a baseline too. An unreadable report is a failure, never "no findings". The summary is a
 small table, never the full Trivy output, which had exceeded the 1 MiB step-summary limit.
 
 The alerts report still lists every open fixable alert, but open fixable alerts are now a warning,
@@ -95,9 +97,15 @@ Build and Push and Security on `main`, which publishes the update the same hour.
 
 `hold` and the head SHA are read from the PR itself, and read again right before the merge.
 
-A red Dependabot PR that merges cleanly and is behind `main` is brought up to date: at most once
-per `main` commit and twice in all. The bot posts a marker comment, calls `update-branch` leased
-to the head it read, and dispatches CI on the branch. The only merge commit the authorship check
+A red Dependabot PR that merges cleanly, is behind `main` and changes nothing under `.github/` is
+brought up to date: at most once per `main` commit and twice in all. The bot posts a marker
+comment, calls `update-branch` leased to the head it read, and dispatches CI on the branch. A PR
+that changes anything under `.github/` (every action bump) is never refreshed and never
+dispatched on. A dispatched run executes the branch's own workflow files with write tokens
+(`packages`, `id-token`, `attestations`, `security-events`). For an action bump that would run
+the proposed, not-yet-merged action version with more access than Dependabot's own read-only
+`pull_request` run gives it, which defeats the point of the cooldown. Such a PR is marked stale
+when it is red; it still merges when its `pull_request` CI is green. The only merge commit the authorship check
 accepts is one whose parents match a marker written by `github-actions[bot]`. After a refresh,
 Dependabot treats the PR as edited and stops rebasing it. If it stays red after two refreshes it
 is marked stale and waits for Dependabot's next version of the update, which opens a new PR that
@@ -161,8 +169,13 @@ hand, or give the workflow a token with `workflows: write`), and the run stays g
   alone but fail together would turn the post-merge publish on `main` red. Nothing broken
   publishes, and the next update or a person fixes `main`.
 - Dispatching CI on a refreshed Dependabot branch runs that branch's workflows with the dispatch
-  token. Pin-bump branches already work this way. The authorship check limits it to Dependabot's
-  verified commits and this workflow's own merge commit.
+  token. That is why it is done only for branches that change nothing under `.github/`, so the
+  workflows that run are `main`'s. The authorship check limits the rest of the branch to
+  Dependabot's verified commits and this workflow's own merge commit. Pin-bump branches are
+  dispatched on too, but their content is made by this repository's own script from vendor
+  checksums, not proposed by a third party.
+- A red action bump is never re-run here. If its red was `main`'s fault, it waits for Dependabot to
+  rebase it (on a conflict) or for the next version, which supersedes it.
 - More runner time: a full rebuild every day. A dispatched bump PR now builds only the images it
   touches, which offsets part of it.
 

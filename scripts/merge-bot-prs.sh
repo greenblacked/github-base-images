@@ -47,7 +47,9 @@
 #      and at most MAX_REFRESHES times per PR in all: a marker comment
 #      recording the branch head and main, then GitHub's update-branch
 #      (merge main in, leased to the head SHA that was read), then CI
-#      dispatched on the branch. After the cap the PR is `stale`: Dependabot
+#      dispatched on the branch -- and only when the PR changes nothing under
+#      .github/ (see safe_to_dispatch: a dispatch runs the branch's own
+#      workflows with write tokens). After the cap the PR is `stale`: Dependabot
 #      no longer rebases a branch someone else has committed to, so it waits
 #      for Dependabot's next version of the update, which supersedes it.
 #      Never for pin-bump/*: pin-bump-prs.sh rebuilds those from main
@@ -297,6 +299,9 @@ one_pr() {
     # so an ordinary PR whose checks are still queued is left to them.
     if [ "$kind" = dependabot ] && [ -n "$missing_wf" ] && head_is_refresh "$markers" <<<"$commits"; then
       note="checks never started on the refresh merge ${sha:0:12}: $waiting"
+      # The same rule as the refresh itself: never dispatched on a branch
+      # that changes .github/ (see safe_to_dispatch).
+      safe_to_dispatch "$n" || return 0
       # shellcheck disable=SC2086  # one workflow file per word
       if dispatch_on "$ref" $missing_wf; then
         row refreshed "CI dispatched on $ref:$missing_wf"
@@ -434,6 +439,49 @@ dispatch_on() { # REF WORKFLOW...
   if [ -n "$failed" ]; then note="${note:+$note. }${failed% ;}"; return 1; fi
 }
 
+# Whether CI may be dispatched on this Dependabot branch: only when none of
+# the files it changes is under .github/. Writes a row and returns 1 when not.
+# Shares one_pr's locals (detail, note, row). PR
+#
+# Why. A dispatched Build and Push or Security runs the workflow files FROM
+# THE BRANCH, with the dispatch token: packages, id-token, attestations and
+# security-events write. Dependabot's own pull_request runs get a read-only
+# token. So dispatching on a branch whose workflows Dependabot changed -- an
+# action bump, the github-actions ecosystem -- would run the proposed,
+# not-yet-reviewed action version with write credentials, more than it gets
+# anywhere else before merging. A compromised release of an action is exactly
+# what the seven-day cooldown hedges against; this must not undo that. Such
+# a PR keeps the CI its pull_request run gave it: it merges when that is
+# green, and is otherwise left to Dependabot, which rebases it on a conflict
+# (while no one else has committed to it) or supersedes it with its next
+# version. A file list that cannot be read whole is the same as "touches
+# .github/": no dispatch on a guess.
+safe_to_dispatch() {
+  local pr_n="$1" files rc=0 count
+  files=$(gh_read "files-$pr_n" api --paginate "repos/$repo/pulls/$pr_n/files?per_page=100") || rc=$?
+  if [ "$rc" -eq 0 ]; then
+    files=$(jq -sc 'if length > 0 and all(.[]; type == "array") then add else error("not one or more arrays") end
+                    | if all(.[]; type == "object" and (.filename | type) == "string") then . else error("not file objects") end' \
+      <<<"$files" 2>/dev/null) || rc=1
+  fi
+  # The PR says how many files it changes; a list that is not that long (a
+  # page lost, or past the endpoint's 3000-file limit) is not the whole list.
+  count=$(jq -r '.changed_files // empty | numbers' <<<"$detail" 2>/dev/null || true)
+  if [ "$rc" -eq 0 ] && [ -n "$count" ] && [ "$(jq length <<<"$files")" -ne "$count" ]; then rc=1; fi
+  if [ "$rc" -ne 0 ]; then
+    note="$note; its changed files could not be read whole (exit $rc), so CI is not dispatched on it"
+    row unreadable "not merged; not re-run"
+    return 1
+  fi
+  if jq -e 'any(.[]; (.filename | startswith(".github/")) or ((.previous_filename // "") | startswith(".github/")))' \
+       <<<"$files" >/dev/null; then
+    warn=true
+    note="$note; touches .github/: not re-run with write tokens; Dependabot rebases it on conflict or supersedes it with its next version"
+    row stale "not merged; not re-run"
+    return 1
+  fi
+}
+
 # Step 5 of the header: a red Dependabot PR behind main gets one fresh run
 # against main, per main commit. Shares one_pr's locals (n, sha, ref, note,
 # row) through bash's dynamic scoping. PR MARKERS-JSON
@@ -468,6 +516,7 @@ refresh() {
     row red "not merged: already refreshed once against $base ${main_sha:0:12} and red again; next refresh when $base moves"
     return 0
   fi
+  safe_to_dispatch "$pr_n" || return 0
   recheck || return 0
 
   # The marker first: if anything below fails, it still stops the next run
