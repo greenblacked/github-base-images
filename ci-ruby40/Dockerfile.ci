@@ -58,7 +58,7 @@ RUN apt-get update \
 # compiler is installed for this layer and purged in it; test.sh asserts none
 # is left), and nothing lands in GEM_HOME. Drop this block once the ruby:4.0
 # image ships json >= 2.19.2.
-ARG JSON_VERSION=2.19.9
+ARG JSON_VERSION=3.0.2
 COPY replace-default-gem.rb /tmp/replace-default-gem.rb
 # hadolint ignore=DL3008
 RUN apt-get update \
