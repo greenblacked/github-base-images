@@ -2,7 +2,8 @@
 
 **Status:** accepted; supersedes the absolute vulnerability gate and the failing alerts report of
 [0006](0006-gate-on-fixable-library-vulnerabilities.md), and the auto-merge, review and
-publishing parts of [0007](0007-automatic-updates.md)
+publishing parts of [0007](0007-automatic-updates.md); how the merge bot is started is corrected by
+[0009](0009-image-lifecycle.md#merge-bot-trigger)
 
 **Date:** 2026-10-06
 
@@ -81,7 +82,11 @@ the images the branch changes, compared with `main`. A dispatch on `main` stays 
 ### 3. Green pull requests merge themselves, through our own workflow
 
 [merge-bot-prs.yml](../../.github/workflows/merge-bot-prs.yml) runs when Build and Push or Security
-finishes, hourly, and on demand. It merges every open `dependabot/*` PR by Dependabot and every
+finishes, hourly, and on demand. (Corrected in [0009](0009-image-lifecycle.md#merge-bot-trigger):
+"when Build and Push or Security finishes" did not hold for bot PRs. GitHub starts no
+`workflow_run` for a run that a `GITHUB_TOKEN` dispatch started, so those two workflows now
+dispatch the merge bot themselves when they finish on a bot branch, and three daily jobs dispatch
+it as a backstop.) It merges every open `dependabot/*` PR by Dependabot and every
 `pin-bump/*` PR by `github-actions[bot]` when all of these hold:
 
 - every commit is the bot's own, by author and committer;

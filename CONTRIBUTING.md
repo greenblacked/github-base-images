@@ -76,8 +76,8 @@ entry, and `scripts/image-lifecycle.sh check` fails when the Dependabot entries,
 and count, the `docs/images.md` bullets or an `ARG BASE_IMAGE` default disagree with
 `images.json`. The `version` field is per image, which is how the Noble-based
 images carry `noble-v1` and the Trixie-based ones `trixie-v1` while the rest are `bookworm-v1`.
-A new image starts on the newest Debian stable that upstream publishes it for, else the newest
-Ubuntu LTS ([ADR 0005](docs/adr/0005-new-images-current-distro-retire-at-eol.md),
+A new image starts on the newest Debian stable if upstream publishes it there, else on the newest
+Ubuntu LTS, never an older release of either ([ADR 0005](docs/adr/0005-new-images-current-distro-retire-at-eol.md),
 [ADR 0009](docs/adr/0009-image-lifecycle.md)), and the bar for adding a new kind of image at all
 is a concrete consumer — see [Future candidates](docs/images.md#future-candidates).
 

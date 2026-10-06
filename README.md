@@ -122,8 +122,8 @@ A few things the table does not say:
   your lockfile asks for, as shown in
   [Running Playwright tests](docs/images.md#running-playwright-tests).
 - **One distribution line per image**, named for it: `bookworm-v1`, `trixie-v1`, `noble-v1`, and
-  so on (the Tag column). A new image starts on the newest Debian stable that upstream publishes
-  it for, else the newest Ubuntu LTS; an existing image never moves.
+  so on (the Tag column). A new image starts on the newest Debian stable if upstream publishes
+  it there, else on the newest Ubuntu LTS, never an older release; an existing image never moves.
   [Why](docs/images.md#patterns-worth-naming).
 - **`ci-go` and `ci-rust` carry no version** because Go and Rust have no parallel supported lines;
   they track current stable. [Why](docs/images.md#go-and-rust).

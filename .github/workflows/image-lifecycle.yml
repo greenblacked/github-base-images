@@ -109,3 +109,24 @@ jobs:
           BASE_BRANCH: main
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: ./scripts/image-lifecycle.sh prs
+
+  # A daily backstop for the merge bot (docs/adr/0008-self-updating.md): it
+  # also runs hourly, but GitHub delays and drops scheduled runs under load,
+  # and Dependabot PRs have no other way to reach it -- their own CI runs with
+  # a read-only token and cannot dispatch anything. A dispatch made with
+  # GITHUB_TOKEN starts a run. The lifecycle PRs this run opened
+  # are not green yet; their own CI asks again when it finishes (request-merge
+  # in build-and-push.yml and security.yml).
+  request-merge:
+    name: Ask the merge bot to look
+    needs: [lifecycle]
+    if: always() && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      actions: write   # `gh workflow run merge-bot-prs.yml`; nothing is checked out
+    steps:
+      - name: Dispatch the merge bot on main
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run merge-bot-prs.yml --repo "$GITHUB_REPOSITORY" --ref main

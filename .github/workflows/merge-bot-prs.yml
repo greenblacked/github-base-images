@@ -32,9 +32,26 @@
 # everything, disable this workflow (Actions -> Merge bot -> Disable).
 name: Merge bot
 
+# What starts it, in the order that matters (docs/adr/0009-image-lifecycle.md,
+# "Merge bot trigger"):
+#   1. workflow_dispatch from the `request-merge` job at the end of Build and
+#      Push and of Security, when they ran on a pin-bump/*, lifecycle/* or
+#      dependabot/* branch by dispatch. That is how a bot PR's CI is started,
+#      and GitHub starts NO workflow_run for a run a GITHUB_TOKEN dispatch
+#      started, so without this a green bot PR would wait for the schedule.
+#   2. workflow_dispatch at the end of the daily scheduled rebuild, pin bump
+#      and image lifecycle: daily backstops that do not depend on cron.
+#   3. workflow_run: when a check finishes on a pull_request or push run (a
+#      person's PR, main). A run Dependabot started is skipped below.
+#   4. the hourly schedule, a backstop. GitHub delays and drops scheduled
+#      runs under load; on the day this was written it did not start one in
+#      the first two hours. Dependabot PRs rely on 2 and 4: their own CI runs
+#      with a read-only token and cannot dispatch anything.
+#   5. by hand (Actions -> Merge bot -> Run workflow).
 on:
   # When a check that decides a merge has just finished, look at once rather
   # than waiting for the next hour. Both names are those workflows' `name:`.
+  # It does not fire for runs a GITHUB_TOKEN dispatch started (see 1 above).
   #
   # workflow_run runs THIS file from the default branch, with a write token,
   # whatever branch the finished run was on -- which is why zizmor flags it.

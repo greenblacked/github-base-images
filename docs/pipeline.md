@@ -307,8 +307,23 @@ build is planned like a pull request and builds only the images the bump touches
 also runs on a dispatch from any branch but `main`, comparing it with `main`
 ([Repository security checks](security.md#repository-security-checks)).
 
-**Merging.** [merge-bot-prs.yml](../.github/workflows/merge-bot-prs.yml) runs whenever Build and
-Push or Security finishes, every hour, and on demand. For every open `dependabot/*` PR by
+**Merging.** [merge-bot-prs.yml](../.github/workflows/merge-bot-prs.yml) is started by:
+
+- **the bot branch's own CI.** Build and Push and Security end with a `request-merge` job that
+  dispatches the merge bot when they ran on a `pin-bump/*`, `lifecycle/*` or `dependabot/*`
+  branch by dispatch. GitHub starts no `workflow_run` for a run that a `GITHUB_TOKEN` dispatch
+  started, which is how every bot branch's CI is started, so the `workflow_run` trigger never
+  sees these. A dispatch made with `GITHUB_TOKEN` does start a run. Whichever of the two finishes
+  second finds all four checks complete;
+- **daily backstops:** the scheduled rebuild on `main`, pin bump and image lifecycle each dispatch
+  it at their end;
+- **`workflow_run`**, when Build and Push or Security finishes on a pull request or on `main`
+  (not for a run Dependabot started, whose token is read-only);
+- **the hourly schedule**, a backstop only: GitHub delays and drops scheduled runs under load;
+- **a person**, from *Actions*.
+
+Dependabot PRs rely on the hourly schedule and the daily backstops: their own CI runs with a
+read-only token and cannot dispatch anything. For every open `dependabot/*` PR by
 Dependabot, and every `pin-bump/*` and `lifecycle/*` PR by `github-actions[bot]`, it merges
 (squash, leased to the head commit it checked) when:
 
@@ -404,7 +419,9 @@ pin bump, and keeps the set of images in step with upstream's support lines
   and which tags exist from Docker Hub's tag API or MCR's tag list. Debian's and Ubuntu's releases
   come from endoflife.date too, to choose the distribution of a new image. Anything it cannot read
   means no action on what depended on it, and a warning in the run summary: never an add or a
-  retirement on a guess. "Not yet" (an RC tag only, an LTS date not reached) is not a warning.
+  retirement on a guess. "Not yet" (an RC tag only, an LTS date not reached) is not a warning;
+  a line that is GA but has no tag on either distribution yet is a `::notice::` and a "Waiting"
+  entry in the summary, every day until the tag appears.
 - **Opens one pull request per action**, on `lifecycle/add-<image>`, `lifecycle/deprecate-<image>`
   or `lifecycle/retire-<image>`, the same way pin bump does: rebuilt from `main`, one commit by
   `github-actions[bot]`, pushed leased to the SHA it saw, CI dispatched on the branch, healed on

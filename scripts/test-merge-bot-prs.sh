@@ -660,6 +660,35 @@ check "only #201 merged, and main published once" bash -c "[ \"\$(grep -c '^pr m
 # The waits are real waits by default: 2, 4, 8 and 16 seconds.
 check "the default backoff is about 30s" grep -qF -- "mergeable_delays=\${MERGE_BOT_MERGEABLE_DELAYS:-2 4 8 16}" "$bot"
 
+echo "case 21: what starts the merge bot (the workflows' request-merge jobs)"
+# YAML the scripts do not run, so read structurally: every workflow that
+# carries a bot PR's checks, or is a daily backstop, ends by dispatching the
+# merge bot; the job comes after every other job, holds only actions: write,
+# and fires only where it should. actionlint and zizmor check the rest.
+wf="$here/../.github/workflows"
+jobs_of() { awk '/^jobs:/ { j = 1; next } j && /^  [A-Za-z0-9_-]+:$/ { sub(/^  /, ""); sub(/:$/, ""); print }' "$1"; }
+job_block() { awk -v j="  $2:" '$0 == j { p = 1; print; next } p && /^  [A-Za-z0-9_-]+:$/ { exit } p { print }' "$1"; }
+for f in build-and-push security pin-bump image-lifecycle; do
+  b=$(job_block "$wf/$f.yml" request-merge)
+  check "$f.yml has a request-merge job" [ -n "$b" ]
+  needs=$(printf '%s\n' "$b" | sed -n 's/^    needs: \[\(.*\)\]$/\1/p' | tr -d ' ' | tr ',' '\n' | sort)
+  others=$(jobs_of "$wf/$f.yml" | grep -vx request-merge | grep -vx preview | sort)
+  check "  it needs every other job, so it runs last" [ "$needs" = "$others" ]
+  check "  it runs whatever their result" bash -c "printf '%s\n' \"\$1\" | grep -q 'always()'" _ "$b"
+  check "  its only permission is actions: write" \
+    [ "$(printf '%s\n' "$b" | sed -n '/^    permissions:/,/^    [a-z-]*:/p' | grep -cE '^      [a-z-]+:')" -eq 1 ]
+  check "  and it dispatches merge-bot-prs.yml on main" \
+    bash -c "printf '%s\n' \"\$1\" | grep -qF 'gh workflow run merge-bot-prs.yml --repo \"\$GITHUB_REPOSITORY\" --ref main'" _ "$b"
+done
+for f in build-and-push security; do
+  b=$(job_block "$wf/$f.yml" request-merge)
+  check "$f.yml asks on a dispatch to each bot branch prefix" bash -c "
+    for pfx in pin-bump/ lifecycle/ dependabot/; do printf '%s\n' \"\$1\" | grep -qF \"startsWith(github.ref, 'refs/heads/\$pfx')\" || exit 1; done" _ "$b"
+done
+check "the scheduled rebuild on main asks too (the daily backstop)" \
+  bash -c "job_b=\$(awk '\$0 == \"  request-merge:\" { p = 1 } p' '$wf/build-and-push.yml'); printf '%s\n' \"\$job_b\" | grep -qF \"github.event_name == 'schedule' && github.ref == 'refs/heads/main'\""
+check "the hourly schedule is kept" grep -qF "cron: '37 * * * *'" "$wf/merge-bot-prs.yml"
+
 echo
 echo "$pass passed, $failures failed"
 [ "$failures" -eq 0 ]

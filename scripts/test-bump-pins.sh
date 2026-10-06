@@ -434,6 +434,26 @@ if [ -n "$JSON_FILES" ]; then
   for f in $JSON_FILES; do expect_pin "$t" "$f" JSON_VERSION 2.19.9; done
 fi
 
+echo "case 5c: check-pins -- a key no image carries is an error, unless the row is optional"
+# Offline: both paths end before any vendor is asked. check-pins reads the
+# tree it sits in, so it runs from a copy of itself inside the scratch tree.
+t=$(new_tree fivec)
+cp -p "$here/check-pins.sh" "$t/scripts/check-pins.sh"
+sed 's/| NPM_VERSION  /| NPM_VERISON  /' "$here/check-pins.sh" > "$t/scripts/check-pins-typo.sh"; chmod +x "$t/scripts/check-pins-typo.sh"
+check "  (the typo was planted)" grep -q 'NPM_VERISON' "$t/scripts/check-pins-typo.sh"
+rc=0; "$t/scripts/check-pins-typo.sh" --only npm --format json > "$work/c5c.json" 2> "$work/c5c.err" || rc=$?
+check "a typo'd key: exit 1, not a silent skip" [ "$rc" -eq 1 ]
+check "  reported unresolved, so pin-bump turns it into an error row" \
+  [ "$(jq -r '.tools[0].state + " " + .tools[0].key' "$work/c5c.json")" = "unresolved NPM_VERISON" ]
+check "  and the log says why" grep -q 'no image in .github/images.json pins NPM_VERISON' "$work/c5c.err"
+# The optional json row, once no image carries the replacement any more.
+for f in $JSON_FILES; do sed '/^ARG JSON_VERSION=/d' "$t/$f" > "$t/x" && mv "$t/x" "$t/$f"; done
+rc=0; "$t/scripts/check-pins.sh" --only json --format json > "$work/c5d.json" 2> "$work/c5d.err" || rc=$?
+check "an optional key no image carries: exit 0, skipped" [ "$rc:$(jq '.tools | length' "$work/c5d.json")" = "0:0" ]
+check "  and the log says so" grep -q 'json: no image in .github/images.json pins JSON_VERSION any more, and it is optional; skipped' "$work/c5d.err"
+rc=0; "$t/scripts/check-pins.sh" --only nosuch > /dev/null 2>&1 || rc=$?
+check "an unknown --only is still a usage error" [ "$rc" -eq 2 ]
+
 # --- scripts/pin-bump-prs.sh ---------------------------------------------------
 # Real git against a local bare repository as origin, so pushes, leases and
 # the foreign-commit check run for real. The read-only gh queries are answered

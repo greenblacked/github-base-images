@@ -108,10 +108,20 @@ warn() {
   log "warning: $*"
   [ -z "${WARNINGS:-}" ] || printf '%s\n' "$*" >> "$WARNINGS"
 }
+# Not a problem, but not silent either: a GA line waiting for its upstream
+# tag. Listed in the run summary and as a ::notice:: each day it waits.
+notice() {
+  log "notice: $*"
+  [ -z "${NOTICES:-}" ] || printf '%s\n' "$*" >> "$NOTICES"
+}
 
 # --- small helpers -------------------------------------------------------------
 trim() { printf '%s' "$1" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//'; }
-is_date() { printf '%s' "$1" | grep -qxE '[0-9]{4}-[0-9]{2}-[0-9]{2}'; }
+# A real calendar date in YYYY-MM-DD (2030-13-45 is not one).
+is_date() {
+  printf '%s' "$1" | grep -qxE '[0-9]{4}-[0-9]{2}-[0-9]{2}' \
+    && [ "$(jq -rn --arg d "$1" 'try ($d + "T00:00:00Z" | fromdateiso8601 | strftime("%Y-%m-%d")) catch ""')" = "$1" ]
+}
 date_add() { jq -rn --arg d "$1" --argjson n "$2" '$d + "T00:00:00Z" | fromdateiso8601 + $n * 86400 | strftime("%Y-%m-%d")'; }
 # 0 when version $1 sorts strictly after $2.
 ver_gt() { [ "$1" != "$2" ] && [ "$(printf '%s\n%s\n' "$1" "$2" | sort -V | tail -1)" = "$1" ]; }
@@ -342,7 +352,7 @@ plan() {
         log "$fam $cyc: not added: $( [ "$fam" = node ] && echo "odd major, or its LTS date has not come yet" || echo "not an LTS release")"
         continue
       fi
-      local kind dl code cname tmpl upstream found="" stop=""
+      local kind dl code cname tmpl upstream found="" stop="" tried=""
       for kind in $distros; do
         if ! dl=$(newest_distro "$kind") || [ -z "$dl" ]; then
           warn "$fam $cyc: endoflife.date ($kind) could not be read, so the distribution cannot be chosen; not added today"
@@ -354,10 +364,14 @@ plan() {
         rc=0; probe "$upstream" || rc=$?
         case "$rc" in
           0) found=$upstream; break ;;
-          4) log "$fam $cyc: $upstream is not published (GA, both architectures) yet" ;;
+          4) log "$fam $cyc: $upstream is not published (GA, both architectures) yet"
+             tried="${tried:+$tried or }$upstream" ;;
           *) warn "$fam $cyc: the registry did not answer for $upstream; not added today"; stop=1; break ;;
         esac
       done
+      if [ -z "$stop" ] && [ -z "$found" ]; then
+        notice "$fam $cyc is released and supported upstream, but not yet published as $tried for both linux/amd64 and linux/arm64; added once it is"
+      fi
       if [ -n "$stop" ] || [ -z "$found" ]; then continue; fi
       jq -nc --arg fam "$fam" --arg cyc "$cyc" --arg up "$found" --arg c "$cname" \
         --arg img "$(image_name "$fam" "$cyc")" --argjson lts "$(jq --arg c "$cyc" 'any(.[]; .name == $c and .isLts == true)' "$tmp/eol-$product.json")" \
@@ -384,6 +398,15 @@ plan() {
       st=$(jq -c --arg i "$img" '[.[] | select(.image == $i)][0] // empty' "$state")
       st_eol=""; announced=""
       if [ -n "$st" ]; then st_eol=$(jq -r '.eol // ""' <<<"$st"); announced=$(jq -r '.announced // ""' <<<"$st"); fi
+      # A record whose dates cannot be read is not evidence of anything: an
+      # empty or malformed `announced` would make date_add fail, and its empty
+      # answer would read as "the 30-day notice has passed". So nothing is
+      # done for the image until the record is fixed (check, in lint, says
+      # how), rather than a retirement on a guess.
+      if [ -n "$st" ] && { ! is_date "$announced" || ! is_date "$st_eol"; }; then
+        warn "$img: .github/lifecycle.json has no valid announced/eol date for it (announced='$announced', eol='$st_eol'); not deprecated or retired until that is fixed"
+        continue
+      fi
       successor=$(successor_of "$img" "$fam" "$state")
       if [[ "$today" > "$eol" ]]; then
         if [ -n "$st" ] && [ "$st_eol" = "$eol" ]; then
@@ -1125,7 +1148,8 @@ prs() {
   trap "rm -rf '$work' '$tmp'; git worktree prune" EXIT INT TERM
   RESULTS="$work/results.jsonl"; : > "$RESULTS"
   WARNINGS="$work/warnings.txt"; : > "$WARNINGS"
-  export work RESULTS WARNINGS
+  NOTICES="$work/notices.txt"; : > "$NOTICES"
+  export work RESULTS WARNINGS NOTICES
 
   local_run git_net fetch --quiet --no-tags --prune origin \
     "+refs/heads/$base:refs/remotes/origin/$base" "+refs/heads/lifecycle/*:refs/remotes/origin/lifecycle/*"
@@ -1156,6 +1180,12 @@ prs() {
       jq -r 'def cell: tostring | gsub("[\r\n]+"; " ") | gsub("\\|"; "\\|");
         "| \(.action) | `\(.image)` | \(if .pr == "" then "—" else .pr end) | \(if .status == "error" then "**error**: " else .status + ": " end)\(.did | cell)\(if .note != "" then " — " + (.note | cell) else "" end) |"' "$RESULTS"
     fi
+    if [ -s "$NOTICES" ]; then
+      echo
+      echo "Waiting for an upstream tag (checked again tomorrow):"
+      echo
+      sed 's/^/- /' "$NOTICES"
+    fi
     if [ -s "$WARNINGS" ]; then
       echo
       echo "Warnings (no action was taken on anything they affect):"
@@ -1167,6 +1197,7 @@ prs() {
   [ -n "${GITHUB_STEP_SUMMARY:-}" ] && cat "$work/summary.md" >> "$GITHUB_STEP_SUMMARY"
   cat "$work/summary.md"
   if [ -n "${GITHUB_ACTIONS:-}" ]; then
+    sed 's/^/::notice::/' "$NOTICES"
     sed 's/^/::warning::/' "$WARNINGS"
     jq -r 'select(.status == "error") | "::error::\(.action) \(.image): \(.note)"' "$RESULTS"
   fi
@@ -1214,7 +1245,7 @@ done
 [ -f "$root/.github/images.json" ] || die "$root has no .github/images.json"
 
 case "$cmd" in
-  plan)   WARNINGS="$tmp/warnings.txt"; plan ;;
+  plan)   WARNINGS="$tmp/warnings.txt"; NOTICES="$tmp/notices.txt"; plan ;;
   prs)    prs ;;
   render) render ;;
   members) members "$root/.github/images.json" ;;

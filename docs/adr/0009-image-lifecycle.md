@@ -49,11 +49,20 @@ alone, or an MCR floating tag with no GA SDK tag, is "not yet". The image is
 carries a line-specific workaround, such as `ci-ruby40`'s json gem replacement), with the version,
 base, description, distribution and version assertions rewritten.
 
-**Distribution (amends 0005).** A new image starts on the newest Debian stable whose exact tag
-upstream publishes; failing that, the newest Ubuntu LTS whose tag it publishes. The version line is
-`<codename>-v1`. So Ubuntu 26.04 "resolute" becomes a new line, `resolute-v1`, with the first image
-built on it (Temurin and .NET publish no Debian image, and 26.04 is now the newest LTS). Existing
-images never move.
+**Distribution (amends 0005).** Exactly two candidates are probed, in order: the newest
+released Debian stable, then the newest released Ubuntu LTS. A new image starts on the first whose
+exact tag upstream publishes for both architectures. No older release of either is ever tried: if
+neither has the tag yet, the line waits (a notice in the run each day) until one does. The Ubuntu
+candidate exists only for the families whose upstream publishes Ubuntu images (Temurin and .NET);
+Python, Node.js, PHP and Ruby wait for the Debian tag. The version line is `<codename>-v1`.
+
+So where each family lands depends on what upstream publishes when the line goes GA, not on a
+fixed rule per family. Temurin publishes no Debian tag, so Java 29 will start on the newest
+Ubuntu LTS: today that is 26.04 "resolute", a new line, `resolute-v1`. .NET is probed for a Debian
+`-slim` SDK tag first (`11.0-trixie-slim`). Microsoft has published none since .NET 10 (as of
+today the only Debian or Ubuntu .NET 11 tag on MCR is `11.0-resolute`), so .NET 11 is expected on
+`resolute-v1` too, but it starts on `trixie-v1` if Microsoft publishes a Trixie image by then.
+Existing images never move.
 
 **Deprecate.** From 120 days before upstream end of support. End of support is endoflife.date's
 `eolFrom`: the end of security fixes, not the end of active support. The deprecation is recorded
@@ -72,7 +81,9 @@ never announced is announced first.
 **Unknowns are never actions.** If endoflife.date cannot be read, nothing is added, deprecated or
 retired for that runtime that day. If the registry errors rather than answering "no such tag", that
 line is not added, and the next distribution is not tried either. Both are warnings in the run
-summary. "Not yet" is silent.
+summary. "Not yet" is not a warning, but it is not silent either: a line endoflife.date calls GA
+whose tag is on neither distribution yet is a `::notice::` in the run, and listed in its summary,
+every day it waits.
 
 **Consistency is linted.** `image-lifecycle.sh check` runs in `scripts/lint.sh`: the Dependabot
 docker directories, the README catalog rows (with base and tag) and count, and the
@@ -82,13 +93,40 @@ its entry's `upstream`; the generated parts match `.github/lifecycle.json`. The 
 pin (npm, Playwright, Composer, the json gem) from the Dockerfiles of the `images.json` images, so
 adding or retiring an image never needs a change there.
 
+### Merge bot trigger
+
+This also corrects how [0008](0008-self-updating.md)'s merge bot is started, observed on the day
+this was written. 0008 relied on `workflow_run` (when Build and Push or Security finishes) plus an
+hourly schedule. Neither worked for the bot pull requests:
+
+- **`workflow_run` does not follow a run that a `GITHUB_TOKEN` dispatch started.** Every
+  `pin-bump/*` and `lifecycle/*` branch, and every refreshed `dependabot/*` branch, gets its CI
+  that way (a push made with the token starts nothing), so the merge bot never heard that their
+  checks had finished. A run Dependabot itself started is skipped on purpose (its token is
+  read-only).
+- **The hourly schedule did not run at all** in the first two hours after it reached `main`;
+  GitHub delays and drops scheduled runs under load. Green bot PRs waited until someone started
+  the merge bot by hand.
+
+So, within `GITHUB_TOKEN` (a dispatch made with it does start a run):
+
+- Build and Push and Security end with a `request-merge` job, after every other job and whatever
+  their result, that dispatches the merge bot on `main` when the run was a dispatch on a
+  `pin-bump/*`, `lifecycle/*` or `dependabot/*` branch. Whichever finishes second finds all four
+  checks complete. Its only permission is `actions: write`; it checks nothing out.
+- The scheduled rebuild on `main`, pin bump and image lifecycle dispatch the merge bot at their
+  end: three daily backstops that do not depend on cron.
+- The hourly schedule and `workflow_run` stay. Dependabot PRs rely on the hourly run and the daily
+  backstops, since their own CI cannot dispatch anything.
+
 ## Why
 
 - **New lines merge themselves, like every other update.** The owner decided this. A new image
   goes through the same build, smoke tests and gate as any change. It is gated strictly, against
   an empty baseline, so it cannot ship a fixable HIGH/CRITICAL finding, and nothing consumes it
   until someone points a workflow at it.
-- **Newest Debian stable, else newest Ubuntu LTS** is 0005's rule with its exception made general.
+- **Newest Debian stable, else newest Ubuntu LTS, and nothing older** is 0005's rule with its
+  exception made general.
   0005 named Noble because it was the newest LTS. Tying the rule to "newest" instead of a codename
   is what stops the next image starting on migration debt, and it needs no edit when Debian 14 or
   Ubuntu 28.04 ships.

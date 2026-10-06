@@ -169,6 +169,8 @@ plan_run "$t"
 check "no action" [ ! -s "$out" ]
 check "no warning: not yet is not a problem" no_warnings
 check "the log says it is not published yet" grep -q "python:$PY-slim-trixie is not published" "$err"
+check "  and a notice says the line is waiting for that tag, so the wait is visible" \
+  grep -q "^notice: python $PY is released and supported upstream, but not yet published as python:$PY-slim-trixie for both" "$err"
 
 echo "plan 4: the tag exists for amd64 only -> not added"
 t=$(new_tree p4); fixtures p4
@@ -220,6 +222,7 @@ check "an LTS release: add $JAVA_IMG" [ "$(acts)" = "add $JAVA_IMG" ]
 check "  on eclipse-temurin:$JAVA-jdk-resolute" [ "$(act_field add "$JAVA_IMG" upstream)" = "eclipse-temurin:$JAVA-jdk-resolute" ]
 check "  codename resolute, so the line is resolute-v1" [ "$(act_field add "$JAVA_IMG" codename)" = resolute ]
 check "  only the two probes it needed (28.04 is not released yet, 25.10 is not LTS)" bash -c "! grep -q 'no fixture' '$err'"
+check "  and no waiting notice once it is added" bash -c "! grep -q '^notice:' '$err'"
 
 echo "plan 9: an error on the Debian probe stops there -- Ubuntu is not tried on a guess"
 t=$(new_tree p9); fixtures p9
@@ -236,7 +239,9 @@ release dotnet "{\"name\": \"$NET\", \"releaseDate\": \"$(day -5)\", \"isLts\": 
 mcr_tags "$NET.0-resolute" "$NET.0-resolute-amd64" "$NET.0-resolute-arm64v8" "$NET.0.100-rc.2-resolute" "$NET.0.100-preview.7-resolute"
 plan_run "$t"
 check "RC: not added" [ ! -s "$out" ]
-check "  silently" no_warnings
+check "  with no warning" no_warnings
+check "  but a notice naming both tags it looked for (newest Debian, then newest Ubuntu LTS)" \
+  grep -q "^notice: dotnet $NET .* not yet published as mcr.microsoft.com/dotnet/sdk:$NET.0-trixie-slim or mcr.microsoft.com/dotnet/sdk:$NET.0-resolute for" "$err"
 mcr_tags "$NET.0.100-resolute"
 plan_run "$t"
 check "GA: add $NET_IMG" [ "$(acts)" = "add $NET_IMG" ]
@@ -286,6 +291,14 @@ check "  and the log says when" grep -q "retired once that is 30 days old" "$err
 state "$t" '[]'
 plan_run "$t"
 check "past end of support but never announced: announced first, not retired" [ "$(acts)" = "deprecate $OLD_NODE" ]
+for bad_record in 'del(.announced)' '.announced = ""' '.announced = "2030-13-45"' '.announced = "soon"' '.eol = ""'; do
+  # Written straight into the file, as a hand edit or a bad merge would: render
+  # would not even run on some of these.
+  dep_entry "$OLD_NODE" "$(day -1)" "$(day -60)" | jq -s "map($bad_record)" > "$t/.github/lifecycle.json"
+  plan_run "$t"
+  check "a record with $bad_record: no retirement, no re-announcement" [ ! -s "$out" ]
+  check "  and a warning that names the image" warned "$OLD_NODE: .github/lifecycle.json has no valid announced/eol date"
+done
 
 echo "plan 14: endoflife.date unreachable or unreadable -> warnings, never an add or a retirement"
 t=$(new_tree p14); fixtures p14
@@ -575,6 +588,15 @@ FAKE_GH_FAIL='^workflow run security\.yml' run_prs
 check "exit 1" [ "$rc" -eq 1 ]
 check "  the row is an error naming the dispatch" bash -c "jq -r 'select(.image == \"$PY_IMG\") | .status + \" \" + .note' '$res' | grep -q '^error gh workflow run security.yml failed'"
 check "  Build and Push was still dispatched" logged "workflow run build-and-push.yml --repo o/r --ref $BR"
+
+echo "prs 10: a GA line still waiting for its tag is a notice in the run, every day it waits"
+fixtures r10; release python "{\"name\": \"$PY\", \"releaseDate\": \"$(day -30)\"}"; hub404 python "$PY-slim-trixie"
+scenario r10
+GITHUB_ACTIONS=true run_prs
+check "exit 0, nothing written" bash -c "[ $rc -eq 0 ] && [ ! -s '$log' ]"
+check "a ::notice:: annotation names the line and the tag" grep -q "^::notice::python $PY is released and supported upstream, but not yet published as python:$PY-slim-trixie" "$out"
+check "the summary lists it under waiting" grep -q '^Waiting for an upstream tag (checked again tomorrow):' "$out"
+check "  and it is not a warning" bash -c "! grep -q '^::warning::' '$out'"
 
 echo
 echo "$pass passed, $failures failed"

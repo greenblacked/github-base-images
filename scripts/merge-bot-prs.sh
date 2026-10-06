@@ -61,6 +61,14 @@
 #      Never for pin-bump/* or lifecycle/*: their scripts rebuild those from
 #      main themselves, and a merge commit on one would make it hands-off for
 #      good.
+# When it runs: see the header of .github/workflows/merge-bot-prs.yml. In
+# short, a bot branch's own CI dispatches it when it finishes (request-merge
+# in build-and-push.yml and security.yml), because GitHub starts no
+# workflow_run for a run a GITHUB_TOKEN dispatch started. Dependabot PRs
+# cannot do that -- their CI runs with a read-only token -- so they rely on
+# the hourly schedule and the daily backstops (the scheduled rebuild, pin
+# bump and image lifecycle each dispatch this at their end).
+#
 # After the loop, if anything merged: dispatch build-and-push.yml and
 # security.yml on main, once. A merge made with the workflow token starts no
 # push workflow, so without this the update would publish only with the next

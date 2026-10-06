@@ -99,9 +99,13 @@ trap 'rm -rf "$tmp"' EXIT INT TERM
 # A file written `*/Dockerfile.ci` is the first image in .github/images.json
 # whose Dockerfile.ci pins the key, so no image name is spelled here for the
 # pins a runtime's images share: an image the lifecycle workflow adds or
-# retires (scripts/image-lifecycle.sh) needs no change here. When no image
-# pins the key any more (ci-ruby40's json replacement, once it retires), the
-# tool is skipped, not reported unresolved.
+# retires (scripts/image-lifecycle.sh) needs no change here.
+#
+# No image carrying the key is an error -- a typo in this table, or a pin a
+# runtime's images lost, must not quietly drop a tool from the drift report --
+# except for a row written `*?/Dockerfile.ci`: a workaround pin that is meant
+# to go away with the image that needs it (the json gem replacement in
+# ci-ruby40). That one is skipped once no image carries it.
 #
 # gitleaks is the exception, listed twice: the copy security.yml runs over the
 # git history is a separate pin that nothing forces to agree with the image's,
@@ -122,7 +126,7 @@ gitleaks   | ci-security/Dockerfile.ci            | GITLEAKS_VERSION   | github 
 migrate    | ci-db/Dockerfile.ci                  | MIGRATE_VERSION    | github    | golang-migrate/migrate
 osv-scanner | .github/workflows/build-image.yml   | OSV_SCANNER_VERSION | github   | google/osv-scanner
 npm        | */Dockerfile.ci                      | NPM_VERSION        | npm       | npm
-json       | */Dockerfile.ci                      | JSON_VERSION       | rubygems  | json
+json       | *?/Dockerfile.ci                     | JSON_VERSION       | rubygems  | json
 hadolint   | scripts/lint.sh                      | HADOLINT_VERSION   | github    | hadolint/hadolint
 actionlint | scripts/lint.sh                      | ACTIONLINT_VERSION | github    | rhysd/actionlint
 gitleaks-workflow | .github/workflows/security.yml | GITLEAKS_VERSION  | github    | gitleaks/gitleaks
@@ -206,7 +210,7 @@ current_pin() {
 }
 
 # --- main loop --------------------------------------------------------------
-drift=0; failed=0; checked=0
+drift=0; failed=0; checked=0; matched=0
 : > "$tmp/rows.jsonl"
 
 while IFS='|' read -r name file key resolver arg; do
@@ -217,14 +221,21 @@ while IFS='|' read -r name file key resolver arg; do
   arg=$(printf '%s' "$arg" | tr -d ' ')
 
   [ -n "$only" ] && [ "$only" != "$name" ] && continue
-  if [ "$file" = '*/Dockerfile.ci' ]; then
-    file=""
+  matched=$((matched + 1))
+  if [ "$file" = '*/Dockerfile.ci' ] || [ "$file" = '*?/Dockerfile.ci' ]; then
+    spec=$file; file=""
     for img in $(jq -r '.[].image' .github/images.json); do
       if grep -q "^ARG $key=" "$img/Dockerfile.ci" 2>/dev/null; then file="$img/Dockerfile.ci"; break; fi
     done
+    if [ -z "$file" ] && [ "$spec" = '*?/Dockerfile.ci' ]; then
+      log info "$name: no image in .github/images.json pins $key any more, and it is optional; skipped"
+      continue
+    fi
     if [ -z "$file" ]; then
-      log info "$name: no image in .github/images.json pins $key any more; skipped"
-      [ -n "$only" ] && { echo "error: no image pins $key, so there is no $name to check" >&2; exit 2; }
+      log error "$name: no image in .github/images.json pins $key (a typo in this table, or a pin an image lost)"
+      failed=$((failed + 1)); checked=$((checked + 1))
+      jq -nc --arg tool "$name" --arg key "$key" \
+        '{tool:$tool, pinned:"", latest:null, file:"*/Dockerfile.ci", key:$key, state:"unresolved"}' >> "$tmp/rows.jsonl"
       continue
     fi
   fi
@@ -285,7 +296,7 @@ while IFS='|' read -r name file key resolver arg; do
     >> "$tmp/rows.jsonl"
 done <<< "$PINS"
 
-if [ "$checked" -eq 0 ]; then
+if [ "$matched" -eq 0 ]; then
   echo "error: no tool matched --only '$only'" >&2
   exit 2
 fi

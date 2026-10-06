@@ -153,9 +153,10 @@ Examples are in [Using the tool images](#using-the-tool-images).
 Some of these images break a pattern worth naming explicitly:
 
 - **Each image carries the distribution line it started on.** A new image starts on the newest
-  Debian stable that upstream publishes it for, and only where there is no such image on the
-  newest Ubuntu LTS: Temurin publishes no Debian tag at all (only Ubuntu and Alpine), and
-  Microsoft publishes no Debian SDK image since .NET 10. Installing a JDK or an SDK onto a Debian
+  Debian stable if upstream publishes the exact tag for it, otherwise on the newest Ubuntu LTS
+  (only for Java and .NET, whose upstreams publish Ubuntu images); older releases of either are
+  never used. Temurin publishes no Debian tag at all (only Ubuntu and Alpine), and Microsoft has
+  published no Debian SDK image since .NET 10, so those lines land on Ubuntu unless that changes. Installing a JDK or an SDK onto a Debian
   slim image instead would replace an official, upstream-maintained build with one this
   repository maintains. Existing images never move, so `bookworm-v1`, `trixie-v1` and `noble-v1`
   coexist, and Ubuntu 26.04 adds `resolute-v1` with the first image built on it. The version tag
@@ -182,9 +183,11 @@ every other automated update ([Automatic updates](pipeline.md#automatic-updates)
 - **New lines are added.** When upstream ships a line newer than the newest image of its runtime,
   generally available and published for `linux/amd64` and `linux/arm64`, a pull request adds
   `ci-<runtime><version>`. Node.js only for even majors, once they are LTS; Java only for LTS
-  releases; .NET for every release, STS included. It starts on the newest Debian stable that has
-  the exact upstream tag, else the newest Ubuntu LTS, on the version line `<codename>-v1`. Older
-  lines are never added, and nothing before its GA release.
+  releases; .NET for every release, STS included. It starts on the newest Debian stable if the
+  exact upstream tag exists for it, else on the newest Ubuntu LTS (Java and .NET only), on the
+  version line `<codename>-v1`; older distribution releases are never tried. A line that is GA
+  but has no tag on either yet waits, and the daily run shows it as a notice. Older lines are
+  never added, and nothing before its GA release.
 - **Deprecation is announced 120 days ahead** of upstream end of support (the end of security
   fixes): the catalog row is marked with the date, and a notice goes into the README,
   [SECURITY.md](../SECURITY.md) and below.
