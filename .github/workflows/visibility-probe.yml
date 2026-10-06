@@ -1,0 +1,65 @@
+# One-off probe, never merged: does a container package that this public,
+# user-owned repository publishes from a workflow with GITHUB_TOKEN start
+# public or private? It publishes a one-file image under a name no image
+# uses, then asks ghcr.io for it anonymously, the way a consumer would.
+name: Visibility probe
+
+on:
+  push:
+    branches: [probe/package-visibility]
+
+permissions: {}
+
+jobs:
+  probe:
+    name: Publish a throwaway package and check its visibility
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      packages: write
+    env:
+      IMAGE: ghcr.io/${{ github.repository_owner }}/visibility-probe:probe
+      NAME: ${{ github.repository_owner }}/visibility-probe
+      SOURCE: ${{ github.server_url }}/${{ github.repository }}
+    steps:
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push a one-file image linked to this repository
+        run: |
+          mkdir probe && cd probe
+          echo "visibility probe" > probe.txt
+          {
+            echo 'FROM scratch'
+            echo 'COPY probe.txt /probe.txt'
+            echo "LABEL org.opencontainers.image.source=\"$SOURCE\""
+            echo 'LABEL org.opencontainers.image.description="Throwaway probe: does a package published from this public repository start public?"'
+          } > Dockerfile
+          docker build -t "$IMAGE" .
+          docker push "$IMAGE"
+          docker logout ghcr.io
+
+      - name: Pull it anonymously
+        run: |
+          result=private
+          for wait in 10 20 40 60; do
+            sleep "$wait"
+            code=$(curl -sS -o token.json -w '%{http_code}' "https://ghcr.io/token?scope=repository:${NAME}:pull") || code=000
+            echo "anonymous token request: HTTP $code"
+            if [ "$code" = 200 ]; then
+              token=$(jq -r '.token // empty' token.json)
+              mcode=$(curl -sS -o /dev/null -w '%{http_code}' -I \
+                -H "Authorization: Bearer $token" \
+                -H 'Accept: application/vnd.oci.image.manifest.v1+json, application/vnd.docker.distribution.manifest.v2+json, application/vnd.oci.image.index.v1+json' \
+                "https://ghcr.io/v2/${NAME}/manifests/probe") || mcode=000
+              echo "anonymous manifest request: HTTP $mcode"
+              if [ "$mcode" = 200 ]; then result=public; break; fi
+            fi
+          done
+          echo "::notice title=visibility-probe::RESULT=$result (package ${NAME})"
+          echo "### Visibility probe: the new package came out **$result**" >> "$GITHUB_STEP_SUMMARY"
