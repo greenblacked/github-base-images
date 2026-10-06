@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Turn a check-pins.sh drift report into one pull request per unit -- the
-# script behind .github/workflows/pin-bump.yml (docs/adr/0007-automatic-updates.md).
+# script behind .github/workflows/pin-bump.yml (docs/adr/0007-automatic-updates.md,
+# docs/adr/0008-self-updating.md).
 #
 # For every unit that is behind (a tool, or a pin kept in several places):
 #   1. branch `pin-bump/<unit>`, rebuilt from the base branch every time;
@@ -9,15 +10,17 @@
 #   4. CI dispatched on the branch -- pushes made with the workflow token do not
 #      trigger workflows, but a workflow_dispatch does, and its check runs land
 #      on the branch head, which is what the required checks look at;
-#   5. an `auto` bump gets auto-merge (squash), a `review` bump the
-#      `needs-review` label and no auto-merge.
+#   5. a `review` bump (no vendor checksum, a major version, an unknown
+#      release date) gets the `needs-review` label, as information.
+# Merging is not done here. .github/workflows/merge-bot-prs.yml merges every
+# bump PR, `auto` and `review` alike, once its required checks are green on
+# its head commit; this script only makes sure those checks run.
 #
 # Idempotent. A branch carrying a commit this workflow did not make -- by
 # author or by committer -- is never touched: a human is working on it. An
 # open PR already targeting the same version is not rebuilt, but it is healed:
 # CI is dispatched again if its required checks never reported on the branch
-# head, and an `auto` PR gets auto-merge if it is off and the ruleset now
-# allows it. One targeting an older version gets its branch rebuilt and
+# head. One targeting an older version gets its branch rebuilt and
 # force-pushed (the branch belongs to this workflow) and its title and body
 # rewritten. A PR a maintainer closed unmerged is not reopened for the same
 # version.
@@ -38,9 +41,9 @@
 #                     instead of running -- every command that would push,
 #                     write to GitHub, or dispatch a workflow
 #   PIN_BUMP_GH_STUB  directory of canned answers for the read-only gh queries
-#                     (pr-<unit>.json, checks-<unit>.json, automerge-<unit>.json,
-#                     rules.json, labels.json), for dry runs and the offline
-#                     tests; <name>.exit, if present, is the query's exit status
+#                     (pr-<unit>.json, checks-<unit>.json, labels.json), for
+#                     dry runs and the offline tests; <name>.exit, if present,
+#                     is the query's exit status
 #   PIN_BUMP_RESULTS  also write the per-unit results, one JSON object per
 #                     line, to this file (the offline tests read it)
 set -euo pipefail
@@ -48,15 +51,11 @@ set -euo pipefail
 readonly BOT_NAME='github-actions[bot]'
 readonly BOT_EMAIL='41898282+github-actions[bot]@users.noreply.github.com'
 readonly LABEL=needs-review
-# The checks the `main` ruleset requires (docs/security.md, "Required
-# checks"). Auto-merge is only enabled when all of them are required: with
-# fewer, "auto-merge once green" would mean green on less than the full gate.
-readonly REQUIRED_CHECKS=("CI result" "Repository secret scan" "CodeQL (workflows)" "Dependency review")
-# Which workflow reports each of those checks, for re-dispatching the one
-# whose checks never ran.
+# The four required checks (docs/security.md, "Required checks") -- the ones
+# merge-bot-prs.sh merges on -- and which workflow reports each, for
+# re-dispatching the one whose checks never ran.
 readonly CHECK_WORKFLOWS=("CI result|build-and-push.yml" "Repository secret scan|security.yml"
   "CodeQL (workflows)|security.yml" "Dependency review|security.yml")
-readonly SETTINGS_HELP="enable Settings -> General -> Pull Requests -> 'Allow auto-merge', and make the 'main' ruleset (Settings -> Rules -> Rulesets) require the status checks: CI result, Repository secret scan, CodeQL (workflows), Dependency review"
 
 script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 base=${BASE_BRANCH:-main}
@@ -93,10 +92,12 @@ gh_read() {
 # git over HTTPS with GH_TOKEN, via a credential helper that reads the token
 # from the environment when git asks for it. Nothing is persisted, and the
 # checkout step keeps persist-credentials: false.
+# Called only through run/local_run, which shellcheck cannot follow: SC2329
+# ("never invoked") in shellcheck 0.11 and later, SC2317 before it.
+# shellcheck disable=SC2329
 git_net() {
   # The single quotes are deliberate: $GH_TOKEN is expanded by the helper's
-  # own shell when git calls it, not here. Called through run/local_run,
-  # which shellcheck cannot follow (SC2317).
+  # own shell when git calls it, not here.
   # shellcheck disable=SC2016,SC2317
   git -c credential.helper= \
       -c 'credential.helper=!f() { echo username=x-access-token; echo "password=${GH_TOKEN}"; }; f' "$@"
@@ -141,8 +142,9 @@ one_unit() {
   fi
 
   # A commit on the branch that this workflow did not make means a human is
-  # working there: leave the branch alone, and do not heal it either --
-  # enabling auto-merge would merge their commit unreviewed. Author AND
+  # working there: leave the branch alone, and do not heal it either.
+  # merge-bot-prs.sh applies the same rule and never merges such a branch,
+  # so their commit is not merged unreviewed. Author AND
   # committer: an amend or rebase by a maintainer keeps the bot as author, and
   # GitHub's "Update branch" adds a merge commit authored by whoever clicked
   # it. Read with the rc idiom, because a git log that failed would otherwise
@@ -157,7 +159,7 @@ one_unit() {
     fi
     foreign=$(printf '%s\n' "$emails" | grep -vxF "$BOT_EMAIL" | grep -v '^$' | sort -u | paste -sd, - || true)
     if [ -n "$foreign" ]; then
-      note="commits by $foreign. If the newest is GitHub's 'Update branch' merge, drop it so the weekly run can take the branch back: git fetch origin && git push --force-with-lease origin origin/$branch^1:refs/heads/$branch (see docs/pipeline.md, Automatic updates)"
+      note="commits by $foreign. If the newest is GitHub's 'Update branch' merge, drop it so the daily run can take the branch back: git fetch origin && git push --force-with-lease origin origin/$branch^1:refs/heads/$branch (see docs/pipeline.md, Automatic updates)"
       row skipped "$branch has commits not made by this workflow; left for their author${pr_num:+ (#$pr_num)}"
       return 0
     fi
@@ -211,7 +213,7 @@ one_unit() {
     git -C "$wt" commit --quiet --file "$work/msg-$unit"
 
   {
-    echo "Automated bump of a hand-pinned tool, opened by the weekly pin-bump workflow."
+    echo "Automated bump of a hand-pinned tool, opened by the daily pin-bump workflow."
     echo
     echo "| | |"
     echo "|---|---|"
@@ -225,18 +227,19 @@ one_unit() {
     echo
     if [ -n "$urls" ]; then echo "$urls"; else echo "- none published: this download is not checksum-verified"; fi
     echo
-    if [ "$class" = auto ]; then
-      echo "This PR **merges itself** (squash) once every required check passes. It will not merge red."
-    else
-      echo "Labelled \`$LABEL\`: auto-merge is **off**. A maintainer merges this after reading the release notes."
+    echo "This PR **merges itself** (squash) once all four required checks pass on its head commit, and"
+    echo "the image publishes right after. It will not merge red. Add the \`hold\` label to stop it."
+    if [ "$class" != auto ]; then
+      echo
+      echo "Labelled \`$LABEL\` for information: $reason. The full build, smoke tests and"
+      echo "vulnerability gate are what it merges on."
     fi
     echo
     echo "CI was started by dispatching *Build and Push to GHCR* and *Security* on this branch, since a push"
-    echo "made with the workflow token triggers no workflow. The dispatched build rebuilds every image, not"
-    echo "only the one this bump touches. After merge the image publishes with the next weekly rebuild"
-    echo "(docs/adr/0007-automatic-updates.md)."
+    echo "made with the workflow token triggers no workflow. The dispatched build is planned like a pull"
+    echo "request: it builds the images this bump touches (docs/adr/0008-self-updating.md)."
     echo
-    echo "Please do not use *Update branch* here: the weekly run rebuilds a branch that fell behind \`$base\`,"
+    echo "Please do not use *Update branch* here: the daily run rebuilds a branch that fell behind \`$base\`,"
     echo "but it never force-pushes over a commit it did not make, so that merge commit leaves this PR to you"
     echo "(docs/pipeline.md, *Automatic updates*, says how to hand it back)."
     echo
@@ -280,23 +283,24 @@ one_unit() {
 
   dispatch build-and-push.yml security.yml
 
+  # The label is information only: merge-bot-prs.sh merges `auto` and
+  # `review` bumps alike once green. A failure to set or clear it costs
+  # nothing but the information, so it is a note, not an error.
   if [ "$class" = auto ]; then
     if [ -n "$open_json" ] && jq -e --arg l "$LABEL" 'any(.labels[]?; .name == $l)' <<<"$open_json" >/dev/null; then
       # It was a review bump before, and the new version is not.
       rc=0; run gh pr edit "$pr_num" --repo "$repo" --remove-label "$LABEL" || rc=$?
+      [ "$rc" -eq 0 ] || note="${note}could not remove the $LABEL label (exit $rc). "
     fi
-    enable_automerge
   else
-    ensure_label || { note="${note}could not create or find the $LABEL label"; row error "$action"; return 1; }
-    run gh pr edit "$pr_num" --repo "$repo" --add-label "$LABEL"
-    if [ -n "$open_json" ]; then
-      # A previous version of this PR may have been auto. Its auto-merge
-      # request would merge this review bump the moment the checks just
-      # dispatched pass, so it must be off: read it, turn it off if on, and
-      # fail the unit if either step fails.
-      disable_automerge
+    rc=0
+    ensure_label || rc=$?
+    [ "$rc" -eq 0 ] && { run gh pr edit "$pr_num" --repo "$repo" --add-label "$LABEL" || rc=$?; }
+    if [ "$rc" -eq 0 ]; then
+      action="$action, labelled $LABEL"
+    else
+      note="${note}could not set the $LABEL label (exit $rc). "
     fi
-    action="$action, labelled $LABEL"
   fi
 
   finish
@@ -319,24 +323,6 @@ dispatch() { # WORKFLOW...
       errors="${errors}gh workflow run $wf failed (exit $rc). "
     fi
   done
-}
-
-# Auto-merge for an `auto` unit, but only when the ruleset makes "once green"
-# mean the full gate.
-enable_automerge() {
-  local rc
-  if [ -n "$AUTOMERGE_BLOCKER" ]; then
-    note="${note}auto-merge not enabled: $AUTOMERGE_BLOCKER"
-    action="$action, left open (see warnings)"
-    return 0
-  fi
-  rc=0; run gh pr merge "$pr_num" --repo "$repo" --auto --squash || rc=$?
-  if [ "$rc" -eq 0 ]; then
-    action="$action, auto-merge on"
-  else
-    note="${note}gh pr merge --auto failed (exit $rc); to fix: $SETTINGS_HELP"
-    action="$action, left open (see warnings)"
-  fi
 }
 
 # Workflows among CHECK_WORKFLOWS with a required check that has no usable
@@ -366,10 +352,10 @@ ci_missing() { # SHA
 
 # An open PR already at the target version, on a branch that is up to date:
 # nothing to rebuild, but whatever the run that opened it failed to do is done
-# now. Without this a one-off dispatch failure, or auto-merge refused before
-# the settings were in place, would leave the PR stuck until the next version.
+# now. Without this a one-off dispatch failure would leave the PR waiting for
+# checks that never start, and merge-bot-prs.sh would never merge it.
 heal() { # HEAD_SHA
-  local sha="$1" missing rc am
+  local sha="$1" missing rc
   class=$prev_class
   action="#$pr_num already targets $to"
 
@@ -385,41 +371,10 @@ heal() { # HEAD_SHA
     action="$action; checks present on ${sha:0:12}"
   fi
 
-  case "$class" in
-    auto)
-      rc=0; am=$(gh_read "automerge-$unit" pr view "$pr_num" --repo "$repo" --json autoMergeRequest) || rc=$?
-      if [ "$rc" -ne 0 ] || ! jq -e 'type == "object" and has("autoMergeRequest")' <<<"$am" >/dev/null 2>&1; then
-        errors="${errors}could not read whether auto-merge is on for #$pr_num (exit $rc). "
-      elif jq -e '.autoMergeRequest != null' <<<"$am" >/dev/null; then
-        action="$action, auto-merge already on"
-      else
-        enable_automerge
-      fi ;;
-    review) ;;
-    *) note="${note}the PR body records no class, so auto-merge was left as it is. " ;;
-  esac
   finish unchanged
 }
 
 # Record the unit's row: an error if anything above failed, else STATUS.
-# Turn off an auto-merge request left by an earlier, auto version of this PR.
-# Only an explicit null from the API counts as off; an unreadable answer, or a
-# refused --disable-auto, is an error rather than a PR that may merge unread.
-disable_automerge() {
-  local rc=0 am
-  am=$(gh_read "automerge-$unit" pr view "$pr_num" --repo "$repo" --json autoMergeRequest) || rc=$?
-  if [ "$rc" -ne 0 ] || ! jq -e 'type == "object" and has("autoMergeRequest")' <<<"$am" >/dev/null 2>&1; then
-    errors="${errors}could not read whether auto-merge is on for #$pr_num (exit $rc), so it may still merge this review bump; turn it off by hand. "
-  elif jq -e '.autoMergeRequest != null' <<<"$am" >/dev/null; then
-    rc=0; run gh pr merge "$pr_num" --repo "$repo" --disable-auto || rc=$?
-    if [ "$rc" -eq 0 ]; then
-      action="$action, auto-merge off"
-    else
-      errors="${errors}gh pr merge --disable-auto failed (exit $rc): #$pr_num still has auto-merge on and will merge this review bump when green; turn it off by hand. "
-    fi
-  fi
-}
-
 finish() { # [STATUS]
   note="${errors}${note}"; note=${note% }
   if [ -n "$errors" ]; then
@@ -434,7 +389,7 @@ finish() { # [STATUS]
 ensure_label() {
   local rc=0
   run gh label create "$LABEL" --repo "$repo" --color d93f0b \
-    --description "Automated update that a maintainer must review and merge" || rc=$?
+    --description "Major or unchecksummed automated update. Information only: it still merges when green" || rc=$?
   [ "$rc" -eq 0 ] && return 0
   gh_read labels label list --repo "$repo" --search "$LABEL" --json name \
     | jq -e --arg l "$LABEL" 'any(.[]; .name == $l)' >/dev/null
@@ -442,8 +397,8 @@ ensure_label() {
 
 # ---------------------------------------------------------------------------
 if [ "${1:-}" = --one-unit ]; then
-  # Child mode: environment (work, RESULTS, AUTOMERGE_BLOCKER, ...) is
-  # inherited from the parent below.
+  # Child mode: environment (work, RESULTS, ...) is inherited from the
+  # parent below.
   [ $# -eq 4 ] || die "--one-unit needs UNIT VERSION PINNED"
   one_unit "$2" "$3" "$4"
   exit $?
@@ -470,27 +425,6 @@ export work RESULTS
 local_run git_net fetch --quiet --no-tags --prune origin \
   "+refs/heads/$base:refs/remotes/origin/$base" \
   "+refs/heads/pin-bump/*:refs/remotes/origin/pin-bump/*"
-
-# Auto-merge is only as safe as what it waits for. Read which checks the
-# base branch's rulesets actually require, and enable auto-merge only if the
-# full gate is among them; otherwise say exactly what is missing.
-AUTOMERGE_BLOCKER=""
-rc=0
-rules=$(gh_read rules api "repos/$repo/rules/branches/$base") || rc=$?
-if [ "$rc" -ne 0 ] || ! jq -e 'type == "array"' <<<"$rules" >/dev/null 2>&1; then
-  AUTOMERGE_BLOCKER="the rules for $base could not be read (exit $rc), so the required checks are unknown"
-else
-  missing=()
-  for c in "${REQUIRED_CHECKS[@]}"; do
-    jq -e --arg c "$c" 'any(.[]; .type == "required_status_checks" and any(.parameters.required_status_checks[]?; .context == $c))' \
-      <<<"$rules" >/dev/null || missing+=("$c")
-  done
-  if [ "${#missing[@]}" -gt 0 ]; then
-    joined=$(printf '%s, ' "${missing[@]}")
-    AUTOMERGE_BLOCKER="the $base ruleset does not require: ${joined%, }"
-  fi
-fi
-export AUTOMERGE_BLOCKER
 
 # Tools the checker could not resolve are errors here too: not bumping them
 # is right, not saying so would be a check that passed without looking.
@@ -530,21 +464,16 @@ done < <(jq -r 'select(.to) | [.unit, .to, .from] | @tsv' "$work/plan.jsonl")
     echo "|---|---|---|---|---|---|"
     jq -r '"| \(.unit) | \(if .old == "" then "—" else "`" + .old + "`" end) | \(if .new == "" then "—" else "`" + .new + "`" end) | \(if .class == "" then "—" else .class end) | \(if .pr == "" then "—" else .pr end) | \(if .status == "error" then "**error**: " else "" end)\(.action)\(if .note != "" then " — " + .note else "" end) |"' "$RESULTS"
   fi
-  if jq -se 'any(.[]; .note | contains("auto-merge not enabled"))' "$RESULTS" >/dev/null; then
-    echo
-    echo "> **Warning:** auto-merge was not enabled, because $AUTOMERGE_BLOCKER. Those PRs are open and waiting."
-    echo "> To let them merge themselves: $SETTINGS_HELP."
-  fi
 } > "$work/summary.md"
 [ -z "${PIN_BUMP_RESULTS:-}" ] || cp "$RESULTS" "$PIN_BUMP_RESULTS"
 # Into the job summary when there is one, and into the log either way.
 [ -n "${GITHUB_STEP_SUMMARY:-}" ] && cat "$work/summary.md" >> "$GITHUB_STEP_SUMMARY"
 cat "$work/summary.md"
 
-# Annotations, so a PR left open for want of a setting is visible on the run
-# page and not only in the summary.
+# Annotations, so a failed unit, or a label that could not be set, is
+# visible on the run page and not only in the summary.
 if [ -n "${GITHUB_ACTIONS:-}" ]; then
-  jq -r 'select(.note | test("auto-merge")) | "::warning::\(.unit): \(.note)"' "$RESULTS"
+  jq -r 'select(.status != "error" and (.note | test("could not (set|remove) the"))) | "::warning::\(.unit): \(.note)"' "$RESULTS"
   jq -r 'select(.status == "error") | "::error::\(.unit): \(.note)"' "$RESULTS"
 fi
 

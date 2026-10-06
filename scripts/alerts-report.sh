@@ -22,14 +22,17 @@
 #
 # "Fixable" means a version to move to exists:
 #   - a Trivy alert whose SARIF message carries a non-empty `Fixed Version:`
-#     line. Since docs/adr/0006 the vulnerability gate fails on exactly that
-#     set (OS packages and libraries, HIGH/CRITICAL, ignore-unfixed), so one in
-#     a current image means the last build of it on main failed its gate and
-#     the published image is older still, or the image has not been rebuilt
-#     since the fix appeared.
+#     line: the set the vulnerability gate judges (OS packages and libraries,
+#     HIGH/CRITICAL, ignore-unfixed). Since docs/adr/0008 the gate blocks only
+#     the ones a build adds, so one open in a current image is usually known
+#     upstream -- inherited from the runtime or a vendored package, with no
+#     release that fixes it yet -- and otherwise means the image has not been
+#     rebuilt since the fix appeared.
 #   - a HIGH/CRITICAL Dependabot alert with a `first_patched_version` -- the
 #     same rule applied to the repository's own dependencies.
-# Either way it is something to act on, which is why it sets the exit code.
+# Either way it is worth listing, which is why it sets the exit code; the
+# workflow turns that exit code into a warning, not a failure (see
+# .github/workflows/alerts-report.yml for why).
 #
 # Except when an active exception covers it. <exceptions.json> is
 # .github/vuln-exceptions.json, the same list the vulnerability gate turns
@@ -378,12 +381,14 @@ cat > "$f" <<'EOF'
 - **Unfixed** (no fixed version) is accepted risk waiting on upstream: there is no version to
   move to yet. The gate ignores these by design (`ignore-unfixed`); they are listed so the risk is
   visible, not because anything here is broken.
-- **Fixable** means a patched version exists. The vulnerability gate fails on exactly these (OS
-  packages and libraries, HIGH/CRITICAL), so each one means either the last build of that image on
-  `main` failed its gate and the published image is older still, or the image has not been rebuilt
-  since the fix appeared. The fix is a bumped pin in the image's `Dockerfile.ci`, or a rebuild that
-  picks up the upstream patch release. A fixable HIGH/CRITICAL Dependabot alert is the same thing
-  for the repository's own dependencies: merge or make the bump.
+- **Fixable** means the advisory names a patched version. The vulnerability gate blocks a build
+  that *adds* one of these (OS packages and libraries, HIGH/CRITICAL); one the published image
+  already carries is **known upstream** and ships until upstream fixes it, so most of these are
+  inherited from a runtime image or a package vendored inside another (pip's urllib3, npm's
+  undici) with no release that fixes them yet. They close on their own when the daily rebuild or
+  an automated bump picks up the fixed release. One that stays open after such a release exists
+  is worth a look. A fixable HIGH/CRITICAL Dependabot alert is the same thing for the repository's
+  own dependencies; Dependabot's pull request for it merges itself once green.
 - **Excepted** alerts are fixable HIGH/CRITICAL findings where the fixed version exists in no
   released artifact yet (for example a module compiled into an upstream release binary), covered by
   an unexpired entry in `.github/vuln-exceptions.json`. The gate skips exactly these, per image, id
@@ -494,13 +499,13 @@ section
   if [ "$d_total" -eq 0 ]; then
     echo "None open."
   else
-    echo "Every open alert, fixable HIGH/CRITICAL first. **fails** marks the ones that set the exit code."
+    echo "Every open alert, fixable HIGH/CRITICAL first. **fixable** marks the ones counted as fixable HIGH/CRITICAL."
     echo
-    echo "| package | ecosystem | manifest | severity | advisory | vulnerable | first patched | fails | alert |"
+    echo "| package | ecosystem | manifest | severity | advisory | vulnerable | first patched | fixable | alert |"
     echo "|---|---|---|---|---|---|---|---|---|"
     jq -r "$JQ_LIB"'
       sort_by((.gating | not), (.sev | sevrank), .pkg, .number)[]
-      | "| \(.pkg | cell) | \(.eco | cell) | \(.manifest | cell) | \(.sev) | \([.ghsa, .cve] | map(select(. != "")) | join(" / ") | cell) | \(.range | cell) | \(if .patched == "" then "—" else (.patched | cell) end) | \(if .gating then "**fails**" else "" end) | \(link) |"
+      | "| \(.pkg | cell) | \(.eco | cell) | \(.manifest | cell) | \(.sev) | \([.ghsa, .cve] | map(select(. != "")) | join(" / ") | cell) | \(.range | cell) | \(if .patched == "" then "—" else (.patched | cell) end) | \(if .gating then "**fixable**" else "" end) | \(link) |"
     ' "$tmp/depnorm.json"
   fi
 } > "$f"

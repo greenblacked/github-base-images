@@ -27,5 +27,6 @@ kept.
 | [0003](adr/0003-gates-vs-reports.md) | Security gates block only what this repo can fix (library part superseded by 0006) |
 | [0004](adr/0004-sha-pinned-actions.md) | Actions pinned by commit SHA, maintained by Dependabot with a cooldown |
 | [0005](adr/0005-new-images-current-distro-retire-at-eol.md) | New images start on the current distro; images retire at upstream end of support |
-| [0006](adr/0006-gate-on-fixable-library-vulnerabilities.md) | The vulnerability gate fails on fixable library findings too (supersedes part of 0003) |
-| [0007](adr/0007-automatic-updates.md) | Pinned tools and Dependabot updates merge themselves when safe and green; the rest wait for review |
+| [0006](adr/0006-gate-on-fixable-library-vulnerabilities.md) | The vulnerability gate fails on fixable library findings too (supersedes part of 0003; gate and alerts-report parts superseded by 0008) |
+| [0007](adr/0007-automatic-updates.md) | Pinned tools and Dependabot updates merge themselves when safe and green; the rest wait for review (merge and review parts superseded by 0008) |
+| [0008](adr/0008-self-updating.md) | Self-updating: the gate blocks only what a build adds, everything runs daily, green bot PRs merge themselves |

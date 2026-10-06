@@ -8,10 +8,11 @@
 Shared container images for running CI in GitHub Actions container jobs, published to
 `ghcr.io/greenblacked`. There are 21: language runtimes (Node.js, Python, Go, Rust, Ruby, Java,
 PHP, .NET) and four tool images (infra, cloud, security scanners, database clients). Every image is
-built for `linux/amd64` and `linux/arm64` on native runners, rebuilt weekly to pick up distribution
-security updates, blocked from publishing on fixable HIGH/CRITICAL vulnerabilities or a baked-in
-secret, and signed with keyless cosign plus a GitHub build provenance attestation. The packages are
-public, so pulling needs no credentials.
+built for `linux/amd64` and `linux/arm64` on native runners, rebuilt daily to pick up distribution
+security updates, blocked from publishing if a build adds a fixable HIGH/CRITICAL vulnerability or
+bakes in a secret, and signed with keyless cosign plus a GitHub build provenance attestation. Tool
+and base-image updates merge and publish themselves once every check is green, so the images stay
+current with nobody tending them. The packages are public, so pulling needs no credentials.
 
 The two workflow badges track **`main`**, not the latest run on any branch — so a red build badge
 means the published images are stale or broken, not that someone's pull request is failing.
@@ -47,8 +48,8 @@ In protected deployment jobs, pin by digest instead of by tag:
       image: ghcr.io/greenblacked/ci-node22@sha256:...
 ```
 
-The tag is a rolling line: the weekly rebuild moves it to a fresh digest, which is how fixes reach
-you, but it also means the same tag is different bytes from one week to the next. A digest is
+The tag is a rolling line: the daily rebuild moves it to a fresh digest, which is how fixes reach
+you, but it also means the same tag is different bytes from one day to the next. A digest is
 fixed, it can be [verified](#verifying-an-image) once and trusted after that, and because it is
 the multi-arch manifest-list digest, one pin works on both architectures. Move the pin forward on
 purpose to take the fixes.
@@ -132,14 +133,16 @@ testing an image locally.
 
 Nothing is pushed until the image has been built, smoke-tested and scanned on both architectures.
 Checks either **gate** (fail the build, nothing publishes; the two repository checks marked *merge*
-block the pull request instead) or **report** (always visible, never block a publish). A gate is reserved for problems this repository can fix; the rest is reported so
-you can see it. [ADR 0003](docs/adr/0003-gates-vs-reports.md) and
-[ADR 0006](docs/adr/0006-gate-on-fixable-library-vulnerabilities.md) record why.
+block the pull request instead) or **report** (always visible, never block a publish). A gate is
+reserved for problems this repository can fix; the rest is reported so you can see it.
+[ADR 0003](docs/adr/0003-gates-vs-reports.md),
+[ADR 0006](docs/adr/0006-gate-on-fixable-library-vulnerabilities.md) and
+[ADR 0008](docs/adr/0008-self-updating.md) record why.
 
 | Check | Kind | What it means for you |
 |---|---|---|
 | Smoke test (`test.sh`) | gate | Every promised tool is present, TLS verification works, nothing project-specific is baked in |
-| Vulnerability gate | gate | No **fixable** HIGH/CRITICAL finding, in OS packages *or* libraries and binaries |
+| Vulnerability gate | gate | The build adds no **fixable** HIGH/CRITICAL finding, in OS packages *or* libraries and binaries, that the image published before it did not already have |
 | Secret gate | gate | No credential baked into the image, at any severity |
 | Mirror integrity | gate | The base was copied by digest from upstream and verified before anything was built on it |
 | Both platforms | gate | The published index contains `linux/amd64` and `linux/arm64` |
@@ -149,13 +152,18 @@ you can see it. [ADR 0003](docs/adr/0003-gates-vs-reports.md) and
 | Full scan reports, SBOM | report | Every severity, unfixed findings, licenses, Dockerfile lint, a CycloneDX SBOM per architecture |
 | Security tab (Trivy, OSV) | report | Unfixed HIGH/CRITICAL findings: the accepted risk, browsable over time |
 | Workflow audits, history scan, Scorecard | report | zizmor, CodeQL, gitleaks over git history, OpenSSF Scorecard |
-| Alerts report | report | One summary of every open alert; runs after publishing, so its run goes red when a fix is waiting but it never blocks a publish |
+| Alerts report | report | One summary of every open alert, daily and after every publish; open fixable alerts are a warning, never a failure |
 | Pin drift | report | A tracking issue when a pinned tool falls behind its vendor |
 
-Unfixed vulnerabilities do not gate: red always means there is a version to move to. The one way
-past the vulnerability gate is an expiring, per-image, per-CVE entry in
-`.github/vuln-exceptions.json`, for a fix no released artifact contains yet, lasting at most 90
-days. The detail on every row is in [docs/security.md](docs/security.md).
+**Known upstream vulnerabilities ship until upstream fixes them.** A fixable finding the published
+image already carries (pip's vendored urllib3, npm's bundled undici, a library inside the Azure
+CLI, none of them fixed by any release yet) does not hold back a rebuild. Holding it back would
+only withhold the other fixes that rebuild carries. Each one is listed in the gate's summary as
+*known upstream* and in the alerts report, and goes away with the rebuild or update that picks up
+the fixed release. Unfixed vulnerabilities never gate. A finding a build adds can only get past the
+gate through an expiring, per-image, per-CVE entry in `.github/vuln-exceptions.json`, for a fix no
+released artifact contains yet, lasting at most 90 days. The detail on every row is in
+[docs/security.md](docs/security.md).
 
 ## Verifying an image
 
@@ -192,8 +200,9 @@ to every index.
   change, a tool added or removed. `ci-go` and `ci-rust` also move to each new toolchain minor.
 - **`latest`** exists for testing. Never use it in a protected deployment job.
 - **`<commit-sha>`** identifies the exact build.
-- **Rebuilds** happen weekly, on every change to an image on `main`, and on demand. Only the
-  current rolling tag is supported: older digests are never patched in place.
+- **Rebuilds** happen daily, on every change to an image on `main`, after every automated update
+  merges, and on demand. Only the current rolling tag is supported: older digests are never
+  patched in place.
 - **`digests.json`** in every publish run lists the digest for each image it built.
 - **A retired or renamed image keeps its package**, pullable but no longer rebuilt or scanned, so
   move off it.
@@ -208,11 +217,11 @@ kept from reusing a stale cache, the mirrored bases, and which images each run b
 - [docs/security.md](docs/security.md): the scans and gates, vulnerability exceptions, verifying
   signatures, attestations, repository checks, required checks, the alerts report.
 - [docs/pipeline.md](docs/pipeline.md): mirrored bases, PR validation, which images a run builds,
-  architectures, tags and rebuilds, `digests.json`, pin drift.
+  architectures, tags and rebuilds, `digests.json`, pin drift, automatic updates.
 - [Architecture decision records](docs/adr/README.md): why it is built this way — why upstream
   bases are mirrored, why the vulnerability gate blocks only fixable findings (and why that now
-  includes libraries), why builds are native rather than emulated, and why every action is
-  SHA-pinned.
+  includes libraries, and only those a build adds), why builds are native rather than emulated,
+  why every action is SHA-pinned, and how the repository updates itself.
 
 ## Contributing and reporting problems
 

@@ -7,7 +7,7 @@
 # without ever touching a Dockerfile.
 #
 # Separate file so a finding here can never block an image build, and so it
-# still runs on weeks when no image directory changed (build-and-push.yml is
+# still runs on days when no image directory changed (build-and-push.yml is
 # path-filtered; this is not).
 name: Security
 
@@ -17,8 +17,11 @@ on:
   pull_request:
     branches: [main]
   schedule:
-    # Offset from the image rebuild so the two do not contend for runners.
-    - cron: '41 5 * * 1'
+    # Daily, like the image rebuild (docs/adr/0008-self-updating.md), and
+    # offset from it so the two do not contend for runners. A dispatch on
+    # main runs it too: merge-bot-prs.yml dispatches it after a merge, since a
+    # merge made with the workflow token starts no push run.
+    - cron: '41 5 * * *'
   workflow_dispatch:
 
 concurrency:
@@ -143,9 +146,10 @@ jobs:
   # on any other event it errors unless they are given.
   #
   # The dispatch case exists for the automated bump PRs (pin-bump.yml,
-  # docs/adr/0007-automatic-updates.md). They are pushed with the workflow
-  # token, which triggers no pull_request run, so their checks come from a
-  # workflow_dispatch on the branch instead. A job whose `if:` is false still
+  # docs/adr/0007-automatic-updates.md), and for a Dependabot branch that
+  # merge-bot-prs.yml brought up to date with main (docs/adr/0008). Both are
+  # pushed with the workflow token, which triggers no pull_request run, so
+  # their checks come from a workflow_dispatch on the branch instead. A job whose `if:` is false still
   # reports its check -- as skipped, which a required check treats as passing
   # -- so without this the required "Dependency review" would go green on
   # every such PR without having looked at it. On dispatch the job compares

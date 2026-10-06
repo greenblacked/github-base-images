@@ -1,6 +1,10 @@
 # 0007 — Automatic updates: bots propose, CI decides, a human reviews what CI cannot
 
-**Status:** accepted
+**Status:** accepted. Partially superseded by [0008](0008-self-updating.md): updates are no
+longer merged by GitHub auto-merge but by `merge-bot-prs.yml`, which merges every green automated
+PR (`review` and majors included; `needs-review` is information only); merged updates publish
+straight away; everything runs daily; and a dispatched build covers only the images a branch
+changes. How bumps are made, classified and checksummed below still holds.
 
 ## Decision
 

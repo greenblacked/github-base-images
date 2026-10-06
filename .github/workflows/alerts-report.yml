@@ -10,12 +10,25 @@
 # sit in a shared base, and which categories belong to images that no longer
 # exist.
 #
-# Unlike pin-drift.yml and published-audit.yml, this one FAILS on a finding:
-# a fixable HIGH/CRITICAL alert is exactly what the vulnerability gate exists
-# to keep out of a published image (docs/adr/0006), so one being open is a
-# broken promise, not a drift report. Unfixed findings never fail it, and
-# neither does one under an active entry in .github/vuln-exceptions.json,
-# which the gate skips too; the report lists those in their own section.
+# Open fixable alerts are a WARNING, not a failure (docs/adr/0008). Under
+# docs/adr/0006 this job failed on any open fixable HIGH/CRITICAL alert, on
+# the reasoning that the gate kept those out of every published image. Since
+# 0008 the gate blocks only what a build adds, and a finding inherited from
+# upstream -- urllib3 vendored in pip, undici bundled in npm, PyJWT inside the
+# Azure CLI, none fixed by any release -- ships until upstream fixes it. Such
+# an alert is open by design, can stay open for weeks, and nothing in this
+# repository can close it; failing on it would keep `main` red until then and
+# teach everyone to ignore red. So the report lists every one, the run shows
+# a warning with the count, and the job stays green. Unfixed findings and
+# those under an active entry in .github/vuln-exceptions.json are listed in
+# their own sections, as before.
+#
+# What still FAILS the job is a report that could not be trusted: an API call
+# that failed, Dependabot alerts switched off, input that does not parse, or
+# an alert whose fixability the script cannot read. None of those is a
+# routine state -- each means the fetch or the parser is broken -- and a
+# report that silently said "nothing open" because it could not look is the
+# failure this job exists to avoid.
 #
 # GitHub's own secret-scanning alerts are deliberately not fetched: no
 # GITHUB_TOKEN permission grants that API, and this repository adds no PAT or
@@ -29,16 +42,16 @@ on:
   workflow_call:
   workflow_dispatch:
   schedule:
-    # Tuesdays 08:23 UTC: after the Monday rebuild (04:17), security.yml
-    # (05:41) and pin-drift (07:41), and after the Tuesday published-image
-    # audit (06:30), so it reads settled state and contends with none of them.
-    # Independent of build-and-push.yml on purpose: a week with no publish
-    # still gets a report, and a new advisory against an unchanged image or
-    # dependency still gets seen.
+    # Daily 08:23 UTC: after the rebuild (04:17), security.yml (05:41) and
+    # pin-drift (07:41), and after Tuesday's published-image audit (06:30),
+    # so it reads settled state and contends with none of them. Independent
+    # of build-and-push.yml on purpose: a day with no publish still gets a
+    # report, and a new advisory against an unchanged image or dependency
+    # still gets seen.
     #
     # GitHub disables scheduled workflows after 60 days without repository
     # activity, silently. If the last run here is old, trigger it manually.
-    - cron: '23 8 * * 2'
+    - cron: '23 8 * * *'
 
 # No workflow-level `concurrency:`. Inside a called workflow, `github.workflow`
 # is the CALLER's name, so the usual `${{ github.workflow }}-${{ github.ref }}`
@@ -118,14 +131,15 @@ jobs:
           fi
 
       # 0 clean, 3 fixable HIGH/CRITICAL alerts open (listed in the report),
-      # anything else a report that could not be trusted. A fixable alert
-      # covered by an unexpired entry in .github/vuln-exceptions.json -- the
-      # same list the vulnerability gate skips -- is listed as excepted and
-      # does not count; an expired entry excuses nothing. The script writes
-      # the step summary itself, so a red run explains itself on its summary
-      # page. No pipe on the script's line: the default shell is `bash -e
-      # {0}`, errexit without pipefail, and `script | tee` would report tee's
-      # exit status instead of the script's.
+      # anything else a report that could not be trusted. 3 is a warning and
+      # the step passes (see the header); everything but 0 and 3 fails it. A
+      # fixable alert covered by an unexpired entry in
+      # .github/vuln-exceptions.json is listed as excepted and does not
+      # count; an expired entry excuses nothing. The script writes the step
+      # summary itself, so the run explains itself on its summary page. No
+      # pipe on the script's line: the default shell is `bash -e {0}`,
+      # errexit without pipefail, and `script | tee` would report tee's exit
+      # status instead of the script's.
       - name: Build report
         run: |
           rc=0
@@ -136,8 +150,7 @@ jobs:
           case "$rc" in
             0) ;;
             3)
-              echo "::error::fixable HIGH/CRITICAL alerts are open -- $(cat summary.txt). They are listed in this run's summary and in report.md (artifact code-scanning-report)."
-              exit 1 ;;
+              echo "::warning::fixable HIGH/CRITICAL alerts are open -- $(cat summary.txt). Most are known upstream: published images inherit them and no release fixes them yet. They are listed in this run's summary and in report.md (artifact code-scanning-report)." ;;
             *)
               echo "::error::alerts-report.sh exited $rc -- no trustworthy report"
               exit 1 ;;

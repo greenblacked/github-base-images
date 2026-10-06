@@ -6,13 +6,19 @@
 # entry to images.json and one to dependabot.yml.
 #
 # Which images run:
-#   - push / pull_request  -> only the images whose directories changed, unless
-#     the pipeline itself (this file, build-image.yml, images.json, or the two
-#     scripts build-image.yml runs) changed, in which case everything runs. A
-#     one-line fix to ci-ruby34 no longer rebuilds every image and moves
-#     `latest` on all of them.
-#   - schedule / dispatch  -> everything, always. The weekly rebuild is the
-#     security-update mechanism and must never be narrowed.
+#   - push / pull_request, and a dispatch on any branch but main -> only the
+#     images whose directories changed (against main, for a pull request or a
+#     dispatched branch), unless the pipeline itself (this file,
+#     build-image.yml, images.json, or the three scripts build-image.yml runs)
+#     changed, in which case everything runs. A one-line fix to ci-ruby34
+#     does not rebuild every image and move `latest` on all of them, and a
+#     bump PR whose CI is dispatched (pin-bump.yml, merge-bot-prs.yml) builds
+#     the images it touches, not all twenty-one.
+#   - schedule, and a dispatch on main -> everything, always. The daily
+#     rebuild is the security-update mechanism and must never be narrowed. A
+#     dispatch on main publishes like the schedule does: merge-bot-prs.yml
+#     dispatches this workflow on main after it merges a pull request,
+#     because a merge made with the workflow token starts no push run.
 #
 # All actions are pinned by commit SHA with the version in a trailing comment;
 # Dependabot maintains the pins, and zizmor's default hash-pin policy enforces
@@ -31,6 +37,7 @@ on:
       - '.github/vuln-exceptions.json'
       - 'scripts/check-published.sh'
       - 'scripts/osv-scan-sbom.sh'
+      - 'scripts/vuln-gate.sh'
   # PRs run the full lint -> build -> smoke test -> scan pipeline, but every
   # step that writes to the registry is skipped: PR builds use the upstream
   # base instead of the mirror, and nothing is pushed or tagged. A green PR run
@@ -44,13 +51,18 @@ on:
   pull_request:
     branches: [main]
   schedule:
-    # Weekly rebuild: re-mirrors the upstream bases, picks up security updates,
-    # and re-runs the vulnerability scan.
+    # Daily rebuild: re-mirrors the upstream bases, picks up security updates,
+    # and re-runs the vulnerability scan (docs/adr/0008-self-updating.md).
+    # Daily, not weekly, because a fix should reach consumers the day it is
+    # installable, and because the build cache is scoped per UTC day anyway
+    # (build-image.yml), so a daily rebuild is the cold build that refreshes
+    # the apt layer. 04:17 UTC: off the hour, and before the other scheduled
+    # workflows here, which read what it published.
     #
     # GitHub disables scheduled workflows after 60 days without repository
     # activity, and does so silently -- the rebuild just stops and the image goes
     # stale. If the last run is old, trigger this workflow manually to re-enable.
-    - cron: '17 4 * * 1'
+    - cron: '17 4 * * *'
   workflow_dispatch:
 
 concurrency:
@@ -92,6 +104,7 @@ jobs:
         id: select
         env:
           EVENT: ${{ github.event_name }}
+          REF: ${{ github.ref }}
           BEFORE: ${{ github.event.before }}
           PR_BASE: ${{ github.event.pull_request.base.sha }}
         run: |
@@ -105,11 +118,27 @@ jobs:
           }
 
           case "$EVENT" in
-            schedule|workflow_dispatch) select_all "$EVENT is always a full rebuild" ;;
+            schedule) select_all "schedule is always a full rebuild" ;;
+            workflow_dispatch)
+              if [ "$REF" = refs/heads/main ]; then
+                select_all "workflow_dispatch on main is always a full rebuild"
+              fi ;;
           esac
 
+          # A dispatch anywhere else is how the automated update PRs get their
+          # checks (pin-bump.yml, merge-bot-prs.yml: a push made with the
+          # workflow token starts no pull_request run). It used to rebuild all
+          # twenty-one images on both architectures for a bump that touched
+          # one, and an unrelated image going red made the bump red. So it is
+          # planned exactly like a pull request: the diff from where the
+          # branch left main (three dots: against the merge base) to its head,
+          # through the same rules below. fetch-depth: 0 above fetched every
+          # branch, so origin/main is there; if the diff fails anyway, the
+          # fallback is the full list, as everywhere else.
           if [ "$EVENT" = pull_request ]; then
             range="$PR_BASE...HEAD"
+          elif [ "$EVENT" = workflow_dispatch ]; then
+            range="origin/main...HEAD"
           else
             # A force-push or branch creation has no usable before-SHA.
             case "$BEFORE" in ''|0000000000000000000000000000000000000000)
@@ -122,9 +151,9 @@ jobs:
             select_all "diff against $range failed"
           fi
 
-          # A change to the pipeline itself invalidates every image. The two
+          # A change to the pipeline itself invalidates every image. The three
           # scripts count as pipeline: build-image.yml runs them on every image.
-          if grep -qE '^(\.github/(workflows/(build-and-push|build-image)\.yml|images\.json)|scripts/(check-published|osv-scan-sbom)\.sh)$' <<<"$changed"; then
+          if grep -qE '^(\.github/(workflows/(build-and-push|build-image)\.yml|images\.json)|scripts/(check-published|osv-scan-sbom|vuln-gate)\.sh)$' <<<"$changed"; then
             select_all "pipeline definition changed"
           fi
 
@@ -133,7 +162,7 @@ jobs:
           # An exception change re-runs the gate of exactly the images whose
           # entries differ, added or removed or edited, so a PR that adds or
           # renews one shows that image's gate going green (or not), and the
-          # merge publishes it instead of leaving it for the weekly rebuild.
+          # merge publishes it instead of leaving it for the daily rebuild.
           # Every other image is untouched by the change, and rebuilding all of
           # them would make each renewal a full republish. The file not existing
           # at the base counts as `[]`; anything that cannot be compared is a
@@ -156,10 +185,12 @@ jobs:
 
           if [ "$(jq 'length' <<<"$subset")" -eq 0 ]; then
             # A PR is no longer path-filtered (see `on:`), so a diff with no
-            # image in it is normal there: build nothing. On push the path
-            # filter guarantees an image or pipeline file changed, so reaching
-            # this is unexpected and rebuilds everything, as before.
-            if [ "$EVENT" = pull_request ]; then
+            # image in it is normal there: build nothing. The same holds for a
+            # dispatched branch (a bump of a lint engine, say): lint runs,
+            # `CI result` reports, nothing is built. On push the path filter
+            # guarantees an image or pipeline file changed, so reaching this
+            # is unexpected and rebuilds everything, as before.
+            if [ "$EVENT" = pull_request ] || [ "$EVENT" = workflow_dispatch ]; then
               echo "images=[]" >> "$GITHUB_OUTPUT"
               echo "### Plan: no images (no image directory or pipeline file in the diff)" >> "$GITHUB_STEP_SUMMARY"
               exit 0
@@ -272,7 +303,7 @@ jobs:
       # This is deliberately scoped to the mirror boundary and NOT to the
       # Dockerfiles' `ARG BASE_IMAGE` defaults (python:3.13, node:22, golang:1,
       # ...). Those defaults are load-bearing exactly because they float: it is
-      # how Dependabot proposes base bumps and how the weekly rebuild picks up
+      # how Dependabot proposes base bumps and how the daily rebuild picks up
       # upstream security patches (see docs/adr/0001-mirror-upstream-bases.md).
       # Digest-pinning them would freeze security updates, not improve
       # integrity. The mirror is where bytes actually enter this pipeline from
@@ -544,7 +575,14 @@ jobs:
   # that: on push, a diff with no image directory in it falls through to the
   # plan's full-rebuild fallback. (PRs are not path-filtered and build nothing
   # for such a diff; lint still covers the change.) alerts-report.yml has its own workflow_dispatch to
-  # run a change right away, and its own weekly schedule.
+  # run a change right away, and its own daily schedule.
+  #
+  # It cannot turn this run red over open alerts: a fixable alert that is
+  # already published (known upstream, docs/adr/0008) is a warning in the
+  # report, not a failure. It still fails when it could not read the alerts
+  # at all, which is not something that happens routinely. It never runs on
+  # a pull request or on a dispatch from another branch, so it is never part
+  # of the `CI result` a pull request is merged on.
   alerts:
     needs: [image, digests]
     if: ${{ !cancelled() && needs.image.result != 'skipped' && github.event_name != 'pull_request' && github.ref == 'refs/heads/main' }}

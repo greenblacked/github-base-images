@@ -1,0 +1,96 @@
+# Merge the automated update pull requests -- Dependabot's and pin-bump's --
+# once all four required checks have passed on their head commit, then
+# publish (docs/adr/0008-self-updating.md). The work is in
+# scripts/merge-bot-prs.sh, tested offline by scripts/lint.sh.
+#
+# Why our own workflow rather than GitHub auto-merge: auto-merge waits only
+# for what the `main` ruleset requires, so with the ruleset inactive it would
+# merge at once, checks or not; and it needs "Allow auto-merge", a setting no
+# workflow can turn on. This reads the four checks itself, on the exact head
+# SHA, and merges with --match-head-commit, so it depends on neither.
+#
+# The token is the workflow's own GITHUB_TOKEN; no PAT, no app. Its catch: a
+# merge made with it starts no push workflow. So after merging, the script
+# dispatches Build and Push to GHCR and Security on main, which is what
+# publishes the update (a dispatch on main is a full, publishing rebuild).
+#
+# Stopping it: label a pull request `hold` and it is never merged. To stop
+# everything, disable this workflow (Actions -> Merge bot -> Disable).
+name: Merge bot
+
+on:
+  # When a check that decides a merge has just finished, look at once rather
+  # than waiting for the next hour. Both names are those workflows' `name:`.
+  #
+  # workflow_run runs THIS file from the default branch, with a write token,
+  # whatever branch the finished run was on -- which is why zizmor flags it.
+  # It is safe here because nothing from the triggering run is used: no
+  # artifact, no event field, no checkout of its ref. The job checks out
+  # main and reads PR state through the API; the PR's code is never fetched
+  # or run.
+  workflow_run: # zizmor: ignore[dangerous-triggers]
+    workflows: ["Build and Push to GHCR", "Security"]
+    types: [completed]
+  schedule:
+    # Hourly backstop, off the hour, for anything workflow_run missed (a run
+    # that finished while another merge-bot run held the concurrency group,
+    # a chain workflow_run does not follow). GitHub disables scheduled
+    # workflows after 60 days without repository activity; this repository
+    # merges something most days, which counts.
+    - cron: '37 * * * *'
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: Print the merges, comments, branch updates and dispatches instead of making them
+        type: boolean
+        default: false
+
+# One run at a time, never cancelled half-way: two runs could otherwise both
+# decide to merge, or both refresh the same branch. A newer trigger waits.
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
+
+permissions: {}
+
+jobs:
+  merge:
+    name: Merge green bot pull requests
+    # From main only. workflow_run and schedule always run on the default
+    # branch; a dispatch from another branch would hand this token to that
+    # branch's unreviewed copy of the script, so it does nothing.
+    #
+    # And not for a workflow_run whose run Dependabot started (its PR's CI).
+    # GitHub may give a run descended from a Dependabot event a read-only
+    # token, and every merge would then fail; the hourly schedule merges
+    # those PRs instead, within the hour. This only ever skips a run, so a
+    # spoofed actor could at most delay a merge, never cause one.
+    if: >-
+      github.ref == 'refs/heads/main' &&
+      (github.event_name != 'workflow_run' || github.event.workflow_run.actor.login != 'dependabot[bot]')
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: write       # merge pull requests; update a Dependabot branch with main
+      pull-requests: write  # read pull requests and their comments; post the refresh marker
+      actions: write        # `gh workflow run`: CI on a refreshed branch, publish on main
+      checks: read          # the four required checks on each head commit
+    steps:
+      # main's copy of the script, at the commit this run was started for.
+      # Nothing here runs a git operation after checkout, so credentials are
+      # not left in .git/config (zizmor: artipacked).
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # No pipe on the script's line: the default shell is `bash -e {0}`,
+      # errexit without pipefail. The script writes the job summary itself
+      # and annotates red and unreadable PRs as warnings; it exits 1 only when
+      # something it tried to do failed.
+      - name: Merge, refresh, publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+          DRY_RUN: ${{ inputs.dry_run && '1' || '' }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: ./scripts/merge-bot-prs.sh
