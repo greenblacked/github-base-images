@@ -38,7 +38,8 @@ version: 2
 # would be noticed. `dependency-name: "*"` because each directory has
 # exactly one FROM, and Dependabot names registry images
 # (mcr.microsoft.com/dotnet/sdk) in a way not worth depending on here.
-# A new runtime line is a new image directory (CONTRIBUTING.md), never a bump.
+# A new runtime line is a new image directory, never a bump: the daily image
+# lifecycle workflow adds one (docs/adr/0009-image-lifecycle.md).
 
 updates:
   # Keeps the action pins in .github/workflows current (docker/*, actions/*,
@@ -71,60 +72,36 @@ updates:
         patterns:
           - "github/codeql-action*"
 
-  # Dependabot reads the default of the `ARG BASE_IMAGE` each Dockerfile
-  # builds FROM (the real upstream ref, not the mirror). As the header says,
-  # on these tags it finds nothing it is allowed to propose; the entries are
-  # the safety net, and base images move with the daily rebuild.
+  # Docker: one entry per image, every one the same (scripts/image-lifecycle.sh
+  # adds and removes them with the image, and `check` there -- run by
+  # scripts/lint.sh -- fails if an image has no entry, an entry has no image,
+  # or an entry differs from the others). No per-image comments, so adding or
+  # retiring an image never strands one.
   #
-  # Note this does NOT track the pinned tool versions in ci-tools/Dockerfile.ci
-  # (Terraform, kubectl, AWS CLI, Docker client) -- those are plain ARGs with no
-  # ecosystem behind them. .github/workflows/pin-bump.yml moves them instead.
-  # node:22-bookworm-slim: the only same-shape tags are other Node majors
-  # (24-, 25-bookworm-slim), all ignored. Node 22's own releases arrive
-  # through the daily rebuild. Same for ci-node24.
+  # Dependabot reads the default of the `ARG BASE_IMAGE` each Dockerfile builds
+  # FROM (the real upstream ref, not the mirror). As the header says, on these
+  # tags it finds nothing it is allowed to propose; the entries are the safety
+  # net, and base images move with the daily rebuild. What each shape could
+  # propose, all ignored:
+  #   - python:3.13-slim-bookworm, ruby:3.4-slim-bookworm, php:8.4-cli-bookworm:
+  #     another runtime line (3.14, 4.0, 8.5), a semver-minor or -major;
+  #   - node:22-bookworm-slim: another Node major (24, 25);
+  #   - eclipse-temurin:21-jdk-noble, mcr.microsoft.com/dotnet/sdk:9.0-bookworm-slim:
+  #     another major (25; 10.0). The .NET bases live on mcr.microsoft.com,
+  #     which Dependabot reads like Docker Hub;
+  #   - golang:1-bookworm, rust:1-bookworm: `1` IS the line -- these two track
+  #     current stable on purpose (docs/images.md, "Go and Rust") -- and the
+  #     only same-shape tag is 2-bookworm, a major;
+  #   - debian:bookworm-slim (the tool images): only a codename, which
+  #     Dependabot does not read as a version, so it proposes nothing, trixie
+  #     included. The ignore is there so that stays true if it ever starts to.
+  #
+  # Nor does this track the pinned tool versions (Terraform, kubectl, the AWS
+  # CLI, the Docker client, gcloud, Composer, npm, Playwright, ...): those are
+  # plain ARGs with no ecosystem behind them, and .github/workflows/pin-bump.yml
+  # moves them instead.
   - package-ecosystem: docker
-    directory: /ci-node22
-    schedule:
-      interval: daily
-    cooldown:
-      default-days: 7
-    ignore:
-      - dependency-name: "*"
-        update-types: ["version-update:semver-major", "version-update:semver-minor"]
-
-  # python:3.13-slim-bookworm: the only same-shape tags are other Python
-  # lines (3.14-, 3.15-slim-bookworm), semver-minors, ignored. Same for
-  # ci-python312 and ci-python314.
-  - package-ecosystem: docker
-    directory: /ci-python313
-    schedule:
-      interval: daily
-    cooldown:
-      default-days: 7
-    ignore:
-      - dependency-name: "*"
-        update-types: ["version-update:semver-major", "version-update:semver-minor"]
-
-  # golang:1-bookworm (and rust:1-bookworm below): `1` IS the line -- these
-  # two images track current stable on purpose (docs/images.md, "Go and
-  # Rust"), and the floating tag moves to each new toolchain minor with the
-  # daily rebuild. The only same-shape tag is 2-bookworm, a major, ignored.
-  - package-ecosystem: docker
-    directory: /ci-go
-    schedule:
-      interval: daily
-    cooldown:
-      default-days: 7
-    ignore:
-      - dependency-name: "*"
-        update-types: ["version-update:semver-major", "version-update:semver-minor"]
-
-  # debian:bookworm-slim (ci-tools, ci-cloud, ci-security, ci-db): no version
-  # number at all, only a codename, which Dependabot does not read as one, so
-  # it proposes nothing, trixie included. The ignore is there so that stays
-  # true if it ever starts to.
-  - package-ecosystem: docker
-    directory: /ci-tools
+    directory: /ci-cloud
     schedule:
       interval: daily
     cooldown:
@@ -134,85 +111,7 @@ updates:
         update-types: ["version-update:semver-major", "version-update:semver-minor"]
 
   - package-ecosystem: docker
-    directory: /ci-rust
-    schedule:
-      interval: daily
-    cooldown:
-      default-days: 7
-    ignore:
-      - dependency-name: "*"
-        update-types: ["version-update:semver-major", "version-update:semver-minor"]
-
-  # ruby:3.4-slim-bookworm: 3.5 would be a minor, 4.0 a major; both ignored.
-  # Same for ci-ruby40, and for php 8.4 -> 8.5 in ci-php84.
-  - package-ecosystem: docker
-    directory: /ci-ruby34
-    schedule:
-      interval: daily
-    cooldown:
-      default-days: 7
-    ignore:
-      - dependency-name: "*"
-        update-types: ["version-update:semver-major", "version-update:semver-minor"]
-
-  # eclipse-temurin:21-jdk-noble: 25 would be a major. Same for 17 and 25.
-  - package-ecosystem: docker
-    directory: /ci-java21
-    schedule:
-      interval: daily
-    cooldown:
-      default-days: 7
-    ignore:
-      - dependency-name: "*"
-        update-types: ["version-update:semver-major", "version-update:semver-minor"]
-
-  # Does not track COMPOSER_VERSION -- that is a plain ARG, like the ci-tools
-  # pins, which pin-bump.yml moves.
-  - package-ecosystem: docker
-    directory: /ci-php84
-    schedule:
-      interval: daily
-    cooldown:
-      default-days: 7
-    ignore:
-      - dependency-name: "*"
-        update-types: ["version-update:semver-major", "version-update:semver-minor"]
-
-  # Base lives on mcr.microsoft.com; Dependabot handles non-Hub registries.
-  # mcr.microsoft.com/dotnet/sdk:9.0-bookworm-slim: 10.0 would be a major.
-  # Same for 8.0 and 10.0.
-  - package-ecosystem: docker
-    directory: /ci-dotnet9
-    schedule:
-      interval: daily
-    cooldown:
-      default-days: 7
-    ignore:
-      - dependency-name: "*"
-        update-types: ["version-update:semver-major", "version-update:semver-minor"]
-
-  - package-ecosystem: docker
-    directory: /ci-node24
-    schedule:
-      interval: daily
-    cooldown:
-      default-days: 7
-    ignore:
-      - dependency-name: "*"
-        update-types: ["version-update:semver-major", "version-update:semver-minor"]
-
-  - package-ecosystem: docker
-    directory: /ci-python312
-    schedule:
-      interval: daily
-    cooldown:
-      default-days: 7
-    ignore:
-      - dependency-name: "*"
-        update-types: ["version-update:semver-major", "version-update:semver-minor"]
-
-  - package-ecosystem: docker
-    directory: /ci-java17
+    directory: /ci-db
     schedule:
       interval: daily
     cooldown:
@@ -232,7 +131,7 @@ updates:
         update-types: ["version-update:semver-major", "version-update:semver-minor"]
 
   - package-ecosystem: docker
-    directory: /ci-cloud
+    directory: /ci-dotnet9
     schedule:
       interval: daily
     cooldown:
@@ -241,29 +140,38 @@ updates:
       - dependency-name: "*"
         update-types: ["version-update:semver-major", "version-update:semver-minor"]
 
-  - package-ecosystem: docker
-    directory: /ci-security
-    schedule:
-      interval: daily
-    cooldown:
-      default-days: 7
-    ignore:
-      - dependency-name: "*"
-        update-types: ["version-update:semver-major", "version-update:semver-minor"]
-
-  - package-ecosystem: docker
-    directory: /ci-db
-    schedule:
-      interval: daily
-    cooldown:
-      default-days: 7
-    ignore:
-      - dependency-name: "*"
-        update-types: ["version-update:semver-major", "version-update:semver-minor"]
-
-  # Base lives on mcr.microsoft.com; Dependabot handles non-Hub registries.
   - package-ecosystem: docker
     directory: /ci-dotnet10
+    schedule:
+      interval: daily
+    cooldown:
+      default-days: 7
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major", "version-update:semver-minor"]
+
+  - package-ecosystem: docker
+    directory: /ci-go
+    schedule:
+      interval: daily
+    cooldown:
+      default-days: 7
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major", "version-update:semver-minor"]
+
+  - package-ecosystem: docker
+    directory: /ci-java17
+    schedule:
+      interval: daily
+    cooldown:
+      default-days: 7
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major", "version-update:semver-minor"]
+
+  - package-ecosystem: docker
+    directory: /ci-java21
     schedule:
       interval: daily
     cooldown:
@@ -283,7 +191,7 @@ updates:
         update-types: ["version-update:semver-major", "version-update:semver-minor"]
 
   - package-ecosystem: docker
-    directory: /ci-python314
+    directory: /ci-node22
     schedule:
       interval: daily
     cooldown:
@@ -292,8 +200,26 @@ updates:
       - dependency-name: "*"
         update-types: ["version-update:semver-major", "version-update:semver-minor"]
 
-  # Does not track COMPOSER_VERSION -- that is a plain ARG, like the ci-tools
-  # pins, which pin-bump.yml moves.
+  - package-ecosystem: docker
+    directory: /ci-node24
+    schedule:
+      interval: daily
+    cooldown:
+      default-days: 7
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major", "version-update:semver-minor"]
+
+  - package-ecosystem: docker
+    directory: /ci-php84
+    schedule:
+      interval: daily
+    cooldown:
+      default-days: 7
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major", "version-update:semver-minor"]
+
   - package-ecosystem: docker
     directory: /ci-php85
     schedule:
@@ -305,7 +231,77 @@ updates:
         update-types: ["version-update:semver-major", "version-update:semver-minor"]
 
   - package-ecosystem: docker
+    directory: /ci-python312
+    schedule:
+      interval: daily
+    cooldown:
+      default-days: 7
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major", "version-update:semver-minor"]
+
+  - package-ecosystem: docker
+    directory: /ci-python313
+    schedule:
+      interval: daily
+    cooldown:
+      default-days: 7
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major", "version-update:semver-minor"]
+
+  - package-ecosystem: docker
+    directory: /ci-python314
+    schedule:
+      interval: daily
+    cooldown:
+      default-days: 7
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major", "version-update:semver-minor"]
+
+  - package-ecosystem: docker
+    directory: /ci-ruby34
+    schedule:
+      interval: daily
+    cooldown:
+      default-days: 7
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major", "version-update:semver-minor"]
+
+  - package-ecosystem: docker
     directory: /ci-ruby40
+    schedule:
+      interval: daily
+    cooldown:
+      default-days: 7
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major", "version-update:semver-minor"]
+
+  - package-ecosystem: docker
+    directory: /ci-rust
+    schedule:
+      interval: daily
+    cooldown:
+      default-days: 7
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major", "version-update:semver-minor"]
+
+  - package-ecosystem: docker
+    directory: /ci-security
+    schedule:
+      interval: daily
+    cooldown:
+      default-days: 7
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major", "version-update:semver-minor"]
+
+  - package-ecosystem: docker
+    directory: /ci-tools
     schedule:
       interval: daily
     cooldown:

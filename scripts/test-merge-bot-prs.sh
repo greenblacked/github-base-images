@@ -70,8 +70,11 @@ refresh_commit() { commit "$1" "$2,$3" 'github-actions[bot]' "$GHA_EMAIL" web-fl
 pr() {
   local n="$1" kind="$2" head="$3"; shift 3
   local login ref
-  if [ "$kind" = dependabot ]; then login='dependabot[bot]'; ref="dependabot/github_actions/x-$n"
-  else login='github-actions[bot]'; ref="pin-bump/tool-$n"; fi
+  case "$kind" in
+    dependabot) login='dependabot[bot]'; ref="dependabot/github_actions/x-$n" ;;
+    lifecycle)  login='github-actions[bot]'; ref="lifecycle/add-ci-x$n" ;;
+    *)          login='github-actions[bot]'; ref="pin-bump/tool-$n" ;;
+  esac
   local labels; labels=$(printf '%s\n' "$@" | jq -R . | jq -sc 'map(select(. != "") | {name: .})')
   jq --argjson n "$n" --arg l "$login" --arg r "$ref" --arg s "$head" --argjson labels "$labels" \
     '. + [{number: $n, user: {login: $l, type: "Bot"}, draft: false, labels: $labels,
@@ -130,7 +133,8 @@ marker() {
 run_bot() {
   out="$d/out"; res="$d/results.jsonl"; rc=0; rm -f "$res"
   env PATH="$work/bin:$PATH" GITHUB_REPOSITORY=o/r MERGE_BOT_GH_STUB="$stub" MERGE_BOT_RESULTS="$res" \
-    FAKE_GH_LOG="$log" MERGE_BOT_POLL_ATTEMPTS=2 MERGE_BOT_POLL_DELAY=0 GITHUB_ACTIONS=true "$@" "$bot" > "$out" 2>&1 || rc=$?
+    FAKE_GH_LOG="$log" MERGE_BOT_POLL_ATTEMPTS=2 MERGE_BOT_POLL_DELAY=0 MERGE_BOT_MERGEABLE_DELAYS="0 0 0 0" \
+    GITHUB_ACTIONS=true "$@" "$bot" > "$out" 2>&1 || rc=$?
 }
 field() { jq -r --argjson n "$1" --arg f "$2" 'select(.pr == $n) | .[$f]' "$res"; }
 expect() { # PR FIELD VALUE
@@ -582,6 +586,79 @@ files 187 .github/workflows/security.yml
 run_bot
 expect 187 status stale
 check "  nothing dispatched" no_writes
+
+echo "case 19: lifecycle/* PRs (scripts/image-lifecycle.sh): the same rules as pin-bump/*"
+scenario nineteen
+pr 191 lifecycle "$H1"                                   # green, the bot's own commit
+pr 192 lifecycle "$H2"; checks 192 failure success success success
+echo '{"behind_by":3}' > "$stub/compare-192.json"
+files 192 ci-python315/Dockerfile.ci
+pr 193 lifecycle "$H3"                                   # a maintainer amended it
+commit "$H3" "$OLDMAIN" 'github-actions[bot]' "$GHA_EMAIL" maintainer m@example.com false | jq -s . > "$stub/commits-193.json"
+pr 194 lifecycle "$H1"                                   # Dependabot's commit shape is not a lifecycle commit
+dep_commit "$H1" | jq -s . > "$stub/commits-194.json"
+pr 195 lifecycle "$H1" hold
+pr 196 lifecycle "$H1"; checks 196 success success in_progress success
+# Not candidates: a lifecycle/ branch opened by a person, or from a fork.
+jq --arg s "$H2" '. + [{number: 197, user: {login: "someone"}, labels: [], head: {ref: "lifecycle/add-ci-x197", sha: $s, repo: {full_name: "o/r"}}},
+                        {number: 198, user: {login: "github-actions[bot]"}, labels: [], head: {ref: "lifecycle/add-ci-x198", sha: $s, repo: {full_name: "fork/r"}}}]' \
+  "$stub/prs.json" > "$stub/p.tmp" && mv "$stub/p.tmp" "$stub/prs.json"
+run_bot
+check "exit 0" [ "$rc" -eq 0 ]
+expect 191 status merged
+expect 191 kind lifecycle
+check "  merged leased to its head" logged "pr merge 191 --repo o/r --squash --match-head-commit $H1"
+expect 192 status red
+check "  red: rebuilt by its own workflow, never update-branched" bash -c "jq -r 'select(.pr == 192) | .action' '$res' | grep -q 'image-lifecycle.yml rebuilds the branch' && ! grep -q 'update-branch' '$log'"
+check "  nor dispatched on" not_logged 'ref lifecycle/'
+expect 193 status skipped
+check "  a foreign committer is named" bash -c "jq -r 'select(.pr == 193) | .note' '$res' | grep -q 'committer m@example.com'"
+expect 194 status skipped
+expect 195 status held
+expect 196 status waiting
+check "a person's lifecycle/ branch, and a fork's, are not candidates" [ "$(jq -s 'map(.pr) | sort | join(",")' "$res")" = '"191,192,193,194,195,196"' ]
+check "main published once, for the one merge" [ "$(grep -c '^workflow run .* --ref main$' "$log")" -eq 2 ]
+check "only #191 merged" [ "$(grep -c '^pr merge' "$log")" -eq 1 ]
+# A conflict on a lifecycle branch: waiting, and the note names who rebuilds it.
+scenario nineteen-b
+pr 199 lifecycle "$H1"; detail 199 "$H1" 1 false
+run_bot
+expect 199 status waiting
+check "  the conflict note names image-lifecycle.yml" bash -c "jq -r 'select(.pr == 199) | .note' '$res' | grep -q 'image-lifecycle.yml'"
+
+echo "case 20: mergeability GitHub has not computed yet (null) is read again, a bounded number of times"
+scenario twenty
+# What a run that just merged something sees for every later PR: null at
+# first (main moved), then the answer.
+pr 201 pin-bump "$H1"; detail 201 "$H1" 1 null; detail 201 "$H1" 1 true '[]' pr-201.2.json
+# Null on every read: waiting. A true on a sixth read is never reached, so
+# the reads are bounded at 1 + 4 retries.
+pr 202 pin-bump "$H1"; detail 202 "$H1" 1 null
+detail 202 "$H1" 1 true '[]' pr-202.6.json
+# Null, then a conflict: waiting, with the conflict note.
+pr 203 lifecycle "$H1"; detail 203 "$H1" 1 null; detail 203 "$H1" 1 false '[]' pr-203.2.json
+# Null, then the head moved: the checks were read on the old head.
+pr 204 dependabot "$H1"; detail 204 "$H1" 1 null; detail 204 "$H2" 1 true '[]' pr-204.2.json
+# Null, then true, but labelled hold by the time of the merge: the re-check
+# right before the merge still stops it.
+pr 205 pin-bump "$H1"; detail 205 "$H1" 1 null; detail 205 "$H1" 1 true '[]' pr-205.2.json
+detail 205 "$H1" 1 true '[{"name":"hold"}]' pr-205.3.json
+run_bot
+check "exit 0" [ "$rc" -eq 0 ]
+expect 201 status merged
+check "  null then true: merged, leased to the head" logged "pr merge 201 --repo o/r --squash --match-head-commit $H1"
+expect 202 status waiting
+check "  null throughout: waiting, and the note says how many reads" bash -c "jq -r 'select(.pr == 202) | .note' '$res' | grep -q 'still null after 5 read(s)'"
+check "  never merged" not_logged '^pr merge 202 '
+expect 203 status waiting
+check "  null then false: waiting on the conflict" bash -c "jq -r 'select(.pr == 203) | .action' '$res' | grep -q 'conflicts with main'"
+expect 204 status waiting
+check "  null then a new head: not merged" bash -c "jq -r 'select(.pr == 204) | .action' '$res' | grep -q 'new commits' && ! grep -q '^pr merge 204 ' '$log'"
+expect 205 status held
+check "  null, then true, then hold: not merged" not_logged '^pr merge 205 '
+check "only #201 merged, and main published once" bash -c "[ \"\$(grep -c '^pr merge' '$log')\" -eq 1 ] && [ \"\$(grep -c '^workflow run .* --ref main\$' '$log')\" -eq 2 ]"
+# The waits are real waits by default: 2, 4, 8 and 16 seconds.
+check "the default backoff is about 30s" grep -qF -- "mergeable_delays=\${MERGE_BOT_MERGEABLE_DELAYS:-2 4 8 16}" "$bot"
 
 echo
 echo "$pass passed, $failures failed"

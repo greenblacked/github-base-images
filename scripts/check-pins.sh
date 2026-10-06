@@ -91,10 +91,17 @@ trap 'rm -rf "$tmp"' EXIT INT TERM
 # The pinned value is read from the file rather than duplicated here, so this
 # script cannot disagree with what actually builds.
 #
-# kubectl and composer are each pinned in two Dockerfiles (ci-tools/ci-cloud,
-# ci-php84/ci-php85) but listed once: scripts/lint.sh fails if the copies ever
-# differ, so checking one checks both. npm and playwright are likewise listed
-# once for ci-node22 and ci-node24; scripts/bump-pins.sh moves both copies.
+# kubectl is pinned in two Dockerfiles (ci-tools, ci-cloud) but listed once,
+# and so are composer (every PHP image), npm and playwright (every Node image):
+# scripts/lint.sh fails if the copies of a pin ever differ, so checking one
+# checks all, and scripts/bump-pins.sh moves them all.
+#
+# A file written `*/Dockerfile.ci` is the first image in .github/images.json
+# whose Dockerfile.ci pins the key, so no image name is spelled here for the
+# pins a runtime's images share: an image the lifecycle workflow adds or
+# retires (scripts/image-lifecycle.sh) needs no change here. When no image
+# pins the key any more (ci-ruby40's json replacement, once it retires), the
+# tool is skipped, not reported unresolved.
 #
 # gitleaks is the exception, listed twice: the copy security.yml runs over the
 # git history is a separate pin that nothing forces to agree with the image's,
@@ -105,8 +112,8 @@ kubectl    | ci-tools/Dockerfile.ci               | KUBECTL_VERSION    | k8s    
 awscli     | ci-tools/Dockerfile.ci               | AWSCLI_VERSION     | githubtag | aws/aws-cli
 docker     | ci-tools/Dockerfile.ci               | DOCKER_VERSION     | dockerstatic | -
 gcloud     | ci-cloud/Dockerfile.ci               | GCLOUD_VERSION     | gcs       | -
-playwright | ci-node22/Dockerfile.ci              | PLAYWRIGHT_VERSION | npm       | playwright
-composer   | ci-php84/Dockerfile.ci               | COMPOSER_VERSION   | github    | composer/composer
+playwright | */Dockerfile.ci                      | PLAYWRIGHT_VERSION | npm       | playwright
+composer   | */Dockerfile.ci                      | COMPOSER_VERSION   | github    | composer/composer
 trivy      | ci-security/Dockerfile.ci            | TRIVY_VERSION      | github    | aquasecurity/trivy
 syft       | ci-security/Dockerfile.ci            | SYFT_VERSION       | github    | anchore/syft
 grype      | ci-security/Dockerfile.ci            | GRYPE_VERSION      | github    | anchore/grype
@@ -114,8 +121,8 @@ cosign     | ci-security/Dockerfile.ci            | COSIGN_VERSION     | github 
 gitleaks   | ci-security/Dockerfile.ci            | GITLEAKS_VERSION   | github    | gitleaks/gitleaks
 migrate    | ci-db/Dockerfile.ci                  | MIGRATE_VERSION    | github    | golang-migrate/migrate
 osv-scanner | .github/workflows/build-image.yml   | OSV_SCANNER_VERSION | github   | google/osv-scanner
-npm        | ci-node22/Dockerfile.ci              | NPM_VERSION        | npm       | npm
-json       | ci-ruby40/Dockerfile.ci              | JSON_VERSION       | rubygems  | json
+npm        | */Dockerfile.ci                      | NPM_VERSION        | npm       | npm
+json       | */Dockerfile.ci                      | JSON_VERSION       | rubygems  | json
 hadolint   | scripts/lint.sh                      | HADOLINT_VERSION   | github    | hadolint/hadolint
 actionlint | scripts/lint.sh                      | ACTIONLINT_VERSION | github    | rhysd/actionlint
 gitleaks-workflow | .github/workflows/security.yml | GITLEAKS_VERSION  | github    | gitleaks/gitleaks
@@ -210,6 +217,17 @@ while IFS='|' read -r name file key resolver arg; do
   arg=$(printf '%s' "$arg" | tr -d ' ')
 
   [ -n "$only" ] && [ "$only" != "$name" ] && continue
+  if [ "$file" = '*/Dockerfile.ci' ]; then
+    file=""
+    for img in $(jq -r '.[].image' .github/images.json); do
+      if grep -q "^ARG $key=" "$img/Dockerfile.ci" 2>/dev/null; then file="$img/Dockerfile.ci"; break; fi
+    done
+    if [ -z "$file" ]; then
+      log info "$name: no image in .github/images.json pins $key any more; skipped"
+      [ -n "$only" ] && { echo "error: no image pins $key, so there is no $name to check" >&2; exit 2; }
+      continue
+    fi
+  fi
   checked=$((checked + 1))
 
   if [ ! -f "$file" ]; then

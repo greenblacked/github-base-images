@@ -14,6 +14,7 @@ mean, and how pinned versions are kept current. The security checks along the wa
 - [Digests and `digests.json`](#digests-and-digestsjson)
 - [Pin drift](#pin-drift)
 - [Automatic updates](#automatic-updates)
+- [Image lifecycle](#image-lifecycle)
 
 ## Overview
 
@@ -32,26 +33,18 @@ result. Adding an image is covered in
 The workflow copies the upstream base into `ghcr.io` before building
 ([ADR 0001](adr/0001-mirror-upstream-bases.md)):
 
+Each [images.json](../.github/images.json) entry names both: `upstream` is the base on Docker Hub
+or MCR, and `mirror` is its copy under `ghcr.io/greenblacked`, one `mirror-*` package per upstream
+repository with the upstream tag unchanged. For example:
+
 | Mirror | Upstream |
 |---|---|
 | `ghcr.io/greenblacked/mirror-node:22-bookworm-slim` | `node:22-bookworm-slim` (Docker Hub) |
-| `ghcr.io/greenblacked/mirror-node:24-bookworm-slim` | `node:24-bookworm-slim` (Docker Hub) |
-| `ghcr.io/greenblacked/mirror-python:3.14-slim-trixie` | `python:3.14-slim-trixie` (Docker Hub) |
-| `ghcr.io/greenblacked/mirror-python:3.13-slim-bookworm` | `python:3.13-slim-bookworm` (Docker Hub) |
-| `ghcr.io/greenblacked/mirror-python:3.12-slim-bookworm` | `python:3.12-slim-bookworm` (Docker Hub) |
-| `ghcr.io/greenblacked/mirror-golang:1-bookworm` | `golang:1-bookworm` (Docker Hub) |
-| `ghcr.io/greenblacked/mirror-rust:1-bookworm` | `rust:1-bookworm` (Docker Hub) |
-| `ghcr.io/greenblacked/mirror-ruby:4.0-slim-trixie` | `ruby:4.0-slim-trixie` (Docker Hub) |
-| `ghcr.io/greenblacked/mirror-ruby:3.4-slim-bookworm` | `ruby:3.4-slim-bookworm` (Docker Hub) |
 | `ghcr.io/greenblacked/mirror-debian:bookworm-slim` | `debian:bookworm-slim` (Docker Hub) |
-| `ghcr.io/greenblacked/mirror-temurin:25-jdk-noble` | `eclipse-temurin:25-jdk-noble` (Docker Hub) |
-| `ghcr.io/greenblacked/mirror-temurin:21-jdk-noble` | `eclipse-temurin:21-jdk-noble` (Docker Hub) |
-| `ghcr.io/greenblacked/mirror-temurin:17-jdk-noble` | `eclipse-temurin:17-jdk-noble` (Docker Hub) |
-| `ghcr.io/greenblacked/mirror-php:8.5-cli-trixie` | `php:8.5-cli-trixie` (Docker Hub) |
-| `ghcr.io/greenblacked/mirror-php:8.4-cli-bookworm` | `php:8.4-cli-bookworm` (Docker Hub) |
 | `ghcr.io/greenblacked/mirror-dotnet:10.0-noble` | `mcr.microsoft.com/dotnet/sdk:10.0-noble` (MCR) |
-| `ghcr.io/greenblacked/mirror-dotnet:9.0-bookworm-slim` | `mcr.microsoft.com/dotnet/sdk:9.0-bookworm-slim` (MCR) |
-| `ghcr.io/greenblacked/mirror-dotnet:8.0-bookworm-slim` | `mcr.microsoft.com/dotnet/sdk:8.0-bookworm-slim` (MCR) |
+
+`scripts/image-lifecycle.sh check` (run by `scripts/lint.sh`) fails if a mirror does not carry its
+upstream's tag, or a `Dockerfile.ci`'s `ARG BASE_IMAGE` default is not the entry's `upstream`.
 
 Builds then use the mirror, so they do not depend on Docker Hub availability or rate limits. The
 Dockerfile takes a `BASE_IMAGE` build arg that defaults to upstream, so local builds still work
@@ -116,13 +109,15 @@ job, is in [Required checks](security.md#required-checks).
 
 A push or pull request builds **only the images whose directories changed** (a pull request that
 changes none, and no pipeline file, builds nothing) — a one-line fix to `ci-ruby34` does not
-rebuild the other twenty images or move `latest` on them. Changing the pipeline itself (either
+rebuild every other image or move `latest` on them. Changing the pipeline itself (either
 workflow file, `images.json`, or the four scripts `build-image.yml` runs) rebuilds everything; a
 change to `.github/vuln-exceptions.json` rebuilds the images whose entries changed. A
 `workflow_dispatch` on a branch other than `main` is planned the same way as a pull request,
 against where the branch left `main`. That is how the automated update PRs get their checks
 ([Automatic updates](#automatic-updates)), so a kubectl bump builds `ci-tools` and `ci-cloud` and
-nothing else. The daily schedule and a `workflow_dispatch` on `main` always rebuild everything —
+nothing else. An [image lifecycle](#image-lifecycle) pull request that adds or retires an image
+changes `images.json`, so it builds everything; one that only announces a deprecation changes no
+image and builds nothing. The daily schedule and a `workflow_dispatch` on `main` always rebuild everything —
 the rebuild is the security-update mechanism and is never narrowed. Every ambiguous case (force-push, missing diff base) falls back
 to the full list: over-building costs minutes, under-building leaves a stale published image
 nobody notices. The chosen set is printed in the `plan` job's summary.
@@ -157,8 +152,9 @@ stays correct on both architectures.
 
 ## Tags and rebuilds
 
-- **`bookworm-v1`** is a rolling contract line, and so are **`trixie-v1`** and **`noble-v1`** —
-  each image carries exactly one, per the [image catalog](../README.md#image-catalog). The daily
+- **`<codename>-v1`** — `bookworm-v1`, `trixie-v1`, `noble-v1`, and `resolute-v1` once an image
+  is built on Ubuntu 26.04 — is a rolling contract line; each image carries exactly one, per the
+  [image catalog](../README.md#image-catalog). The daily
   rebuild moves it to a fresh digest carrying distribution security updates, plus whatever the
   upstream runtime base picked up. It is bumped to `v2` only when the *contents* of the image
   change — a tool added or removed. Determinism in production comes from pinning a digest, not
@@ -179,7 +175,8 @@ stays correct on both architectures.
   signal at all. **Deleting the old package is therefore part of a rename, not an optional
   tidy-up.** `ci-rust185` and `ci-go125` were retired this way and should be deleted from the
   package settings. The same applies to images retired at end of support, such as
-  [`ci-dotnet8` and `ci-dotnet9`](images.md#deprecated-ci-dotnet8-and-ci-dotnet9).
+  [`ci-dotnet8` and `ci-dotnet9`](images.md#deprecated-ci-dotnet8-and-ci-dotnet9), and to every
+  image the [image lifecycle](#image-lifecycle) retires: its pull request says so.
 - **`<commit-sha>`** identifies the exact build.
 
 Every image rebuilds on every push to `main` touching any image directory, daily on a schedule,
@@ -290,8 +287,10 @@ and a new line is a new image. Dependabot, daily, keeps the action pins current.
 [pin-bump.yml](../.github/workflows/pin-bump.yml), daily after pin drift, for the hand-pinned tools.
 For each tool that is behind, it opens (or refreshes) one PR on a `pin-bump/<tool>` branch, with
 the version and its checksums rewritten by `scripts/bump-pins.sh`. Pins kept in more than one
-place move together: kubectl in `ci-tools` and `ci-cloud`, Composer in both PHP images, gitleaks
-in `ci-security` and `security.yml`, npm and Playwright in both Node images. Every checksum is
+place move together: kubectl in `ci-tools` and `ci-cloud`, Composer in every PHP image, gitleaks
+in `ci-security` and `security.yml`, npm and Playwright in every Node image. Which images carry a
+pin is read from the Dockerfiles of the images in `images.json`, so an image the lifecycle adds or
+retires needs no change to the pin tooling. Every checksum is
 read from the vendor's own checksums file or registry record for that version. None is computed
 from a download. Both wait the same seven-day cooldown after a release.
 
@@ -310,13 +309,17 @@ also runs on a dispatch from any branch but `main`, comparing it with `main`
 
 **Merging.** [merge-bot-prs.yml](../.github/workflows/merge-bot-prs.yml) runs whenever Build and
 Push or Security finishes, every hour, and on demand. For every open `dependabot/*` PR by
-Dependabot and `pin-bump/*` PR by `github-actions[bot]`, it merges (squash, leased to the head
-commit it checked) when:
+Dependabot, and every `pin-bump/*` and `lifecycle/*` PR by `github-actions[bot]`, it merges
+(squash, leased to the head commit it checked) when:
 
 - every commit on the branch is the bot's own, by author and committer;
 - the latest run of `CI result`, `Repository secret scan`, `CodeQL (workflows)` and
   `Dependency review` on the head commit each completed with success;
-- the branch merges cleanly;
+- the branch merges cleanly. GitHub answers that as yes, no, or not computed yet (`mergeable:
+  null`), and every merge moves `main`, which sends every other open PR back to "not computed
+  yet". So a green PR whose answer is not computed yet is read again after 2, 4, 8 and 16
+  seconds, about 30 seconds in all, so that one run merges every green PR rather than one an
+  hour. Still not computed after that, it waits for the next run; it is never taken as a yes;
 - the PR is not labelled `hold`, read from the PR itself, and again together with the head commit
   right before the merge.
 
@@ -343,9 +346,9 @@ red, is reported *stale*: Dependabot rebases it on a conflict or supersedes it w
 version, and it merges whenever its own CI is green. This happens at most once per `main` commit and twice in
 all; after that the PR is *stale*. From the first refresh on, Dependabot treats the PR as edited
 and no longer rebases it, so a stale or conflicting refreshed PR waits for Dependabot's next
-version of the update, which opens a new PR that supersedes it, or for a person. Pin-bump branches
-are not updated this way: the daily pin-bump run rebuilds a branch that fell behind `main` from
-scratch.
+version of the update, which opens a new PR that supersedes it, or for a person. Pin-bump and
+lifecycle branches are not updated this way: their daily run rebuilds a branch that fell behind
+`main` from scratch.
 
 **Stopping it.** Label a PR `hold` and it is never merged. To stop all merging, disable the
 *Merge bot* workflow under *Actions*. Every PR still runs its checks.
@@ -388,4 +391,54 @@ turns out to refuse workflow-file merges with the workflow token (above).
 ./scripts/test-bump-pins.sh                    # offline tests of both scripts; scripts/lint.sh runs them
 ./scripts/test-merge-bot-prs.sh                # offline tests of the merge bot
 GITHUB_REPOSITORY=greenblacked/github-base-images DRY_RUN=1 ./scripts/merge-bot-prs.sh   # what it would merge now
+```
+
+## Image lifecycle
+
+[image-lifecycle.yml](../.github/workflows/image-lifecycle.yml) runs daily at 09:07 UTC, after
+pin bump, and keeps the set of images in step with upstream's support lines
+([ADR 0009](adr/0009-image-lifecycle.md); the rules are in
+[Image lifecycle](images.md#image-lifecycle)). The work is in `scripts/image-lifecycle.sh`:
+
+- **Reads** each runtime's releases from the [endoflife.date](https://endoflife.date) API (v1),
+  and which tags exist from Docker Hub's tag API or MCR's tag list. Debian's and Ubuntu's releases
+  come from endoflife.date too, to choose the distribution of a new image. Anything it cannot read
+  means no action on what depended on it, and a warning in the run summary: never an add or a
+  retirement on a guess. "Not yet" (an RC tag only, an LTS date not reached) is not a warning.
+- **Opens one pull request per action**, on `lifecycle/add-<image>`, `lifecycle/deprecate-<image>`
+  or `lifecycle/retire-<image>`, the same way pin bump does: rebuilt from `main`, one commit by
+  `github-actions[bot]`, pushed leased to the SHA it saw, CI dispatched on the branch, healed on
+  the next run if a dispatch was lost, never pushed over a commit someone else made, and never
+  reopened once closed unmerged. The merge bot merges it when green, as above.
+- **Adds** copy the family's newest image directory (skipping one that carries a line-specific
+  workaround, such as `ci-ruby40`'s json gem replacement), with the version, base, description,
+  distribution and version assertions moved, and add the `images.json` entry, the Dependabot
+  entry, the catalog row and the docs bullet. The sibling's unexpired package-scoped
+  [vulnerability exceptions](security.md#vulnerability-exceptions) are copied with the same
+  expiry, since a new image is gated against an empty baseline.
+- **Deprecations** record the image in [.github/lifecycle.json](../.github/lifecycle.json), from
+  which the catalog marker, the README and SECURITY.md notices and the docs section are generated.
+  `.github/lifecycle.json` is not a pipeline file, so such a pull request builds nothing.
+- **Retirements** remove the directory, the `images.json`, Dependabot and vulnerability-exception
+  entries and the catalog row, point usage examples that pull the image at its successor, and
+  keep a *Retired* note under the anchor the deprecation notice had.
+- **Never changes `.github/workflows/`**: the workflow token cannot push workflow files, and the
+  script refuses a commit that touches one. `images.json` and `dependabot.yml` are ordinary files
+  for `contents: write`.
+
+`scripts/image-lifecycle.sh check`, run by `scripts/lint.sh`, keeps the hand-maintained and
+generated parts honest: the Dependabot docker directories, the README catalog rows (with their
+base and tag) and the `docs/images.md` bullets are each exactly the `images.json` images, every
+`ARG BASE_IMAGE` default is its entry's `upstream`, the README count is right, and the generated
+deprecation markers and notices are what `.github/lifecycle.json` says.
+
+A dispatch from any branch other than `main` runs a read-only `preview` job instead, which prints
+what that branch's script would do.
+
+```bash
+./scripts/image-lifecycle.sh plan                  # what is due today, as JSON lines
+./scripts/image-lifecycle.sh apply add --image ci-python315 --upstream python:3.15-slim-trixie
+./scripts/image-lifecycle.sh check                 # the consistency checks lint runs
+./scripts/test-image-lifecycle.sh                  # offline tests; scripts/lint.sh runs them
+GITHUB_REPOSITORY=greenblacked/github-base-images DRY_RUN=1 ./scripts/image-lifecycle.sh prs
 ```

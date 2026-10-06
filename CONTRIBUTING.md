@@ -43,6 +43,15 @@ once into the git-ignored `.lint-cache/` as checksum-verified release binaries.
 
 ## Adding another image
 
+**A new line of a runtime already here is added for you.** When Python, Node.js, PHP, Ruby, Java or
+.NET ships a new supported line, the daily [image lifecycle](docs/images.md#image-lifecycle)
+workflow opens a pull request that adds its image, and it merges itself when green; it also
+deprecates and retires images at upstream end of support. The one step left to you is making the
+new package public after its first publish (below). What follows is the manual path: a new
+*kind* of image, or a line the workflow does not add (an odd Node.js major, a non-LTS Java).
+`./scripts/image-lifecycle.sh apply add --image <name> --upstream <tag>` scaffolds a new line of an
+existing runtime by hand exactly as the workflow would.
+
 This is the authoritative checklist. There is no workflow to edit: the image list lives in one
 place, [.github/images.json](.github/images.json), an array of `{image, version, mirror, upstream}`
 entries. [build-and-push.yml](.github/workflows/build-and-push.yml) reads it and calls the reusable
@@ -55,16 +64,22 @@ To add an image:
    and `chmod +x` the test script (the workflow and `make test` both execute it directly).
 2. Add one entry to [.github/images.json](.github/images.json).
 3. Add a `docker` ecosystem entry for the directory in
-   [.github/dependabot.yml](.github/dependabot.yml).
+   [.github/dependabot.yml](.github/dependabot.yml), the same as every other one.
+4. Add its row to the [README catalog](README.md#image-catalog) and its bullet to
+   [docs/images.md](docs/images.md), and update the count in the README's first paragraph.
 
 Everything else is automatic: the `paths:` filter is the glob `ci-*/**`, the mirror job and the
-build matrix are driven by `images.json`, the lint job cross-checks that every entry has a
-directory and every `ci-*` directory has an entry, and the [Makefile](Makefile) discovers images
-by globbing `*/Dockerfile.ci`. The `version` field is per image, which is how the Noble-based
+build matrix are driven by `images.json`, the pin tooling finds a pinned tool in whichever image
+Dockerfiles carry it, and the [Makefile](Makefile) discovers images by globbing `*/Dockerfile.ci`.
+The lint job cross-checks the rest: every entry has a directory and every `ci-*` directory has an
+entry, and `scripts/image-lifecycle.sh check` fails when the Dependabot entries, the README rows
+and count, the `docs/images.md` bullets or an `ARG BASE_IMAGE` default disagree with
+`images.json`. The `version` field is per image, which is how the Noble-based
 images carry `noble-v1` and the Trixie-based ones `trixie-v1` while the rest are `bookworm-v1`.
-A new image starts on its upstream's current distribution
-([ADR 0005](docs/adr/0005-new-images-current-distro-retire-at-eol.md)), and the bar for adding one
-at all is a concrete consumer — see [Future candidates](docs/images.md#future-candidates).
+A new image starts on the newest Debian stable that upstream publishes it for, else the newest
+Ubuntu LTS ([ADR 0005](docs/adr/0005-new-images-current-distro-retire-at-eol.md),
+[ADR 0009](docs/adr/0009-image-lifecycle.md)), and the bar for adding a new kind of image at all
+is a concrete consumer — see [Future candidates](docs/images.md#future-candidates).
 
 Rules that are easy to miss:
 
@@ -75,10 +90,12 @@ Rules that are easy to miss:
 - **Bump kubectl in both places.** It is pinned in `ci-tools` *and* `ci-cloud` so a cluster deploy
   behaves the same whichever image runs it. The lint job asserts the version and both checksums are
   identical, so updating one and not the other fails the build rather than shipping a version skew.
-- **Bump Composer in both places.** It is pinned in `ci-php84` *and* `ci-php85`, with the same lint
-  assertion on the version and checksum, for the same reason.
+- **Pins shared between images move together.** Composer is pinned in every PHP image, npm and
+  Playwright in every Node image; the lint job asserts every `ARG` pinned in more than one
+  `Dockerfile.ci` has the same value in each, and `scripts/bump-pins.sh` moves them all at once.
 - **Make the new packages public** after the first publish: the `ci-*` image, and its `mirror-*`
-  base if that is new too. See
+  base if that is new too. No workflow can do this (GitHub has no API for package visibility), so
+  it applies to the images the lifecycle workflow adds as well. See
   [Visibility and authentication](docs/images.md#visibility-and-authentication).
 
 ## What does not belong in an image
@@ -88,7 +105,7 @@ Project dependencies, application source, credentials, and project-specific buil
 one to make a build pass, that is usually the bug rather than the test.
 
 Pinned tool versions (Terraform, kubectl, AWS CLI, Docker client in `ci-tools`; Composer in
-`ci-php84` and `ci-php85`) are `ARG`s so a bump is a small change that CI revalidates. Dependabot does **not**
+the PHP images) are `ARG`s so a bump is a small change that CI revalidates. Dependabot does **not**
 track these — it only reads each Dockerfile's `ARG BASE_IMAGE` — so they would move only when a human
 moves them. What has changed is that you no longer have to *notice*: the daily
 [pin drift](.github/workflows/pin-drift.yml) job compares every one of them against its vendor's
@@ -120,8 +137,8 @@ checksum by hand ([ADR 0007](docs/adr/0007-automatic-updates.md),
 ```
 
 Paired pins move as one unit, which keeps the lint parity checks green: kubectl in `ci-tools`
-and `ci-cloud`, Composer in `ci-php84` and `ci-php85`, gitleaks in `ci-security` and
-`security.yml`, npm and Playwright in `ci-node22` and `ci-node24`. hadolint and actionlint are
+and `ci-cloud`, Composer in every PHP image, gitleaks in `ci-security` and `security.yml`, npm and
+Playwright in every Node image. hadolint and actionlint are
 pinned in `scripts/lint.sh` with their per-platform checksums as named variables, so they move the
 same way.
 

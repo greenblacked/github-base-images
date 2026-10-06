@@ -46,10 +46,16 @@ Out of scope:
 
 ## Supported versions
 
-Only each image's current rolling tag (`bookworm-v1`, `trixie-v1` or `noble-v1` — see the
+Only each image's current rolling tag (`<codename>-v1`, such as `bookworm-v1` — see the
 [image catalog](README.md#image-catalog) in the README) is supported. It is rebuilt daily,
 picking up distribution security updates; older digests are never patched in place. Pin a digest
 for reproducibility, but expect to move it forward to receive fixes.
 
+An image is supported until its runtime's upstream end of support, and retired after it
+([ADR 0009](docs/adr/0009-image-lifecycle.md)); the deprecation is announced here, and in the
+catalog, 120 days ahead.
+<!-- lifecycle:deprecated:begin -->
+
 `ci-dotnet8` and `ci-dotnet9` are deprecated: .NET 8 and .NET 9 reach end of support on
 2026-11-10, and both images are retired after that date. Use `ci-dotnet10`.
+<!-- lifecycle:deprecated:end -->

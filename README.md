@@ -82,8 +82,8 @@ and the OpenSSH client. Follow an image name for what it leaves out and why.
 
 | Image | What's in it | Base | Tag |
 |---|---|---|---|
-| [`ci-node22`](docs/images.md#nodejs) | Node.js 22, npm, Playwright's Chromium libraries | `node:22-bookworm-slim` | `bookworm-v1` |
 | [`ci-node24`](docs/images.md#nodejs) | Node.js 24, npm, Playwright's Chromium libraries | `node:24-bookworm-slim` | `bookworm-v1` |
+| [`ci-node22`](docs/images.md#nodejs) | Node.js 22, npm, Playwright's Chromium libraries | `node:22-bookworm-slim` | `bookworm-v1` |
 | [`ci-python314`](docs/images.md#python) | Python 3.14, pip | `python:3.14-slim-trixie` | `trixie-v1` |
 | [`ci-python313`](docs/images.md#python) | Python 3.13, pip | `python:3.13-slim-bookworm` | `bookworm-v1` |
 | [`ci-python312`](docs/images.md#python) | Python 3.12, pip | `python:3.12-slim-bookworm` | `bookworm-v1` |
@@ -97,18 +97,19 @@ and the OpenSSH client. Follow an image name for what it leaves out and why.
 | [`ci-php85`](docs/images.md#php) | PHP 8.5 CLI, Composer | `php:8.5-cli-trixie` | `trixie-v1` |
 | [`ci-php84`](docs/images.md#php) | PHP 8.4 CLI, Composer | `php:8.4-cli-bookworm` | `bookworm-v1` |
 | [`ci-dotnet10`](docs/images.md#net-sdk) | .NET SDK 10.0 (LTS) | `mcr.microsoft.com/dotnet/sdk:10.0-noble` | `noble-v1` |
-| [`ci-dotnet9`](docs/images.md#net-sdk) **(deprecated)** | .NET SDK 9.0 (STS) | `mcr.microsoft.com/dotnet/sdk:9.0-bookworm-slim` | `bookworm-v1` |
-| [`ci-dotnet8`](docs/images.md#net-sdk) **(deprecated)** | .NET SDK 8.0 (LTS) | `mcr.microsoft.com/dotnet/sdk:8.0-bookworm-slim` | `bookworm-v1` |
+| [`ci-dotnet9`](docs/images.md#net-sdk) **(deprecated: retires after 2026-11-10)** | .NET SDK 9.0 (STS) | `mcr.microsoft.com/dotnet/sdk:9.0-bookworm-slim` | `bookworm-v1` |
+| [`ci-dotnet8`](docs/images.md#net-sdk) **(deprecated: retires after 2026-11-10)** | .NET SDK 8.0 (LTS) | `mcr.microsoft.com/dotnet/sdk:8.0-bookworm-slim` | `bookworm-v1` |
 | [`ci-tools`](docs/images.md#tool-images) | Terraform, kubectl, AWS CLI v2, Docker client | `debian:bookworm-slim` | `bookworm-v1` |
 | [`ci-cloud`](docs/images.md#tool-images) | gcloud CLI, Azure CLI, kubectl | `debian:bookworm-slim` | `bookworm-v1` |
 | [`ci-security`](docs/images.md#tool-images) | trivy, syft, grype, cosign, gitleaks | `debian:bookworm-slim` | `bookworm-v1` |
 | [`ci-db`](docs/images.md#tool-images) | psql, mysql, redis-cli, golang-migrate | `debian:bookworm-slim` | `bookworm-v1` |
 
+<!-- lifecycle:notices:begin -->
 **Deprecated: `ci-dotnet8` and `ci-dotnet9`.** .NET 8 and .NET 9 reach end of support on
 **2026-11-10**, and both images are retired after that date: they stop being rebuilt and
 re-scanned. Move to `ci-dotnet10` (Ubuntu Noble, so check that any extra `apt-get` package names
-still resolve). Details in
-[docs/images.md](docs/images.md#deprecated-ci-dotnet8-and-ci-dotnet9).
+still resolve). Details in [docs/images.md](docs/images.md#deprecated-ci-dotnet8-and-ci-dotnet9).
+<!-- lifecycle:notices:end -->
 
 A few things the table does not say:
 
@@ -120,11 +121,17 @@ A few things the table does not say:
   your workflow if you build native extensions. **No browsers** in the Node images: install the one
   your lockfile asks for, as shown in
   [Running Playwright tests](docs/images.md#running-playwright-tests).
-- **Three distribution lines.** Debian Bookworm (`bookworm-v1`), Debian Trixie for the newest
-  Debian-based images (`trixie-v1`), and Ubuntu Noble where upstream publishes no Debian image
-  (`noble-v1`). [Why](docs/images.md#patterns-worth-naming).
+- **One distribution line per image**, named for it: `bookworm-v1`, `trixie-v1`, `noble-v1`, and
+  so on (the Tag column). A new image starts on the newest Debian stable that upstream publishes
+  it for, else the newest Ubuntu LTS; an existing image never moves.
+  [Why](docs/images.md#patterns-worth-naming).
 - **`ci-go` and `ci-rust` carry no version** because Go and Rust have no parallel supported lines;
   they track current stable. [Why](docs/images.md#go-and-rust).
+- **The catalog keeps itself current.** When upstream ships a new supported line of a runtime
+  (GA, for both architectures; Node.js once it is LTS, Java only LTS), a pull request adds its
+  image and merges itself when green. 120 days before a line's upstream end of support, its row
+  is marked deprecated with the date, with a notice above; after that date the image is retired.
+  [How](docs/images.md#image-lifecycle).
 
 [docs/images.md](docs/images.md) also covers the tool images in use, visibility, and building and
 testing an image locally.
@@ -194,9 +201,9 @@ to every index.
 
 ## Tags and rebuilds
 
-- **`bookworm-v1`, `trixie-v1`, `noble-v1`** are rolling lines; each image carries exactly one (see
-  the catalog). The rebuild moves the tag to a fresh digest with distribution security updates
-  and whatever the upstream base picked up. It goes to `v2` only when the image's *contents*
+- **`<codename>-v1`** (`bookworm-v1`, `trixie-v1`, `noble-v1`, ...) are rolling lines; each image
+  carries exactly one (see the catalog). The rebuild moves the tag to a fresh digest with
+  distribution security updates and whatever the upstream base picked up. It goes to `v2` only when the image's *contents*
   change, a tool added or removed. `ci-go` and `ci-rust` also move to each new toolchain minor.
 - **`latest`** exists for testing. Never use it in a protected deployment job.
 - **`<commit-sha>`** identifies the exact build.
@@ -205,7 +212,8 @@ to every index.
   patched in place.
 - **`digests.json`** in every publish run lists the digest for each image it built.
 - **A retired or renamed image keeps its package**, pullable but no longer rebuilt or scanned, so
-  move off it.
+  move off it. Images retire after their runtime's upstream end of support, announced in the
+  catalog 120 days ahead.
 
 [docs/pipeline.md](docs/pipeline.md#tags-and-rebuilds) has the full contract, how the rebuild is
 kept from reusing a stale cache, the mirrored bases, and which images each run builds.
@@ -217,11 +225,13 @@ kept from reusing a stale cache, the mirrored bases, and which images each run b
 - [docs/security.md](docs/security.md): the scans and gates, vulnerability exceptions, verifying
   signatures, attestations, repository checks, required checks, the alerts report.
 - [docs/pipeline.md](docs/pipeline.md): mirrored bases, PR validation, which images a run builds,
-  architectures, tags and rebuilds, `digests.json`, pin drift, automatic updates.
+  architectures, tags and rebuilds, `digests.json`, pin drift, automatic updates, the image
+  lifecycle.
 - [Architecture decision records](docs/adr/README.md): why it is built this way — why upstream
   bases are mirrored, why the vulnerability gate blocks only fixable findings (and why that now
   includes libraries, and only those a build adds), why builds are native rather than emulated,
-  why every action is SHA-pinned, and how the repository updates itself.
+  why every action is SHA-pinned, how the repository updates itself, and how images are added and
+  retired.
 
 ## Contributing and reporting problems
 

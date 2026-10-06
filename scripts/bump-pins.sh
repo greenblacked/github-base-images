@@ -11,8 +11,13 @@
 #
 # A "unit" is what moves together. Usually one tool, but a pin that lives in
 # more than one place is one unit, so its copies can never be moved apart:
-# kubectl (ci-tools + ci-cloud), Composer (ci-php84 + ci-php85), gitleaks
-# (ci-security + security.yml), npm and Playwright (ci-node22 + ci-node24).
+# kubectl (ci-tools + ci-cloud), Composer (every PHP image), gitleaks
+# (ci-security + security.yml), npm and Playwright (every Node image).
+#
+# A pin written `*/Dockerfile.ci:KEY` is every image in .github/images.json
+# whose Dockerfile.ci has an `ARG KEY=` line, so an image the lifecycle
+# workflow adds or retires (scripts/image-lifecycle.sh) carries its pins in or
+# out with it, and no image name is spelled here for those.
 #
 # Where the checksums come from is the point of this script. Every checksum it
 # writes is read from the vendor's own published checksums file or registry
@@ -148,9 +153,9 @@ kubectl     | kubectl             | ci-tools/Dockerfile.ci:KUBECTL_VERSION ci-cl
 awscli      | awscli              | ci-tools/Dockerfile.ci:AWSCLI_VERSION | none | none | https://github.com/aws/aws-cli/blob/{v}/CHANGELOG.rst
 docker      | docker              | ci-tools/Dockerfile.ci:DOCKER_VERSION | none | none | https://docs.docker.com/engine/release-notes/
 gcloud      | gcloud              | ci-cloud/Dockerfile.ci:GCLOUD_VERSION | none | none | https://cloud.google.com/sdk/docs/release-notes
-playwright  | playwright          | ci-node22/Dockerfile.ci:PLAYWRIGHT_VERSION ci-node24/Dockerfile.ci:PLAYWRIGHT_VERSION | npm:playwright | npm:playwright | https://www.npmjs.com/package/playwright/v/{v}
-npm         | npm                 | ci-node22/Dockerfile.ci:NPM_VERSION ci-node24/Dockerfile.ci:NPM_VERSION | npm:npm | npm:npm | https://www.npmjs.com/package/npm/v/{v}
-composer    | composer            | ci-php84/Dockerfile.ci:COMPOSER_VERSION ci-php85/Dockerfile.ci:COMPOSER_VERSION | sums | github:composer/composer:{v} | https://github.com/composer/composer/releases/tag/{v}
+playwright  | playwright          | */Dockerfile.ci:PLAYWRIGHT_VERSION | npm:playwright | npm:playwright | https://www.npmjs.com/package/playwright/v/{v}
+npm         | npm                 | */Dockerfile.ci:NPM_VERSION | npm:npm | npm:npm | https://www.npmjs.com/package/npm/v/{v}
+composer    | composer            | */Dockerfile.ci:COMPOSER_VERSION | sums | github:composer/composer:{v} | https://github.com/composer/composer/releases/tag/{v}
 trivy       | trivy               | ci-security/Dockerfile.ci:TRIVY_VERSION | sums | github:aquasecurity/trivy:v{v} | https://github.com/aquasecurity/trivy/releases/tag/v{v}
 syft        | syft                | ci-security/Dockerfile.ci:SYFT_VERSION | sums | github:anchore/syft:v{v} | https://github.com/anchore/syft/releases/tag/v{v}
 grype       | grype               | ci-security/Dockerfile.ci:GRYPE_VERSION | sums | github:anchore/grype:v{v} | https://github.com/anchore/grype/releases/tag/v{v}
@@ -158,7 +163,7 @@ cosign      | cosign              | ci-security/Dockerfile.ci:COSIGN_VERSION | s
 gitleaks    | gitleaks,gitleaks-workflow | ci-security/Dockerfile.ci:GITLEAKS_VERSION .github/workflows/security.yml:GITLEAKS_VERSION | sums | github:gitleaks/gitleaks:v{v} | https://github.com/gitleaks/gitleaks/releases/tag/v{v}
 migrate     | migrate             | ci-db/Dockerfile.ci:MIGRATE_VERSION | sums | github:golang-migrate/migrate:v{v} | https://github.com/golang-migrate/migrate/releases/tag/v{v}
 osv-scanner | osv-scanner         | .github/workflows/build-image.yml:OSV_SCANNER_VERSION | sums | github:google/osv-scanner:v{v} | https://github.com/google/osv-scanner/releases/tag/v{v}
-json        | json                | ci-ruby40/Dockerfile.ci:JSON_VERSION | rubygems:json | rubygems:json | https://rubygems.org/gems/json/versions/{v}
+json        | json                | */Dockerfile.ci:JSON_VERSION | rubygems:json | rubygems:json | https://rubygems.org/gems/json/versions/{v}
 hadolint    | hadolint            | scripts/lint.sh:HADOLINT_VERSION | sums | github:hadolint/hadolint:v{v} | https://github.com/hadolint/hadolint/releases/tag/v{v}
 actionlint  | actionlint          | scripts/lint.sh:ACTIONLINT_VERSION | sums | github:rhysd/actionlint:v{v} | https://github.com/rhysd/actionlint/releases/tag/v{v}
 '
@@ -176,8 +181,7 @@ kubectl     | ci-tools/Dockerfile.ci:KUBECTL_SHA256_AMD64   | https://dl.k8s.io/
 kubectl     | ci-tools/Dockerfile.ci:KUBECTL_SHA256_ARM64   | https://dl.k8s.io/release/v{v}/bin/linux/arm64/kubectl.sha256 | -
 kubectl     | ci-cloud/Dockerfile.ci:KUBECTL_SHA256_AMD64   | https://dl.k8s.io/release/v{v}/bin/linux/amd64/kubectl.sha256 | -
 kubectl     | ci-cloud/Dockerfile.ci:KUBECTL_SHA256_ARM64   | https://dl.k8s.io/release/v{v}/bin/linux/arm64/kubectl.sha256 | -
-composer    | ci-php84/Dockerfile.ci:COMPOSER_SHA256        | https://getcomposer.org/download/{v}/composer.phar.sha256sum | composer.phar
-composer    | ci-php85/Dockerfile.ci:COMPOSER_SHA256        | https://getcomposer.org/download/{v}/composer.phar.sha256sum | composer.phar
+composer    | */Dockerfile.ci:COMPOSER_SHA256               | https://getcomposer.org/download/{v}/composer.phar.sha256sum | composer.phar
 trivy       | ci-security/Dockerfile.ci:TRIVY_SHA256_AMD64  | $GH/aquasecurity/trivy/releases/download/v{v}/trivy_{v}_checksums.txt | trivy_{v}_Linux-64bit.tar.gz
 trivy       | ci-security/Dockerfile.ci:TRIVY_SHA256_ARM64  | $GH/aquasecurity/trivy/releases/download/v{v}/trivy_{v}_checksums.txt | trivy_{v}_Linux-ARM64.tar.gz
 syft        | ci-security/Dockerfile.ci:SYFT_SHA256_AMD64   | $GH/anchore/syft/releases/download/v{v}/syft_{v}_checksums.txt | syft_{v}_linux_amd64.tar.gz
@@ -216,6 +220,25 @@ gcloud | https://storage.googleapis.com/cloud-sdk-release/google-cloud-cli-{v}-l
 '
 
 trim() { printf '%s' "$1" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//'; }
+
+# expand_pins SPEC... -- the pins a UNITS or SUMS spec names. `*/Dockerfile.ci:KEY`
+# is every image in the tree's .github/images.json whose Dockerfile.ci pins KEY,
+# in images.json order; anything else is itself. Prints nothing for a `*` spec
+# no image carries, which the caller reports.
+expand_pins() {
+  local spec key img
+  for spec in "$@"; do
+    case "$spec" in
+      '*/Dockerfile.ci:'*)
+        key=${spec#*:}
+        for img in $(jq -r '.[].image' "$root/.github/images.json" 2>/dev/null); do
+          grep -q "^ARG $key=" "$root/$img/Dockerfile.ci" 2>/dev/null && printf '%s\n' "$img/Dockerfile.ci:$key"
+        done ;;
+      *) printf '%s\n' "$spec" ;;
+    esac
+  done
+  return 0
+}
 subst() { printf '%s' "${1//\{v\}/$2}"; }
 
 # unit_field UNIT N -- column N (1-based) of the unit's UNITS row.
@@ -419,6 +442,9 @@ bump_unit() {
   edited_files=(); integrity_urls=(); version_url=""; released=""
 
   pins=$(unit_field "$unit" 3) || { old=""; fail_unit "$unit" "unknown unit"; return 0; }
+  # shellcheck disable=SC2086  # one spec per word
+  pins=$(expand_pins $pins)
+  [ -n "$pins" ] || { fail_unit "$unit" "no image in .github/images.json pins $(unit_field "$unit" 3)"; return 0; }
   integrity=$(unit_field "$unit" 4)
   date_spec=$(unit_field "$unit" 5)
   version_url=$(subst "$(unit_field "$unit" 6)" "$new")
@@ -471,13 +497,15 @@ bump_unit() {
     sums)
       while IFS='|' read -r row_unit row_pin row_url row_name; do
         [ "$(trim "$row_unit")" = "$unit" ] || continue
-        row=$(trim "$row_pin"); sfile=${row%%:*}; skey=${row#*:}
         surl=$(subst "$(trim "$row_url")" "$new"); sname=$(subst "$(trim "$row_name")" "$new")
         if ! sum=$(sum_from "$surl" "$sname"); then
           fail_unit "$unit" "no vendor checksum for $sname at $surl"; return 0
         fi
         integrity_urls+=("$surl")
-        edits+=("$sfile:$skey=$sum")
+        for row in $(expand_pins "$(trim "$row_pin")"); do
+          sfile=${row%%:*}; skey=${row#*:}
+          edits+=("$sfile:$skey=$sum")
+        done
       done <<< "$SUMS"
       [ "${#integrity_urls[@]}" -gt 0 ] || { fail_unit "$unit" "integrity is 'sums' but no SUMS rows"; return 0; }
       ;;

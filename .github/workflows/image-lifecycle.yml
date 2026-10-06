@@ -1,0 +1,111 @@
+# Daily: keep the set of images in step with upstream's support lines
+# (docs/adr/0009-image-lifecycle.md). When a runtime ships a new GA line, open
+# a pull request that adds its image; 120 days before a line's upstream end
+# of support, one that announces the deprecation; after it, one that retires
+# the image. Each merges itself once the full CI is green, through
+# merge-bot-prs.yml, like every other automated update.
+#
+# The work is in scripts/image-lifecycle.sh, runnable locally and tested
+# offline by scripts/lint.sh (scripts/test-image-lifecycle.sh). It reads
+# endoflife.date and the upstream registries (Docker Hub, MCR); whatever it
+# cannot read is a warning in the run summary and no action, never a guess.
+#
+# The token is the workflow's own GITHUB_TOKEN; no PAT, no app. A push or PR
+# made with it triggers no workflow, so the script dispatches Build and Push
+# and Security on each lifecycle branch, as pin-bump does. It never changes
+# .github/workflows/ (the token cannot push workflow files, and nothing there
+# depends on which images exist); .github/images.json and
+# .github/dependabot.yml are ordinary files for `contents: write`.
+#
+# The one step this cannot do: a newly published GHCR package is private, and
+# GitHub has no API to change package visibility. The PR that adds an image
+# says so (docs/images.md, "Visibility and authentication").
+name: Image lifecycle
+
+on:
+  schedule:
+    # Daily 09:07 UTC: after pin bump (08:53), so the two do not race for the
+    # runners or for main, and clear of the hourly merge bot (:37).
+    #
+    # GitHub disables scheduled workflows after 60 days without repository
+    # activity, silently. If the last run here is old, trigger it manually.
+    - cron: '7 9 * * *'
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: >-
+          Print the pushes, PR edits and dispatches instead of making them.
+          A run on any branch but main is always a dry run, with a read-only token
+        type: boolean
+        default: false
+
+# One run at a time: two runs racing on the same lifecycle/* branch would each
+# force-push over the other. The push is also leased to the SHA the run saw.
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
+
+permissions: {}
+
+jobs:
+  lifecycle:
+    name: Open image lifecycle pull requests
+    # From main only, dry run or not: this token can push branches, open PRs
+    # and dispatch workflows, and a branch's copy of the script has not been
+    # reviewed. A dispatch from another branch is the `preview` job below.
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: write       # push the lifecycle/* branches
+      pull-requests: write  # open and edit the PRs
+      actions: write        # `gh workflow run` on each lifecycle branch
+      checks: read          # whether CI ever reported on an existing lifecycle PR
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # Full history: the script compares each lifecycle branch with main.
+          fetch-depth: 0
+          # The script pushes through a credential helper that reads GH_TOKEN
+          # from its environment at call time (zizmor: artipacked).
+          persist-credentials: false
+
+      # No pipe on the script's line: the default shell is `bash -e {0}`,
+      # errexit without pipefail. The script writes the job summary itself.
+      - name: Open or refresh pull requests
+        env:
+          GH_TOKEN: ${{ github.token }}
+          DRY_RUN: ${{ inputs.dry_run && '1' || '' }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: ./scripts/image-lifecycle.sh prs
+
+  # What a branch's changes to the script would do, before they reach main.
+  # The token is read-only, so a push, PR edit or dispatch fails on
+  # permissions whatever the branch's script does.
+  preview:
+    name: Preview image lifecycle pull requests (dry run)
+    if: github.ref != 'refs/heads/main' && github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read        # checkout, and fetch main and lifecycle/*
+      pull-requests: read   # gh pr list
+      checks: read          # check runs on existing lifecycle branches
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Preview pull requests
+        env:
+          GH_TOKEN: ${{ github.token }}
+          # Set here, not from the input: this job is a dry run by definition,
+          # and the read-only token is what makes it one.
+          DRY_RUN: '1'
+          # The branch's script compares against main, as the real run does.
+          BASE_BRANCH: main
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: ./scripts/image-lifecycle.sh prs

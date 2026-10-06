@@ -1,6 +1,7 @@
-# Merge the automated update pull requests -- Dependabot's and pin-bump's --
-# once all four required checks have passed on their head commit, then
-# publish (docs/adr/0008-self-updating.md). The work is in
+# Merge the automated update pull requests -- Dependabot's, pin-bump's and
+# the image lifecycle's -- once all four required checks have passed on their
+# head commit, then publish (docs/adr/0008-self-updating.md,
+# docs/adr/0009-image-lifecycle.md). The work is in
 # scripts/merge-bot-prs.sh, tested offline by scripts/lint.sh.
 #
 # Why our own workflow rather than GitHub auto-merge: auto-merge waits only

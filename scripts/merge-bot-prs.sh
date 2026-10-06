@@ -4,7 +4,8 @@
 #
 # Why this exists: the images are only useful to their consumers if they stay
 # current without anyone tending them, and the updates already arrive as pull
-# requests (Dependabot; scripts/pin-bump-prs.sh) that run the full build,
+# requests (Dependabot; scripts/pin-bump-prs.sh; scripts/image-lifecycle.sh)
+# that run the full build,
 # smoke tests and vulnerability gate. What was missing was the last step. It
 # used to be GitHub auto-merge, which is only as strict as the `main` ruleset
 # it waits on -- with no active ruleset it merges at once, checks or not -- and
@@ -15,7 +16,11 @@
 # Candidates: open pull requests into BASE_BRANCH (main), from a branch in
 # this repository (never a fork), that are either
 #   - dependabot/*, opened by dependabot[bot], or
-#   - pin-bump/*,   opened by github-actions[bot] (scripts/pin-bump-prs.sh).
+#   - pin-bump/*,   opened by github-actions[bot] (scripts/pin-bump-prs.sh), or
+#   - lifecycle/*,  opened by github-actions[bot] (scripts/image-lifecycle.sh:
+#                   an image added, deprecated or retired). Same rules as
+#                   pin-bump/* throughout: the script rebuilds its branch
+#                   from main, and every commit on it must be the bot's own.
 # Every other open PR is counted and left alone.
 #
 # For each candidate, in order:
@@ -34,7 +39,8 @@
 #      missing, queued, in progress, skipped, neutral, cancelled, failed, or a
 #      check-run list that could not be read. Only red and unreadable are
 #      warnings; the rest is waiting.
-#   4. Green and mergeable (no conflict): `gh pr merge --squash
+#   4. Green and mergeable (no conflict; a "not computed yet" is read again,
+#      with backoff, for about 30s -- see the merge step): `gh pr merge --squash
 #      --match-head-commit <sha>`, so a push between the check and the merge
 #      makes GitHub refuse the merge instead of merging unchecked commits. A
 #      refusal for want of the `workflows` permission (a PR that changes
@@ -52,8 +58,9 @@
 #      workflows with write tokens). After the cap the PR is `stale`: Dependabot
 #      no longer rebases a branch someone else has committed to, so it waits
 #      for Dependabot's next version of the update, which supersedes it.
-#      Never for pin-bump/*: pin-bump-prs.sh rebuilds those from main
-#      itself, and a merge commit on one would make it hands-off for good.
+#      Never for pin-bump/* or lifecycle/*: their scripts rebuild those from
+#      main themselves, and a merge commit on one would make it hands-off for
+#      good.
 # After the loop, if anything merged: dispatch build-and-push.yml and
 # security.yml on main, once. A merge made with the workflow token starts no
 # push workflow, so without this the update would publish only with the next
@@ -86,6 +93,10 @@
 #                      query's exit status
 #   MERGE_BOT_RESULTS  also write the per-PR results, one JSON object per
 #                      line, to this file (the offline tests read it)
+#   MERGE_BOT_MERGEABLE_DELAYS
+#                      the waits, in seconds, between re-reads of a green PR
+#                      whose mergeability GitHub has not computed yet (default
+#                      "2 4 8 16": about 30s, then it is left waiting)
 #   MERGE_BOT_POLL_ATTEMPTS, MERGE_BOT_POLL_DELAY
 #                      how long to wait for update-branch to move the branch
 #                      before dispatching CI on it (default 12 x 5s)
@@ -109,7 +120,7 @@ readonly MAX_REFRESHES=2
 # branch of its own -- but only while it still owns it: once a refresh (below)
 # has merged main into it, Dependabot treats the PR as edited and leaves it,
 # and its next version of the update supersedes it.
-readonly CONFLICT_NOTE="merge conflict with main. A Dependabot branch is rebased by Dependabot while no one else has committed to it (after a refresh it is not, and its next version supersedes it); a pin-bump branch is rebuilt by pin-bump.yml"
+readonly CONFLICT_NOTE="merge conflict with main. A Dependabot branch is rebased by Dependabot while no one else has committed to it (after a refresh it is not, and its next version supersedes it); a pin-bump or lifecycle branch is rebuilt by its daily workflow (pin-bump.yml, image-lifecycle.yml)"
 # Which workflow reports each required check (docs/security.md, "Required
 # checks"), for dispatching the ones a refreshed branch needs.
 readonly CHECK_WORKFLOWS=("CI result|build-and-push.yml" "Repository secret scan|security.yml"
@@ -119,6 +130,7 @@ base=${BASE_BRANCH:-main}
 dry=${DRY_RUN:-}
 stub=${MERGE_BOT_GH_STUB:-}
 repo=${GITHUB_REPOSITORY:-}
+mergeable_delays=${MERGE_BOT_MERGEABLE_DELAYS:-2 4 8 16}
 poll_attempts=${MERGE_BOT_POLL_ATTEMPTS:-12}
 poll_delay=${MERGE_BOT_POLL_DELAY:-5}
 
@@ -170,7 +182,7 @@ one_pr() {
 
   pr=$(jq -c --argjson n "$n" '.[] | select(.number == $n)' "$work/prs.json")
   ref=$(jq -r '.head.ref' <<<"$pr")
-  kind=$(jq -r 'if (.head.ref | startswith("dependabot/")) then "dependabot" else "pin-bump" end' <<<"$pr")
+  kind=$(jq -r '.head.ref | if startswith("dependabot/") then "dependabot" elif startswith("lifecycle/") then "lifecycle" else "pin-bump" end' <<<"$pr")
 
   # One result line for the summary. `warn` makes it a warning annotation
   # whatever its status (see the end of the script).
@@ -288,7 +300,11 @@ one_pr() {
       refresh "$n" "$markers"
       return $?
     fi
-    row red "not merged; pin-bump.yml rebuilds the branch from $base when main or the vendor moves"
+    if [ "$kind" = lifecycle ]; then
+      row red "not merged; image-lifecycle.yml rebuilds the branch from $base when main moves"
+    else
+      row red "not merged; pin-bump.yml rebuilds the branch from $base when main or the vendor moves"
+    fi
     return 0
   fi
 
@@ -317,11 +333,39 @@ one_pr() {
 
   # Green. Mergeable is a three-state answer: true, false (a conflict), or
   # null (GitHub has not computed it yet). Only true merges.
-  case "$(jq -r '.mergeable' <<<"$detail")" in
+  #
+  # Null is what every PR after the first reads in a run that merged one:
+  # the merge moved main, and GitHub recomputes every open PR's mergeability
+  # in the background. Taken as "waiting", that meant one merge per run, the
+  # next an hour later. So a null is read again, a few times with a growing
+  # wait (MERGE_BOT_MERGEABLE_DELAYS, about 30s in all), before it is left
+  # waiting as before. Null is never taken as mergeable. A re-read that fails
+  # stops the retries (waiting), and one whose head moved stops the PR: its
+  # checks were read on the old head. hold and the head are read once more
+  # right before the merge anyway (recheck).
+  local mergeable delay again reads=1
+  mergeable=$(jq -r '.mergeable' <<<"$detail")
+  for delay in $mergeable_delays; do
+    [ "$mergeable" = null ] || break
+    sleep "$delay"
+    reads=$((reads + 1))
+    rc=0; again=$(gh_read "pr-$n" api "repos/$repo/pulls/$n") || rc=$?
+    if [ "$rc" -ne 0 ] || ! jq -e '.head.sha | type == "string"' <<<"$again" >/dev/null 2>&1; then
+      break
+    fi
+    if [ "$(jq -r '.head.sha' <<<"$again")" != "$sha" ]; then
+      note="the head moved from ${sha:0:12} while its mergeability was being worked out; the next run checks the new one"
+      row waiting "not merged: new commits"
+      return 0
+    fi
+    mergeable=$(jq -r '.mergeable' <<<"$again")
+  done
+  case "$mergeable" in
     true) ;;
     false) note="$CONFLICT_NOTE"
            row waiting "not merged: conflicts with $base"; return 0 ;;
-    *) row waiting "not merged: GitHub has not worked out whether it merges cleanly yet"; return 0 ;;
+    *) note="mergeable was still $mergeable after $reads read(s); the next run looks again"
+       row waiting "not merged: GitHub has not worked out whether it merges cleanly yet"; return 0 ;;
   esac
 
   recheck || return 0
@@ -384,9 +428,11 @@ recheck() {
 # Reads the PR's commits on stdin; prints one description per commit that is
 # not the bot's own, comma-separated (empty when all are). KIND MARKERS-JSON
 #
-#   pin-bump:   author and committer both github-actions[bot], by login and
-#               email, one parent. scripts/pin-bump-prs.sh makes exactly one
-#               such commit and never a merge.
+#   pin-bump, lifecycle:
+#               author and committer both github-actions[bot], by login and
+#               email, one parent. scripts/pin-bump-prs.sh and
+#               scripts/image-lifecycle.sh each make exactly one such commit
+#               and never a merge.
 #   dependabot: either Dependabot's own commit -- author dependabot[bot],
 #               committer GitHub's web-flow, verified signature, one parent:
 #               that is how Dependabot's commits are recorded, checked
@@ -405,7 +451,7 @@ own_commits() {
     def by($who; $login; $email): (.[$who].login // "") == $login and (.commit[$who].email // "") == $email;
     def parents: [.parents[].sha];
     def own:
-      if $kind == "pin-bump" then
+      if $kind == "pin-bump" or $kind == "lifecycle" then
         by("author"; $gha; $gha_email) and by("committer"; $gha; $gha_email) and (parents | length) == 1
       else
         (by("author"; $dep; $dep_email) and by("committer"; $wf; $wf_email)
@@ -617,7 +663,7 @@ fi
 candidates=$(jq -r --arg repo "$repo" --arg dep "$DEP_LOGIN" --arg gha "$GHA_LOGIN" '
   .[] | select((.head.repo.full_name // "") == $repo
                and ((.user.login == $dep and (.head.ref | startswith("dependabot/")))
-                    or (.user.login == $gha and (.head.ref | startswith("pin-bump/")))))
+                    or (.user.login == $gha and (.head.ref | startswith("pin-bump/") or startswith("lifecycle/")))))
   | .number' "$work/prs.json" | sort -n)
 others=$(( $(jq length "$work/prs.json") - $(printf '%s' "$candidates" | grep -c . || true) ))
 
