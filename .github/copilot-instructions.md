@@ -1,0 +1,1 @@
+When posting or editing GitHub comments, reviews, or pull request content, do not include AI-tool attribution or generated-by footers. If an integration automatically appends one, remove it from the published content when possible.
