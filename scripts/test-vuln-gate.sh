@@ -202,16 +202,17 @@ mkdir -p "$work/bin"
 # each call. sleep is faked too, logging how long it was asked to wait.
 cat > "$work/bin/docker" <<'EOF2'
 #!/usr/bin/env bash
-# `docker login`: record where the credential went and what it was, then
-# succeed or fail as FAKE_LOGIN says.
+# Baseline reads must never log in.
 if [ "$1" = login ]; then
-  printf '%s %s %s\n' "$*" "${DOCKER_CONFIG:-unset}" "$(cat)" >> "$FAKE_LOGIN_LOG"
-  [ -n "${DOCKER_CONFIG:-}" ] && echo '{"auths":{"ghcr.io":{}}}' > "$DOCKER_CONFIG/config.json"
-  [ "${FAKE_LOGIN:-ok}" = ok ] || { echo "Error response from daemon: denied" >&2; exit 1; }
-  exit 0
+  echo login >> "$FAKE_LOGIN_LOG"
+  exit 1
 fi
 # Every other call: which config it read its credentials from.
 echo "${DOCKER_CONFIG:-unset}" >> "$FAKE_LOGIN_LOG.reads"
+if [ -f "${DOCKER_CONFIG:-}/config.json" ]; then
+  echo "ERROR: baseline inherited Docker credentials" >&2
+  exit 1
+fi
 n=$(( $(cat "$FAKE_DOCKER_COUNT" 2>/dev/null || echo 0) + 1 )); echo "$n" > "$FAKE_DOCKER_COUNT"
 read -r -a plan <<< "$FAKE_DOCKER"
 case "${plan[$((n - 1))]:-err}" in
@@ -276,33 +277,28 @@ check "  no ref, with an explicit denial reason" bash -c "[ -z \"\$(sed -n 's/^r
 run_gate --candidate "$work/cand1.json" --no-baseline "$(outv note)"
 check "  all candidate findings block rather than being treated as known" [ "$rc" -eq 3 ]
 check "  strict gate reports both findings as new" in_summary "| **new in this build (blocking)** | **2** |"
-# With credentials: logged in to the registry, through a throwaway config.
-REGISTRY_USER=bot REGISTRY_TOKEN=s3cret run_base "ok" amd64
-check "with credentials: found" [ "$(outv ref)" = "ghcr.io/o/ci-test@$AMD" ]
-cfg=$(awk '{print $(NF-1)}' "$work/login" 2>/dev/null || true)
-check "  logged in to ghcr.io as the user, token on stdin, not argv" bash -c "grep -q '^login ghcr.io --username bot --password-stdin .* s3cret\$' '$work/login'"
-check "  into a throwaway DOCKER_CONFIG, not the user's" bash -c "[ -n '$cfg' ] && [ '$cfg' != unset ] && [ '$cfg' != \"\$HOME/.docker\" ]"
-check "  the registry read used that config" [ "$(sort -u "$work/login.reads")" = "$cfg" ]
-check "  and it is gone afterwards, credential and all" [ ! -e "$cfg" ]
+# Inherited publishing credentials must not authenticate baseline reads.
+mkdir -p "$work/publishing-config"
+echo '{"auths":{"ghcr.io":{"auth":"s3cret"}}}' > "$work/publishing-config/config.json"
+DOCKER_CONFIG="$work/publishing-config" REGISTRY_USER=bot REGISTRY_TOKEN=s3cret run_base "ok" amd64
+check "with inherited credentials: public baseline found" [ "$(outv ref)" = "ghcr.io/o/ci-test@$AMD" ]
+check "  no login attempted" [ ! -e "$work/login" ]
+cfg=$(sort -u "$work/login.reads")
+check "  reads use an isolated config" [ "$cfg" != "$work/publishing-config" ]
+check "  throwaway config is gone afterwards" [ ! -e "$cfg" ]
+check "  publishing config is preserved" [ -f "$work/publishing-config/config.json" ]
 check "  the token is not in the output" bash -c "! grep -q s3cret '$bout' '$gho'"
-# The login fails: strict, with a warning, and no registry read.
-REGISTRY_USER=bot REGISTRY_TOKEN=s3cret FAKE_LOGIN=fail run_base "ok" amd64
-check "login refused: exit 0, strict" [ "$rc:$(outv ref)" = "0:" ]
-check "  a warning naming the login" grep -q '^::warning::could not log in to ghcr.io to read ghcr.io/o/ci-test:v1 (exit 1: Error response from daemon: denied' "$bout"
-check "  nothing read after it" [ "$(calls)" -eq 0 ]
-cfg=$(awk '{print $(NF-1)}' "$work/login")
-check "  and the throwaway config is gone" [ ! -e "$cfg" ]
 
-echo "case 9: baseline credentials are main-only, never passed to PR code"
+echo "case 9: baseline workflow steps receive no registry credentials"
 workflow="$here/../.github/workflows/build-image.yml"
 for var in REGISTRY_USER REGISTRY_TOKEN TRIVY_USERNAME TRIVY_PASSWORD; do
-  case "$var" in
-    REGISTRY_USER|TRIVY_USERNAME) value=github.actor ;;
-    *) value=github.token ;;
-  esac
-  expected="$var: \${{ github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && $value || '' }}"
-  check "$var is empty for PRs and non-main refs" grep -qF "$expected" "$workflow"
+  if grep -q "$var:" "$workflow"; then
+    bad "$var must not be passed by the workflow"
+  else
+    ok "$var is absent from the workflow"
+  fi
 done
+check "resolver and scan use the anonymous config" [ "$(grep -cF "DOCKER_CONFIG: \${{ runner.temp }}/baseline-anonymous" "$workflow")" -eq 2 ]
 
 echo
 echo "$pass passed, $failures failed"
