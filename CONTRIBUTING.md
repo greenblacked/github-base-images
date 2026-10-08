@@ -41,6 +41,11 @@ shellcheck, hadolint and actionlint on the versions pinned in `scripts/lint.sh`
 best-effort zizmor workflow audit. Engines are downloaded
 once into the git-ignored `.lint-cache/` as checksum-verified release binaries.
 
+Pull requests can also be reviewed by Copilot code review, guided by
+[.github/copilot-instructions.md](.github/copilot-instructions.md); see
+[Code review](README.md#code-review). Its comments are advisory, and the required checks still decide
+the merge.
+
 ## Adding another image
 
 **A new line of a runtime already here is added for you.** When Python, Node.js, PHP, Ruby, Java or

@@ -239,6 +239,18 @@ kept from reusing a stale cache, the mirrored bases, and which images each run b
 [adding another image](CONTRIBUTING.md#adding-another-image). [SECURITY.md](SECURITY.md) covers how
 to report a vulnerability in a published image privately, and what is in and out of scope.
 
+## Code review
+
+Pull requests can be reviewed by Copilot code review, in addition to the required checks. It reads
+[.github/copilot-instructions.md](.github/copilot-instructions.md), which tells it what to flag: committed
+credentials, unpinned or over-privileged workflow actions, registry writes reachable from a PR,
+unverified downloads, weakened gates, and the `images.json`, Dependabot, README and test
+consistency rules. It is advisory: merging still depends on the
+[required checks](docs/security.md#required-checks) and, where enabled, a human review.
+
+To request it on a PR, add Copilot as a reviewer. To have it review every PR automatically, enable
+**Automatically request Copilot code review** in the `main` ruleset (Settings → Rules → Rulesets).
+
 ## License
 
 [MIT](LICENSE), and each image carries `org.opencontainers.image.licenses=MIT`.
