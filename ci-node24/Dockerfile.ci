@@ -42,7 +42,7 @@ RUN apt-get update \
 # blocks (docs/adr/0006). 12.1.0 bundles fixed versions of all of them and
 # supports Node ^22.22.2 || ^24.15.0. Bump it when a newer npm ships further
 # fixes; test.sh asserts the major version.
-ARG NPM_VERSION=12.1.0
+ARG NPM_VERSION=12.2.0
 RUN npm install --global "npm@${NPM_VERSION}" \
     && rm -rf /root/.npm
 
