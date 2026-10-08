@@ -130,6 +130,9 @@ jobs:
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
           context: ./${{ inputs.image }}
+          # Local path context needs no Git token; do not expose the action's
+          # default github.token to an unmerged build.
+          github-token: ''
           file: ./${{ inputs.image }}/${{ env.DOCKERFILE }}
           platforms: ${{ matrix.platform }}
           build-args: |
@@ -509,34 +512,28 @@ jobs:
       # scan below reads exactly the bytes resolved here even if the tag
       # moves in between.
       #
-      # Authenticated in every context, with this job's own token, so a
-      # private package is a baseline like a public one. The "Login" step
-      # above runs on main only (it is the one publishing needs), and a
-      # package can be private (published-audit.yml reports one); read
-      # anonymously, its gate would run strict on every pull request, and a
-      # bot PR for that image could never go green. Reading needs only `packages: read`, which
-      # every caller grants: build-and-push.yml's `image` job grants
-      # `packages: write`, and on a Dependabot or fork pull request GitHub
-      # cuts that to read. The script logs in through a throwaway
-      # DOCKER_CONFIG that it deletes on exit, so no later step inherits the
-      # credential; a login that fails is strict, with a warning. Passed
-      # through env, never interpolated into the script.
+      # Only non-PR runs on main receive registry credentials, matching the
+      # publishing login above. PRs and branch dispatches execute unmerged
+      # scripts, so even a read-only packages token must not be passed to
+      # them. They read public baselines anonymously; an unavailable private
+      # baseline makes the gate strict, never bypasses it. On main the script
+      # logs in through a throwaway DOCKER_CONFIG that it deletes on exit.
       - name: Published baseline (${{ matrix.arch }})
         id: baseline
         env:
           REPO: ghcr.io/${{ github.repository_owner }}/${{ inputs.image }}
           VERSION: ${{ inputs.version }}
           ARCH: ${{ matrix.arch }}
-          REGISTRY_USER: ${{ github.actor }}
-          REGISTRY_TOKEN: ${{ github.token }}
+          REGISTRY_USER: ${{ github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && github.actor || '' }}
+          REGISTRY_TOKEN: ${{ github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && github.token || '' }}
         run: ./scripts/vuln-baseline.sh "$REPO" "$VERSION" "$ARCH"
 
       # The published image, scanned exactly as the candidate was (see above),
       # straight from the registry: TRIVY_IMAGE_SRC=remote, so Trivy never
-      # asks the local daemon, which holds only the candidate. Authenticated
-      # with this job's token for the same reason as the step above, through
-      # Trivy's own TRIVY_USERNAME/TRIVY_PASSWORD on this step only: nothing
-      # is written to a Docker config a later step could read.
+      # asks the local daemon, which holds only the candidate. Uses the same
+      # main-only credential boundary as resolution above, through Trivy's
+      # own TRIVY_USERNAME/TRIVY_PASSWORD on this step only: nothing is written
+      # to a Docker config a later step could read.
       #
       # continue-on-error, and only here: a baseline that could not be
       # scanned is not a failed gate but a strict one. The gate step reads
@@ -551,8 +548,8 @@ jobs:
         env:
           TRIVY_SKIP_DB_UPDATE: 'true'
           TRIVY_IMAGE_SRC: remote
-          TRIVY_USERNAME: ${{ github.actor }}
-          TRIVY_PASSWORD: ${{ github.token }}
+          TRIVY_USERNAME: ${{ github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && github.actor || '' }}
+          TRIVY_PASSWORD: ${{ github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && github.token || '' }}
         with:
           image-ref: ${{ steps.baseline.outputs.ref }}
           scanners: vuln

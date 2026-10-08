@@ -21,15 +21,15 @@
 # only says what it found.
 #
 # Authenticated when REGISTRY_USER and REGISTRY_TOKEN are set (build-image.yml
-# passes the job's own GITHUB_TOKEN, which needs only `packages: read`), so a
-# private package can be read as a baseline too -- anonymously it could not,
-# the gate would run strict on every pull request, and a bot PR for that image
-# could never go green. The login goes into a throwaway DOCKER_CONFIG made
-# here and deleted when this script exits, so nothing that runs after it (the
+# passes the job's own GITHUB_TOKEN only on non-PR runs on main), so trusted
+# runs can read a private baseline. PRs and branch dispatches get neither
+# credential: public baselines are readable anonymously, while unavailable
+# private baselines make the gate strict. The login goes into a throwaway
+# DOCKER_CONFIG made here and deleted when this script exits, so nothing that runs after it (the
 # build steps, third-party actions) inherits the credential. A login that
 # fails is treated like an unreadable registry: strict, with a warning. With
-# neither variable set (a local run), the reads are anonymous, which works
-# for the public packages.
+# neither variable set (including a local run), the reads are anonymous, which
+# works for the public packages.
 #
 # Registry reads are retried: up to four, 5s, 15s and 45s apart, so one
 # hiccup does not make the gate strict -- which, for an image carrying known

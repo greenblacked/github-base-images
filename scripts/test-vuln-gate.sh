@@ -217,6 +217,7 @@ read -r -a plan <<< "$FAKE_DOCKER"
 case "${plan[$((n - 1))]:-err}" in
   ok) cat "$FAKE_INDEX" ;;
   notfound) echo "ERROR: ghcr.io/o/ci-test:v1: not found" >&2; exit 1 ;;
+  denied) echo "ERROR: denied: unauthenticated request to private package" >&2; exit 1 ;;
   *) echo "ERROR: failed to do request: Head https://ghcr.io/v2/o/ci-test/manifests/v1: 502 Bad Gateway" >&2; exit 1 ;;
 esac
 EOF2
@@ -269,6 +270,12 @@ check "a single manifest, not an index: strict" [ -z "$(outv ref)" ]
 rc=0; "$baseline" only-two args > /dev/null 2>&1 || rc=$?
 check "usage: exit 2" [ "$rc" -eq 2 ]
 check "no credentials given: anonymous, no login" [ ! -e "$work/login" ]
+REGISTRY_USER='' REGISTRY_TOKEN='' run_base "denied denied denied denied" amd64
+check "private baseline without credentials: no login" [ ! -e "$work/login" ]
+check "  no ref, with an explicit denial reason" bash -c "[ -z \"\$(sed -n 's/^ref=//p' '$gho')\" ] && grep -q 'unauthenticated request to private package' '$gho'"
+run_gate --candidate "$work/cand1.json" --no-baseline "$(outv note)"
+check "  all candidate findings block rather than being treated as known" [ "$rc" -eq 3 ]
+check "  strict gate reports both findings as new" in_summary "| **new in this build (blocking)** | **2** |"
 # With credentials: logged in to the registry, through a throwaway config.
 REGISTRY_USER=bot REGISTRY_TOKEN=s3cret run_base "ok" amd64
 check "with credentials: found" [ "$(outv ref)" = "ghcr.io/o/ci-test@$AMD" ]
@@ -285,6 +292,17 @@ check "  a warning naming the login" grep -q '^::warning::could not log in to gh
 check "  nothing read after it" [ "$(calls)" -eq 0 ]
 cfg=$(awk '{print $(NF-1)}' "$work/login")
 check "  and the throwaway config is gone" [ ! -e "$cfg" ]
+
+echo "case 9: baseline credentials are main-only, never passed to PR code"
+workflow="$here/../.github/workflows/build-image.yml"
+for var in REGISTRY_USER REGISTRY_TOKEN TRIVY_USERNAME TRIVY_PASSWORD; do
+  case "$var" in
+    REGISTRY_USER|TRIVY_USERNAME) value=github.actor ;;
+    *) value=github.token ;;
+  esac
+  expected="$var: \${{ github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && $value || '' }}"
+  check "$var is empty for PRs and non-main refs" grep -qF "$expected" "$workflow"
+done
 
 echo
 echo "$pass passed, $failures failed"

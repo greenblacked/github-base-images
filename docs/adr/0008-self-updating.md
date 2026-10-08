@@ -53,10 +53,19 @@ It fails closed. A new image or a new tag has no published image, so the compari
 an empty baseline and every finding blocks, the same as the old gate. The same strict comparison
 runs when the published image cannot be resolved or scanned for any reason, and the summary says
 which reason it was. Registry reads are retried three times (5s, 15s, 45s) before that, so one
-hiccup does not make the gate strict. The reads are authenticated with the job's own token in
-every context, pull requests included, through a throwaway Docker config deleted straight after,
-so private packages have a baseline too. An unreadable report is a failure, never "no findings". The summary is a
-small table, never the full Trivy output, which had exceeded the 1 MiB step-summary limit.
+hiccup does not make the gate strict. Only non-PR runs on `main` authenticate baseline resolution
+and scanning with the job's own token; resolution uses a throwaway Docker config deleted straight
+after. Pull requests and branch dispatches execute unmerged code and receive no registry
+credentials for these steps. They use public baselines anonymously and run the strict gate when
+a private baseline is unavailable, even if this blocks a bot PR. An unreadable report is a
+failure, never "no findings". The summary is a small table, never the full Trivy output, which
+had exceeded the 1 MiB step-summary limit.
+
+This removes the baseline steps' direct credential exposure, not the workflow token itself.
+Checkout and code-scanning actions still use the job token, and a PR that changes its workflow
+can explicitly reference `github.token`. The build job's package permission is still requested
+for publishing (downgraded to read on fork PRs); private package access must not be treated as
+isolated from malicious workflow edits by these step-level conditions alone.
 
 The alerts report still lists every open fixable alert, but open fixable alerts are now a warning,
 not a failure. It still fails when it could not read the alerts.
