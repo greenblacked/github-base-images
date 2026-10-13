@@ -67,9 +67,9 @@ RUN case "${TARGETARCH}" in \
     && tar -xzf /tmp/trivy.tgz -C /usr/local/bin trivy \
     && rm /tmp/trivy.tgz /tmp/trivy.sum
 
-ARG SYFT_VERSION=1.52.0
-ARG SYFT_SHA256_AMD64=caeedb81fb0491615f1ebd1761e4145d41ee86dd2cc7bf80669f9f5ad9d6133d
-ARG SYFT_SHA256_ARM64=c46d5e4c28e12aa4c5becfaa343ef1c7f89045b6b895f2c21d471c62db09c706
+ARG SYFT_VERSION=1.54.1
+ARG SYFT_SHA256_AMD64=c069905b391cc4c20a5ba65ad5c10be2a7ba074f8ea6ad203e24d14e303dad47
+ARG SYFT_SHA256_ARM64=dfdf0537610113edbefe1f1fc6548bc957b2d77439636ec824fcf0e10d46d054
 RUN case "${TARGETARCH}" in \
         amd64) sum="${SYFT_SHA256_AMD64}" ;; \
         arm64) sum="${SYFT_SHA256_ARM64}" ;; \
