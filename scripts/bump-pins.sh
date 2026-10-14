@@ -12,7 +12,9 @@
 # A "unit" is what moves together. Usually one tool, but a pin that lives in
 # more than one place is one unit, so its copies can never be moved apart:
 # kubectl (ci-tools + ci-cloud), Composer (every PHP image), gitleaks
-# (ci-security + security.yml), npm and Playwright (every Node image).
+# (ci-security + security.yml), npm and Playwright (every Node image), and the
+# brace-expansion and undici copies swapped into npm's tree (every Node image;
+# check-pins.sh resolves those within their current major).
 #
 # A pin written `*/Dockerfile.ci:KEY` is every image in .github/images.json
 # whose Dockerfile.ci has an `ARG KEY=` line, so an image the lifecycle
@@ -155,6 +157,8 @@ docker      | docker              | ci-tools/Dockerfile.ci:DOCKER_VERSION | none
 gcloud      | gcloud              | ci-cloud/Dockerfile.ci:GCLOUD_VERSION | none | none | https://cloud.google.com/sdk/docs/release-notes
 playwright  | playwright          | */Dockerfile.ci:PLAYWRIGHT_VERSION | npm:playwright | npm:playwright | https://www.npmjs.com/package/playwright/v/{v}
 npm         | npm                 | */Dockerfile.ci:NPM_VERSION | npm:npm | npm:npm | https://www.npmjs.com/package/npm/v/{v}
+npm-brace-expansion | npm-brace-expansion | */Dockerfile.ci:NPM_BRACE_EXPANSION_VERSION | npm:brace-expansion | npm:brace-expansion | https://www.npmjs.com/package/brace-expansion/v/{v}
+npm-undici  | npm-undici          | */Dockerfile.ci:NPM_UNDICI_VERSION | npm:undici | npm:undici | https://www.npmjs.com/package/undici/v/{v}
 composer    | composer            | */Dockerfile.ci:COMPOSER_VERSION | sums | github:composer/composer:{v} | https://github.com/composer/composer/releases/tag/{v}
 trivy       | trivy               | ci-security/Dockerfile.ci:TRIVY_VERSION | sums | github:aquasecurity/trivy:v{v} | https://github.com/aquasecurity/trivy/releases/tag/v{v}
 syft        | syft                | ci-security/Dockerfile.ci:SYFT_VERSION | sums | github:anchore/syft:v{v} | https://github.com/anchore/syft/releases/tag/v{v}

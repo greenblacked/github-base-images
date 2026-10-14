@@ -46,6 +46,61 @@ ARG NPM_VERSION=12.2.0
 RUN npm install --global "npm@${NPM_VERSION}" \
     && rm -rf /root/.npm
 
+# Two of npm's own dependencies, replaced in place. npm 12.2.0, the newest
+# release, still bundles brace-expansion 5.0.9 (CVE-2026-102276, fixed in
+# 5.0.10; CVE-2026-102278, fixed in 5.0.11) and undici 6.28.0
+# (CVE-2026-19534, fixed in 6.28.1), which the vulnerability gate blocks
+# (docs/adr/0006). Fixed releases exist on the same majors, so npm's copies in
+# $(npm root -g)/npm/node_modules are swapped for them: npm loads its
+# dependencies from that directory and nothing else, there is no lockfile to
+# disagree, and the same major keeps the API npm was built against.
+#
+# Integrity: `npm pack` checks each tarball against the registry's sha512 as it
+# downloads it, and the sha512 of the file on disk is then compared once more
+# with `npm view <pkg>@<version> dist.integrity`; any mismatch, and a tarball
+# whose package.json is not the name and version asked for, fails the build.
+#
+# Self-retiring: a package npm already bundles at or above the pin is left
+# alone, with a log line, so once an npm release bundles the fixes (or newer)
+# this step changes nothing, and it never downgrades. A pin on an older major
+# than the bundled copy fails the build instead of guessing. Drop this block,
+# and the two pins (scripts/check-pins.sh tracks them within their majors and
+# the pin-bump bot moves them), once npm ships brace-expansion >= 5.0.11 and
+# undici >= 6.28.1; test.sh asserts those floors whichever way they arrive.
+ARG NPM_BRACE_EXPANSION_VERSION=5.0.12
+ARG NPM_UNDICI_VERSION=6.29.0
+RUN set -eu; \
+    deps="$(npm root -g)/npm/node_modules"; \
+    work="$(mktemp -d)"; \
+    for spec in "brace-expansion@${NPM_BRACE_EXPANSION_VERSION}" "undici@${NPM_UNDICI_VERSION}"; do \
+        pkg="${spec%@*}"; want="${spec##*@}"; \
+        have="$(node -p 'require(process.argv[1]).version' "$deps/$pkg/package.json")"; \
+        action="$(node -p 'const [a, b] = process.argv.slice(1).map((v) => v.split(".").map(Number)); a.length !== 3 || b.length !== 3 || a.concat(b).some(Number.isNaN) ? "unknown" : a[0] !== b[0] ? (a[0] > b[0] ? "keep" : "major") : (a[1] - b[1] || a[2] - b[2]) >= 0 ? "keep" : "replace"' "$have" "$want")"; \
+        case "$action" in \
+            keep) echo "npm already bundles $pkg $have, at or above the pinned $want; left as it is"; continue ;; \
+            replace) ;; \
+            *) echo "error: npm bundles $pkg $have, which the pinned $want cannot replace ($action); re-pin or drop this step" >&2; exit 1 ;; \
+        esac; \
+        mkdir "$work/$pkg" "$work/$pkg/x"; \
+        npm pack --silent --pack-destination "$work/$pkg" "$spec" > /dev/null; \
+        set -- "$work/$pkg"/*.tgz; tgz="$1"; \
+        expected="$(npm view "$spec" dist.integrity)"; \
+        actual="$(node -p '"sha512-" + require("crypto").createHash("sha512").update(require("fs").readFileSync(process.argv[1])).digest("base64")' "$tgz")"; \
+        if [ "$actual" != "$expected" ]; then \
+            echo "error: $spec tarball is $actual, the registry says ${expected:-nothing}" >&2; exit 1; \
+        fi; \
+        tar -xzf "$tgz" -C "$work/$pkg/x" --no-same-owner; \
+        got="$(node -p 'const p = require(process.argv[1]); p.name + "@" + p.version' "$work/$pkg/x/package/package.json")"; \
+        if [ "$got" != "$spec" ]; then \
+            echo "error: the $spec tarball holds $got" >&2; exit 1; \
+        fi; \
+        rm -rf "${deps:?}/$pkg"; \
+        mv "$work/$pkg/x/package" "$deps/$pkg"; \
+        echo "replaced npm's bundled $pkg $have with $want ($expected)"; \
+    done; \
+    rm -rf "$work" /root/.npm; \
+    npm --version > /dev/null
+
 # Playwright's *system libraries* only -- no browser binaries.
 #
 # Browser binaries are version-locked to the playwright npm package, so baking
