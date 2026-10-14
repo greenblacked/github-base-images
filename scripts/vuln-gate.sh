@@ -12,13 +12,18 @@
 #       --no-baseline "ghcr.io/o/ci-new:bookworm-v1 has never been published" \
 #       --summary gate.md
 #
-# Both inputs are Trivy JSON reports (`--format json`) of the same image and
-# architecture: the candidate this run just built, and the image currently
-# published for that tag (its per-arch digest). build-image.yml produces both
-# with the same Trivy binary, the same on-disk database and the same flags --
-# HIGH,CRITICAL, ignore-unfixed, os,library, and the image's entries from
-# .github/vuln-exceptions.json -- so every finding in either file is one the
-# old absolute gate would have failed on. This script only compares them.
+#   either of the above, plus the base image the build is FROM:
+#       --upstream gate-upstream.json --upstream-ref mcr.microsoft.com/dotnet/sdk@sha256:...
+#
+# Every input is a Trivy JSON report (`--format json`) for the same
+# architecture: the candidate this run just built, the image currently
+# published for that tag (its per-arch digest), and optionally the base image
+# the candidate was built FROM (its per-arch digest). build-image.yml produces
+# all three with the same Trivy binary, the same on-disk database and the
+# same flags -- HIGH,CRITICAL, ignore-unfixed, os,library, and the image's
+# entries from .github/vuln-exceptions.json -- so every finding in any of them
+# is one the old absolute gate would have failed on. This script only
+# compares them.
 #
 # Why compare at all. The absolute gate failed whenever the image carried any
 # fixable finding, including ones inside upstream software no release had
@@ -42,7 +47,15 @@
 #             The same CVE in the same package at a different installed
 #             version is still known: a patch-level move of a package that is
 #             still vulnerable is not a regression.
+#   - inherited  in the candidate and in the base image (--upstream), but
+#             not in the baseline: listed, never blocks. See below.
 #   - fixed   in the baseline only: listed, as what this build fixes.
+# So what blocks is the candidate minus the published image minus the base
+# image. A finding both the published image and the base image carry is
+# counted as known, not inherited: inherited lists exactly what the base
+# image alone excuses -- what the published comparison by itself would have
+# blocked -- so that list is the whole of what the second baseline lets
+# through, and can be read as such.
 # The type is in the identity so a CVE known in one ecosystem cannot hide the
 # same id newly reported against a same-named package in another: openssl the
 # Debian package and an npm package called openssl are different software,
@@ -50,6 +63,27 @@
 # deliberately ignores the path: the same vulnerable package of the same type
 # appearing in one more place is not a new decision. That is the one way a
 # known finding can grow without blocking, and it is accepted.
+#
+# Why the base image too. Comparing with the published image alone still
+# blocks whatever a NEWER BASE brings with it, and that is not this
+# repository's to fix either. The .NET SDK 8.0.426 image ships its own copies
+# of Microsoft.Build.Tasks.Core and System.Security.Cryptography.Xml under
+# usr/share/dotnet/sdk/, with fixable advisories against them; the published
+# ci-dotnet8, built on the previous SDK, does not have them, so they read as
+# new and blocked -- including the daily rebuild on main that carried twelve
+# runtime fixes, two of them CRITICAL. A new image is worse off: with no
+# published image to compare with, everything its base ships blocks. Nothing
+# in this repository can change what Microsoft or Docker put in a base image;
+# blocking on it only withholds the fixes the rebuild does carry, and the
+# base's own fixes arrive the way every upstream fix does, through the daily
+# rebuild that re-mirrors the base. What the build ADDS on top of the base --
+# a tool, a pin, a package -- is still judged exactly as before.
+#
+# --upstream is additive and optional: without it, or when the workflow could
+# not resolve or scan the base, the comparison is exactly the published one
+# (or the strict one) described here. It works with --baseline and with
+# --no-baseline alike: for a new image, findings the base image carries are
+# inherited, and everything else is still strict.
 #
 # --no-baseline is the strict case: an empty baseline, so every finding is new
 # and blocks, exactly as the absolute gate did. The workflow uses it whenever
@@ -62,14 +96,15 @@
 #
 # Exit codes:
 #   0  no new finding; the summary lists the known and fixed ones
-#   1  could not decide: an input missing, unreadable, empty, not a Trivy JSON
-#      report (SchemaVersion 2), or a finding with no VulnerabilityID or
+#   1  could not decide: an input (any of the three) missing, unreadable,
+#      empty, not a Trivy JSON report (SchemaVersion 2), or a finding with no VulnerabilityID or
 #      PkgName. Never read as a pass: a report that parsed as "no findings"
 #      because its shape changed would be a gate that passed without looking.
 #   2  usage
 #   3  one or more new findings (listed in the summary)
 #
-# Requires jq. No network, no Trivy: it reads two files and writes one or two.
+# Requires jq. No network, no Trivy: it reads two or three files and writes
+# one or two.
 set -Eeuo pipefail
 
 readonly EXIT_NEW=3
@@ -87,6 +122,7 @@ usage() {
   cat <<'EOF'
 usage: vuln-gate.sh --label TEXT --candidate FILE
                     (--baseline FILE [--baseline-ref REF] | --no-baseline REASON)
+                    [--upstream FILE --upstream-ref REF]
                     --summary FILE [--result FILE]
 
   --label         what was scanned, for headings (e.g. "ci-node22 (amd64)")
@@ -94,8 +130,12 @@ usage: vuln-gate.sh --label TEXT --candidate FILE
   --baseline      Trivy JSON report of the image currently published
   --baseline-ref  the published image's reference, for the summary
   --no-baseline   no baseline: every finding blocks; REASON says why
+  --upstream      Trivy JSON report of the base image the build is FROM:
+                  what it carries is inherited, never blocking
+  --upstream-ref  the base image's reference, for the summary (required
+                  with --upstream)
   --summary       where to write the Markdown summary
-  --result        also write {new, known, fixed} as JSON here
+  --result        also write {new, known, inherited, fixed} as JSON here
 
 Exit: 0 nothing new, 1 could not decide, 2 usage, 3 new findings.
 EOF
@@ -105,9 +145,10 @@ die() { printf 'error: %s\n' "$*" >&2; exit 1; }
 usage_error() { printf 'error: %s\n' "$*" >&2; usage >&2; exit 2; }
 
 label="" candidate="" baseline="" baseline_ref="" no_baseline="" no_baseline_set="" summary="" result=""
+upstream="" upstream_ref=""
 while [ $# -gt 0 ]; do
   case "$1" in
-    --label|--candidate|--baseline|--baseline-ref|--no-baseline|--summary|--result)
+    --label|--candidate|--baseline|--baseline-ref|--no-baseline|--upstream|--upstream-ref|--summary|--result)
       [ $# -ge 2 ] || usage_error "$1 needs a value"
       case "$1" in
         --label) label="$2" ;;
@@ -115,6 +156,8 @@ while [ $# -gt 0 ]; do
         --baseline) baseline="$2" ;;
         --baseline-ref) baseline_ref="$2" ;;
         --no-baseline) no_baseline="$2"; no_baseline_set=1 ;;
+        --upstream) upstream="$2" ;;
+        --upstream-ref) upstream_ref="$2" ;;
         --summary) summary="$2" ;;
         --result) result="$2" ;;
       esac
@@ -134,6 +177,12 @@ if [ -z "$baseline" ] && [ -z "$no_baseline_set" ]; then
 fi
 if [ -n "$no_baseline_set" ] && [ -z "$no_baseline" ]; then
   usage_error "--no-baseline needs a reason: a strict run must say why it is strict"
+fi
+if [ -n "$upstream" ] && [ -z "$upstream_ref" ]; then
+  usage_error "--upstream needs --upstream-ref: a finding excused as inherited must name what it was inherited from"
+fi
+if [ -z "$upstream" ] && [ -n "$upstream_ref" ]; then
+  usage_error "--upstream-ref without --upstream"
 fi
 
 command -v jq >/dev/null || die "required command not found: jq"
@@ -196,10 +245,20 @@ if [ -n "$baseline" ]; then
 else
   echo '[]' > "$tmp/base.json"
 fi
+# The base image is validated exactly like the other two: a base report that
+# cannot be read is exit 1, not "the base carries nothing" -- which would be
+# safe, but would hide that the workflow handed over something broken.
+if [ -n "$upstream" ]; then
+  load "$upstream" "$tmp/up.json" "base image"
+else
+  echo '[]' > "$tmp/up.json"
+fi
 
 # One entry per identity in each class, with the versions, fixed versions and
 # targets it was seen at gathered into lists. Severity is the worst seen.
-jq -n --slurpfile c "$tmp/cand.json" --slurpfile b "$tmp/base.json" '
+# `inherited`, like `new` and `known`, is shown at the candidate's versions
+# and targets: what is about to ship, not what the base image had.
+jq -n --slurpfile c "$tmp/cand.json" --slurpfile b "$tmp/base.json" --slurpfile u "$tmp/up.json" '
   def key: [.id, .pkg, .type];
   def sevrank: {"CRITICAL": 0, "HIGH": 1, "MEDIUM": 2, "LOW": 3}[.] // 4;
   def grouped: group_by(key) | map({
@@ -209,24 +268,28 @@ jq -n --slurpfile c "$tmp/cand.json" --slurpfile b "$tmp/base.json" '
       fixed: (map(.fixed) | unique | map(select(. != ""))),
       targets: (map(.target) | unique | map(select(. != "")))
     }) | sort_by((.sev | sevrank), .id, .pkg, .type);
-  $c[0] as $cand | $b[0] as $base
+  $c[0] as $cand | $b[0] as $base | $u[0] as $up
   | ($base | map(key) | unique) as $bk
+  | ($up | map(key) | unique) as $uk
   | ($cand | map(key) | unique) as $ck
-  | { new:   ($cand | map(select(key as $k | $bk | bsearch($k) < 0)) | grouped),
-      known: ($cand | map(select(key as $k | $bk | bsearch($k) >= 0)) | grouped),
-      fixed: ($base | map(select(key as $k | $ck | bsearch($k) < 0)) | grouped) }
+  | { new:       ($cand | map(select(key as $k | ($bk | bsearch($k) < 0) and ($uk | bsearch($k) < 0))) | grouped),
+      known:     ($cand | map(select(key as $k | $bk | bsearch($k) >= 0)) | grouped),
+      inherited: ($cand | map(select(key as $k | ($bk | bsearch($k) < 0) and ($uk | bsearch($k) >= 0))) | grouped),
+      fixed:     ($base | map(select(key as $k | $ck | bsearch($k) < 0)) | grouped) }
 ' > "$tmp/cmp.json"
 
 n_new=$(jq '.new | length' "$tmp/cmp.json")
 n_known=$(jq '.known | length' "$tmp/cmp.json")
+n_inherited=$(jq '.inherited | length' "$tmp/cmp.json")
 n_fixed=$(jq '.fixed | length' "$tmp/cmp.json")
 n_cand=$(jq 'length' "$tmp/cand.json")
 
 if [ -n "$result" ]; then
-  jq --arg label "$label" --arg ref "$baseline_ref" --arg none "$no_baseline" \
+  jq --arg label "$label" --arg ref "$baseline_ref" --arg none "$no_baseline" --arg up "$upstream_ref" \
     '{label: $label,
       baseline: (if $none != "" then {ref: null, strict: true, reason: $none}
-                 else {ref: (if $ref == "" then null else $ref end), strict: false} end)}
+                 else {ref: (if $ref == "" then null else $ref end), strict: false} end),
+      upstream: (if $up == "" then null else {ref: $up} end)}
      + .' "$tmp/cmp.json" > "$tmp/result.json"
   mv "$tmp/result.json" "$result"
 fi
@@ -246,18 +309,32 @@ readonly JQ_LIB='
   echo "### Vulnerability gate: $label"
   echo
   if [ -n "$no_baseline_set" ]; then
-    echo "**Strict: no baseline.** $no_baseline. Every fixable HIGH/CRITICAL finding blocks, as if"
-    echo "nothing had been published before."
+    if [ -n "$upstream" ]; then
+      echo "**Strict: no baseline.** $no_baseline. Every fixable HIGH/CRITICAL finding blocks, as if"
+      echo "nothing had been published before -- except those the base image already carries."
+    else
+      echo "**Strict: no baseline.** $no_baseline. Every fixable HIGH/CRITICAL finding blocks, as if"
+      echo "nothing had been published before."
+    fi
   else
     echo "Compared with the image published now${baseline_ref:+: \`$baseline_ref\`}. Only findings this build"
     echo "adds block; the ones the published image already carries are known upstream and ship until"
     echo "upstream fixes them."
+  fi
+  if [ -n "$upstream" ]; then
+    echo
+    echo "Also compared with the base image this build is FROM: \`$upstream_ref\`. What the base"
+    echo "image ships is inherited -- listed, never blocking: this repository cannot fix it, and the"
+    echo "daily rebuild picks up the base's fixes when upstream publishes them."
   fi
   echo
   echo "| | findings |"
   echo "|---|---:|"
   echo "| **new in this build (blocking)** | **$n_new** |"
   echo "| known upstream (published image has them too) | $n_known |"
+  if [ -n "$upstream" ]; then
+    echo "| inherited from the base image (not blocking) | $n_inherited |"
+  fi
   echo "| fixed by this build | $n_fixed |"
   echo
   echo "Counted per (vulnerability, package, package type); $n_cand candidate row(s) in all. Scope: fixable"
@@ -273,6 +350,19 @@ readonly JQ_LIB='
     if [ "$n_new" -gt "$MAX_ROWS" ]; then
       echo
       echo "...and $((n_new - MAX_ROWS)) more; the job log and the vuln-gate artifact have every one."
+    fi
+  fi
+
+  if [ "$n_inherited" -gt 0 ]; then
+    echo
+    echo "#### Inherited from the base image (not blocking)"
+    echo
+    echo "| vulnerability | package | type | severity | installed | fixed in | where |"
+    echo "|---|---|---|---|---|---|---|"
+    jq -r --argjson max "$MAX_ROWS" --argjson mc "$MAX_CELL" "$JQ_LIB"'.inherited[:$max][] | row' "$tmp/cmp.json"
+    if [ "$n_inherited" -gt "$MAX_ROWS" ]; then
+      echo
+      echo "...and $((n_inherited - MAX_ROWS)) more in the vuln-gate artifact."
     fi
   fi
 
@@ -307,8 +397,9 @@ if [ "$n_new" -gt 0 ]; then
   jq -r '.new[] | "new: \(.id) in \(.pkg) [\(.type)] (\(.sev)), installed \(.installed | join(", ")), fixed in \(.fixed | join(", ")), at \(.targets | join(", "))"' \
     "$tmp/cmp.json" >&2
 fi
-printf 'vuln-gate: %s: %d new, %d known upstream, %d fixed%s\n' \
-  "$label" "$n_new" "$n_known" "$n_fixed" "${no_baseline_set:+ (strict: no baseline)}"
+printf 'vuln-gate: %s: %d new, %d known upstream, %s%d fixed%s\n' \
+  "$label" "$n_new" "$n_known" "${upstream:+$n_inherited inherited from the base image, }" "$n_fixed" \
+  "${no_baseline_set:+ (strict: no baseline)}"
 
 if [ "$n_new" -gt 0 ]; then
   exit "$EXIT_NEW"

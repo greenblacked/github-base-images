@@ -53,6 +53,18 @@ for it (a step summary is capped at 1 MiB):
     summary says why. The published image is read with the job's own token on every run, pull
     requests included, so private packages are compared too. An unreadable report fails the
     gate. It is never read as "no findings".
+  - It also scans the **base image the build is FROM**, for the same architecture and with the
+    same flags: the mirror on `main`, the upstream ref from `images.json` elsewhere (so
+    `debian:bookworm-slim` for `ci-tools`, `ci-cloud`, `ci-security` and `ci-db`, the .NET SDK
+    image for the `ci-dotnet*` images, and so on). A finding the published image lacks but the
+    base image carries is **inherited from the base image**: listed, never blocking. So what blocks
+    is the candidate minus the published image minus the base image. This repository cannot fix
+    what a base image ships (the .NET SDK's bundled MSBuild and cryptography packages, the python
+    image's own pip); blocking on it would only withhold the fixes the rebuild carries, and the
+    base's fixes arrive through the daily rebuild anyway. It applies to strict runs too, so a new
+    image is blocked only for what it adds on top of its base. The base-image baseline is
+    best-effort: when the base cannot be read or scanned the gate runs without it, as before, and
+    says so in a notice.
   - `ignore-unfixed` keeps it honest: red always means there is a version to move to, never a CVE
     with no patch available. Unfixed findings are reported, not enforced.
   - **Known upstream findings ship until upstream fixes them.** That is the case for a package
@@ -66,9 +78,9 @@ for it (a step summary is capped at 1 MiB):
     `.github/vuln-exceptions.json`, for a finding whose fixed version is in no released artifact
     yet (a module compiled into the latest upstream release binary, a package vendored inside pip).
     Exceptions are per image, per CVE and per path or package version, last 90 days at most, apply
-    to both scans, and are printed in the gate step's log and summary. The reports and SARIF above
+    to all three scans, and are printed in the gate step's log and summary. The reports and SARIF above
     never use them. See [Vulnerability exceptions](#vulnerability-exceptions).
-  - Both scans and the decision are kept as the `vuln-gate-<image>-<arch>` artifact.
+  - All three scans and the decision are kept as the `vuln-gate-<image>-<arch>` artifact.
 - **Secret scan** — **gates at any severity**. A baked-in credential in a public CI image is
   always fixable from this repo, with no upstream to wait on, so there is no excuse for shipping
   one.
@@ -161,7 +173,8 @@ Four things about it are less obvious than they look:
 `.github/vuln-exceptions.json` is the only way past the vulnerability gate, and it is narrow on
 purpose ([ADR 0006](adr/0006-gate-on-fixable-library-vulnerabilities.md#exceptions-expiring-per-image-per-id)).
 Since [ADR 0008](adr/0008-self-updating.md) an entry is needed only for a finding a build *adds*
-(one the published image already carries is known upstream and does not block). It is for a
+(one the published image already carries is known upstream, and one the base image carries is
+inherited; neither blocks). It is for a
 finding whose advisory names a fixed version that **no released artifact contains yet**: a Go module compiled into the latest release of a binary the image installs, a
 package vendored inside the upstream image's pip, a package inside the newest .NET SDK. It is
 never for "a fix exists and nobody has bumped the pin", nor for "upstream has shipped a patched
