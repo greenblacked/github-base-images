@@ -78,8 +78,9 @@ for it (a step summary is capped at 1 MiB):
     `.github/vuln-exceptions.json`, for a finding whose fixed version is in no released artifact
     yet (a module compiled into the latest upstream release binary, a package vendored inside pip).
     Exceptions are per image, per CVE and per path or package version, last 90 days at most, apply
-    to all three scans, and are printed in the gate step's log and summary. The reports and SARIF above
-    never use them. See [Vulnerability exceptions](#vulnerability-exceptions).
+    to all three scans, and are printed in the gate step's log and summary. The reports above never
+    use them; the code-scanning upload does ([The Security tab](#the-security-tab)). See
+    [Vulnerability exceptions](#vulnerability-exceptions).
   - All three scans and the decision are kept as the `vuln-gate-<image>-<arch>` artifact.
 - **Secret scan** — **gates at any severity**. A baked-in credential in a public CI image is
   always fixable from this repo, with no upstream to wait on, so there is no excuse for shipping
@@ -96,47 +97,56 @@ for it (a step summary is capped at 1 MiB):
 
 ### The Security tab
 
-The vulnerability scan is also emitted as **SARIF and uploaded to the repository's Security tab**,
-under a `<image>-<arch>` category, so findings are browsable and diffable over time rather than
-buried in a build log. The upload is `continue-on-error` — code scanning must never be the reason
-an image fails to publish.
+**Code scanning shows what someone can act on, and nothing else.** Per image and architecture, a
+second Trivy scan is emitted as SARIF and uploaded under the `<image>-<arch>` category with the
+gate's own filters: HIGH/CRITICAL (`limit-severities-for-sarif: true` alongside `severity:`, or
+trivy-action silently ships every severity), **`ignore-unfixed`**, OS packages and libraries, and
+the gate's exception file. So every alert names a fixed version, and none is one an active
+[exception](#vulnerability-exceptions) excuses. The upload is `continue-on-error`: code scanning
+must never be the reason an image fails to publish.
 
-**Its scope is deliberately wider than the gate's, so expect this view to be non-empty.** The gate
-blocks only what has a fix; the SARIF exists to record what the gate lets through rather than
-duplicate what it blocks:
+What is open there is therefore a short list: fixable findings the published image already carries
+(*known upstream* — usually a package vendored inside another, waiting on an upstream release; see
+the gate above), plus anything in the window between a fix appearing and the next daily rebuild.
+Each closes on its own when the rebuild or an automated update installs the fix: the next upload
+of that category no longer contains it, and code scanning marks it fixed.
 
-- **No `ignore-unfixed`.** On an image whose build just ran `apt-get upgrade`, "fixed" and
-  "already applied" are close to the same set — a fixed-only report on a freshly rebuilt image is
-  close to a guarantee of nothing. What is left is overwhelmingly *unfixed* HIGH/CRITICAL CVEs,
-  which is exactly the accepted risk worth a standing record.
-- **The same package scope as the gate**: OS packages and libraries, including the runtime's own
-  bundled `pip`, `npm` and `gem` packages baked into the upstream image. Their unfixed CVEs never
-  gate, but a consumer of the image has every reason to want to know what those bundled versions
-  carry.
-- **Severity stays HIGH,CRITICAL**, via `limit-severities-for-sarif: true` alongside `severity:`.
-  Without that flag trivy-action silently ignores `severity:` for SARIF output and ships every
-  severity, UNKNOWN and LOW included — see the comment at the step itself, and
-  [ADR 0003](adr/0003-gates-vs-reports.md) for why that flag exists at all.
+**The unfixed inventory is not on that page.** HIGH/CRITICAL findings with no fixed version
+anywhere — unfixed Debian CVEs, the runtime's own bundled `npm`, `pip` and `gem` packages — are
+accepted risk that nobody here or downstream can act on. Until 2026-10-14 they were uploaded too,
+as a standing record, and came to about 6,400 open alerts against a few dozen actionable ones
+([ADR 0003, amendment of 2026-10-14](adr/0003-gates-vs-reports.md#amendment-2026-10-14-code-scanning-shows-only-actionable-findings)).
+They are kept, per build and for 90 days, in:
 
-So *Security → Code scanning* is where you look for what this repo has decided is safe to ship
-without blocking: unfixed OS and library CVEs at HIGH/CRITICAL, browsable and diffable across
-builds. It is accepted risk, not a build failure — nothing here means the pipeline is broken. For
-the exhaustive picture (every severity, every scanner, unfixed and fixed alike) go to the job
-summary or the `security-report-<image>-<arch>` artifact, which run with no filters at all.
+- the `security-report-<image>-<arch>` artifact: `trivy-<image>-<arch>.json` and `.txt` (every
+  severity, fixed and unfixed, no exceptions applied), `trivy-<image>-<arch>.sarif` (every
+  HIGH/CRITICAL finding, fixed or not — the inventory as it used to be uploaded), and the SBOM;
+- the `osv-report-<image>-<arch>` artifact: osv-scanner's findings, every severity;
+- the build job's log, which prints the full vulnerability table.
+
+The narrowing closed the old alerts by itself: the upload kept its category, and code scanning
+treats each upload as the complete current state of its category, so the first upload after the
+change marked every alert it no longer contained as fixed. No alert was dismissed by hand.
 
 ### A second opinion from OSV
 
 After both architectures build, a separate `osv` job runs
 [osv-scanner](https://github.com/google/osv-scanner) over the CycloneDX SBOM the build already
-produced — no second image scan — and uploads the result to the Security tab under its own
-`osv-<image>-<arch>` category, next to Trivy's. OSV aggregates the Debian and Ubuntu security
-trackers alongside the npm, PyPI, RubyGems and Go advisories, so it is a different database
-looking at the same packages. **Reported, not gating.** Like the Trivy SARIF, the upload is
-limited to HIGH/CRITICAL (`security-severity` >= 7.0) — plus every finding OSV gives no score at
-all, which are kept rather than silently dropped. The unfiltered report, every severity, is the
-`osv-report-<image>-<arch>` artifact; the job summary gives the kept / dropped / unscored counts.
+produced — no second image scan. OSV aggregates the Debian and Ubuntu security trackers alongside
+the npm, PyPI, RubyGems and Go advisories, so it is a different database looking at the same
+packages. **Reported, not gating.** The report, every severity, is the
+`osv-report-<image>-<arch>` artifact; the job summary counts its findings by score.
 
-Four things about it are less obvious than they look:
+**Its findings are not uploaded to code scanning** (since 2026-10-14). Code scanning shows only
+fixable findings, and osv-scanner's SARIF cannot say whether a finding has a fix for *this*
+image's release: it carries no fixed version on a result, only a Markdown table in the rule's help
+built from every ecosystem the advisory covers, so a CVE fixed in Debian 11 but not 12 reads as
+fixed on a bookworm image. Trivy's upload already carries the fixable findings for the same
+packages. The job still uploads to its `osv-<image>-<arch>` category — an **empty** run, on every
+build — because an upload is what closes a category's open alerts: the first one closed the
+thousands of OSV alerts uploaded before, and the rest keep the category at zero.
+
+Three things about it are less obvious than they look:
 
 - **It fails when it could not look.** Findings are success. A scan that did not complete — the
   OSV database unreachable, no packages read from the SBOM, the binary not running — turns the
@@ -156,14 +166,6 @@ Four things about it are less obvious than they look:
   package *and file path*, so the normalised copy is always written to the same path
   (`/tmp/osv-scan-sbom/<sbom name>`) and the displayed location is rewritten to the SBOM's name.
   A per-run temp path would have closed and reopened every alert on every build.
-- **Kernel findings on kernel headers stay out of the Security tab.** Images that keep a C
-  toolchain (ci-go, ci-php84, ci-php85) carry `linux-libc-dev`, the kernel's userspace headers,
-  and OSV files every kernel CVE under its source package `linux`: about 2,000 alerts per image
-  and architecture, against a package with no kernel code in it. A container runs the host's
-  kernel. When `linux-libc-dev` is the only package from that source, those findings are left out
-  of the upload and counted in the summary. They stay in the artifact. If anything else from the
-  `linux` source is present, nothing is left out.
-
 ```bash
 ./scripts/osv-scan-sbom.sh sbom-ci-tools-amd64.cdx.json full.sarif upload.sarif   # locally
 ```
@@ -388,12 +390,12 @@ daily, on every push and pull request, and on a dispatch.
 
 Four of these publish SARIF to the Security tab — everything above except the git-history scan,
 whose findings are deliberately kept out of a view people triage to empty, and dependency review,
-whose verdict is the PR check itself. So *Security → Code scanning* collects repository secrets,
-workflow findings, the CodeQL results and the Scorecard result. Image vulnerabilities are uploaded
-there too, under their own `<image>-<arch>` and `osv-<image>-<arch>` categories — but unlike these
-repository-level scans, those are expected to be **non-empty** on a healthy build; see
-[The Security tab](#the-security-tab) and [OSV](#a-second-opinion-from-osv) above on why, and what
-it means when they are not.
+whose verdict is the PR check itself. So *Security → Code scanning* collects repository secrets
+(`repo-secrets`), workflow findings (`workflow-audit`, zizmor), the CodeQL results
+(`codeql-actions`) and the Scorecard result (`scorecard`). Image vulnerabilities are uploaded
+there too, under their own `<image>-<arch>` categories — fixable HIGH/CRITICAL findings only — and
+`osv-<image>-<arch>`, which is always empty; see [The Security tab](#the-security-tab) and
+[OSV](#a-second-opinion-from-osv) above.
 
 > **First run:** the Scorecard badge stays grey until the workflow has run once on `main` and
 > published its results. Both badges track `main`, so they will not reflect a pull request.
@@ -427,8 +429,8 @@ cancelled, failed or unreadable all mean it waits.
 
 ## Security alerts report
 
-*Security → Code scanning* holds thousands of alerts across every image, architecture and tool,
-and at that volume the list says how many and little else.
+*Security → Code scanning* spreads its alerts over forty-odd categories — every image,
+architecture and tool — and the list says how many and little else.
 [alerts-report.yml](../.github/workflows/alerts-report.yml) turns it into one report: every open
 code-scanning alert on `main` plus every open Dependabot alert, analysed by
 [scripts/alerts-report.sh](../scripts/alerts-report.sh). The report has:
@@ -447,6 +449,9 @@ code-scanning alert on `main` plus every open Dependabot alert, analysed by
 - the 25 CVEs that affect the most images, which is how a shared-base problem shows up;
 - repository-level alerts (CodeQL, zizmor, Scorecard, the repository secret scan), grouped by tool
   and rule;
+- **not-actionable** image alerts (unfixed, below HIGH, or OSV) still open from before code
+  scanning was narrowed, by category. Each category's next upload closes them, so one still listed
+  days later means that image has stopped uploading (its build is failing);
 - **stale** categories: alerts uploaded for images that no longer exist (`ci-go125`, `ci-rust185`,
   …). Nothing will upload there again, so they never close on their own; delete the category under
   *Security → Code scanning → Tool status*.
@@ -457,14 +462,20 @@ on demand via *Run workflow*. Read it on the run's summary page; the full
 `code-scanning-report` artifact (90 days). A very large report is cut in the summary, section by
 section, never in the artifact.
 
+**The job log has the short version**, readable without downloading anything: one line per
+fixable HIGH/CRITICAL alert no exception covers (image, architecture, CVE, severity, package,
+installed → fixed version, alert number), per fixable HIGH/CRITICAL Dependabot alert, and per
+repository-level alert (tool, rule, `path:line`, severity, category), then one line per category
+of not-actionable leftovers. It is capped at 200 lines; `report.md` has the rest.
+
 **Open fixable alerts are a warning, not a failure.** A fixable HIGH/CRITICAL Trivy alert in a
 current image is usually *known upstream*: inherited from a runtime image or a vendored package,
 with no release that fixes it yet. It ships until one does
 ([ADR 0008](adr/0008-self-updating.md)). Failing on it would keep `main` red for weeks over
 something nothing here can change. So the run shows a warning with the count, and every such alert
 is listed in the report. A HIGH/CRITICAL Dependabot alert with a patched version is treated the
-same way; Dependabot's own pull request for it merges itself once green. Unfixed findings, stale
-categories and alerts covered by an active exception (listed and counted separately) are not
+same way; Dependabot's own pull request for it merges itself once green. Not-actionable leftovers,
+stale categories and alerts covered by an active exception (listed and counted separately) are not
 counted at all; an expired entry excuses nothing.
 
 It does fail, rather than reporting zero, whenever it could not look: an API call that failed,

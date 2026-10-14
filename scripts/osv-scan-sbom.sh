@@ -4,8 +4,8 @@
 # A second opinion on the image, from a different vulnerability database (OSV,
 # which aggregates the Debian and Ubuntu security trackers alongside the
 # language ecosystems' own advisories), without a second image scan: the input
-# is the SBOM build-image.yml already produces. Report-only -- the caller
-# uploads the SARIF to code scanning and never gates on its contents.
+# is the SBOM build-image.yml already produces. Report-only -- nothing gates on
+# its contents.
 #
 # Report-only is not the same as "cannot fail". Findings are the expected
 # outcome and exit 0. A scan that did not actually look -- the tool could not
@@ -18,41 +18,37 @@
 #   ./scripts/osv-scan-sbom.sh sbom-ci-tools-amd64.cdx.json full.sarif upload.sarif
 #
 # Two outputs:
-#   full.sarif    every finding, every severity -- the 90-day artifact
-#   upload.sarif  what goes to code scanning: findings whose rule scores
-#                 security-severity >= 7.0 (HIGH/CRITICAL), PLUS every finding
-#                 whose rule carries no score at all. The same readability
-#                 trade as the Trivy SARIF (ADR 0003), but an unscored finding
-#                 is not a low one -- dropping those would be a silent
-#                 narrowing, so they are kept and counted separately.
-#                 One exclusion on top: kernel findings on an image whose only
-#                 package from the `linux` source is linux-libc-dev (see below).
-# Counts (kept / dropped / unscored / kernel) go to stdout and, in Actions, to
-# the step summary, so a scan that filtered down to nothing says so.
+#   full.sarif    every finding, every severity -- the 90-day artifact, and
+#                 the only place OSV's findings are kept
+#   upload.sarif  what goes to code scanning: the same run with NO results.
+#                 Its job is to keep the `osv-<image>-<arch>` category closed.
+# Counts (total / scored >= 7.0 / below / unscored) go to stdout and, in
+# Actions, to the step summary.
 #
-# Why kernel findings are kept out of the upload
-# ----------------------------------------------
-# Images that keep a compiler toolchain (libc6-dev, via build-essential or
-# PHPIZE_DEPS: ci-go, ci-php84, ci-php85) carry linux-libc-dev -- the kernel's
-# userspace API headers, built from Debian's `linux` source package. OSV files
-# every kernel CVE under that source, so after the source-name mapping below
-# each of those images reported roughly 2,000 kernel findings per
-# architecture, against a package that contains no kernel code: a container
-# runs the host's kernel, never one from its image. The upload therefore drops
-# findings on the `linux` source, but only when linux-libc-dev is the ONLY
-# binary package from that source in the SBOM. Anything else from it
-# (linux-image-*, linux-perf, bpftool, usbip) is real kernel-built code, and
-# then nothing is excluded. Excluded findings stay in full.sarif and are
-# counted in the summary.
+# Why OSV findings are no longer uploaded (2026-10-14)
+# ----------------------------------------------------
+# Code scanning shows what someone can act on: a HIGH/CRITICAL finding with a
+# fixed version that no exception covers (docs/adr/0003, amendment of
+# 2026-10-14). Trivy's upload already is that set, for the same packages of
+# the same image. OSV's upload was HIGH/CRITICAL plus unscored, fixed or not,
+# and nearly all of it unfixed -- thousands of alerts nobody could close.
 #
-# osv-scanner v2.6.0 names a result's package only in its message text
-# ("Package 'linux@6.1.187-1' is vulnerable to '...'"), with no ecosystem, so
-# the match is on the bare name `linux`. When the exclusion applies, two
-# tripwires stop it from going inert unnoticed: every result must parse that
-# way, and at least one must be a kernel finding. Debian always carries open
-# kernel CVEs, so a headers-only image with none means the names no longer
-# match (a message format change that still parses, say), and the script
-# fails rather than upload the flood again without a word.
+# Restricting it to fixed findings is not possible from what this script
+# has. osv-scanner v2.6.0's SARIF (internal/output/sarif.go) carries no fixed
+# version on a result; the only fix data is a Markdown "Fixed Versions" table
+# in the rule's help text, built from every affected range of every alias
+# across every ecosystem and keyed by bare package name. A Debian CVE fixed
+# in Debian 11 or 13 but not in 12 shows a fixed version there for an image
+# on 12 that cannot install one. Deciding it properly means re-reading the
+# advisories' ranges and comparing Debian, npm, PyPI, ... versions in jq,
+# which would be a second scanner. So the findings stay in full.sarif, and
+# the upload is an empty run of the same tool.
+#
+# Empty, not absent: code scanning treats each upload as the complete current
+# state of its category and marks every open alert the upload does not
+# contain as fixed. The first empty upload after this change closed every
+# open OSV alert of its category; uploading it on every build keeps it so,
+# deterministically, with no dismissal by hand.
 #
 # Why the SBOM is rewritten before scanning
 # -----------------------------------------
@@ -200,20 +196,6 @@ if [ "$deb_total" -gt 0 ] && [ "$deb_src" -eq 0 ]; then
   exit 1
 fi
 
-# --- kernel headers: which binaries come from the `linux` source? ------------
-linux_bins=$(jq -r '
-  [.components[]? | select(.purl // "" | startswith("pkg:deb/"))
-   | select(([(.properties // [])[] | select(.name == "aquasecurity:trivy:SrcName") | .value][0] // .name) == "linux")
-   | .name] | unique | join(" ")' "$sbom") || { echo "error: could not read components from '$sbom'" >&2; exit 1; }
-if [ "$linux_bins" = "linux-libc-dev" ]; then
-  headers_only=true
-else
-  headers_only=false
-  if [ -n "$linux_bins" ]; then
-    summary "OSV: packages from the linux source other than linux-libc-dev ($linux_bins) -- kernel findings are NOT excluded from the upload"
-  fi
-fi
-
 # --- normalise ---------------------------------------------------------------
 if ! jq '
   def prop($n): [(.properties // [])[] | select(.name == "aquasecurity:trivy:" + $n) | .value][0];
@@ -298,59 +280,29 @@ jq --arg base "$base" '
   )' "$out" > "$out.tmp"
 mv "$out.tmp" "$out"
 
-# --- the uploaded subset -----------------------------------------------------
-# rules[] is left intact, so every kept result's ruleIndex stays valid. A
-# security-severity that is present but not a number makes tonumber fail, and
-# with it this script: an unreadable score is not silently read as "low".
-sev_map='([(.tool.driver.rules // [])[] | {key: .id, value: (.properties["security-severity"] // null)}] | from_entries)'
-# The package a result is about: the source package after normalisation, so
-# `linux` for linux-libc-dev. null when the message does not parse.
-pkg_of='(((.message.text // "") | capture("^Package '"'"'(?<p>[^'"'"']+)@[^@'"'"']*'"'"' is vulnerable to '"'"'") | .p) // null)'
+# --- counts ------------------------------------------------------------------
+# A security-severity that is present but not a number makes tonumber fail,
+# and with it this script: an unreadable score is not silently read as "low".
+tally=$(jq -r --argjson t "$SEVERITY_THRESHOLD" '
+  [.runs[]
+   | ([(.tool.driver.rules // [])[] | {key: .id, value: (.properties["security-severity"] // null)}]
+      | from_entries) as $sev
+   | .results[]
+   | ($sev[.ruleId]) as $s
+   | if $s == null then "unscored" elif ($s | tonumber) >= $t then "high" else "low" end]
+  | [length, (map(select(. == "high")) | length),
+     (map(select(. == "low")) | length), (map(select(. == "unscored")) | length)]
+  | @tsv' "$out")
+read -r total high low unscored <<<"$tally"
 
-if [ "$headers_only" = true ]; then
-  unparsed=$(jq "[.runs[].results[] | select($pkg_of == null)] | length" "$out")
-  if [ "$unparsed" -ne 0 ]; then
-    echo "error: $unparsed result(s) in '$out' do not name their package as \"Package '<name>@<version>' is vulnerable to ...\" -- the linux-libc-dev exclusion cannot tell kernel findings apart (an osv-scanner output change?)" >&2
-    exit 1
-  fi
-fi
-
-jq --argjson t "$SEVERITY_THRESHOLD" --argjson hdr "$headers_only" "
-  .runs |= map($sev_map as \$sev
-    | .results |= map(select(
-        (\$hdr and $pkg_of == \"linux\") | not)
-      | select((\$sev[.ruleId]) as \$s | \$s == null or ((\$s | tonumber) >= \$t))))
-" "$out" > "$upload"
-
-# A command substitution, not `read < <(jq ...)`: errexit cannot see a failure
-# inside a process substitution, and empty counts would sail through below.
-tally=$(jq -r --argjson t "$SEVERITY_THRESHOLD" --argjson hdr "$headers_only" "
-  [.runs[] | $sev_map as \$sev | .results[]
-   | (\$sev[.ruleId]) as \$s
-   | if \$hdr and $pkg_of == \"linux\" then \"kernel\"
-     elif \$s == null then \"unscored\" elif (\$s | tonumber) >= \$t then \"kept\" else \"dropped\" end]
-  | [length, (map(select(. == \"kept\")) | length),
-     (map(select(. == \"dropped\")) | length), (map(select(. == \"unscored\")) | length),
-     (map(select(. == \"kernel\")) | length)]
-  | @tsv" "$out")
-read -r total kept dropped unscored kernel <<<"$tally"
-if [ "$headers_only" = true ] && [ "$kernel" -eq 0 ]; then
-  echo "error: linux-libc-dev is in '$sbom' but none of the $total result(s) in '$out' parsed as a finding on the linux source -- Debian always has open kernel CVEs, so the kernel-header exclusion is no longer matching (an osv-scanner output change?)" >&2
-  exit 1
-fi
-uploaded=$(jq '[.runs[].results[]] | length' "$upload")
-
-# Two independent jq programs must agree on what was kept; if they do not, the
-# filter is not doing what its counts claim.
-if [ "$uploaded" -ne $((kept + unscored)) ] || [ "$total" -ne $((kept + dropped + unscored + kernel)) ]; then
-  echo "error: SARIF filter disagrees with its own counts (total=$total kept=$kept dropped=$dropped unscored=$unscored kernel=$kernel uploaded=$uploaded)" >&2
+# --- the upload: the same run, no results -------------------------------------
+# The tool (driver name and version) is kept, so the upload is recognisably
+# osv-scanner's; rules and artifacts go, since nothing refers to them.
+jq '.runs |= map(.results = [] | .tool.driver.rules = [] | del(.artifacts))' "$out" > "$upload"
+left=$(jq '[.runs[].results[]] | length' "$upload")
+if [ "$left" -ne 0 ]; then
+  echo "error: '$upload' is not empty -- it must close the category, not repopulate it" >&2
   exit 1
 fi
 
-summary "OSV scan of $base: osv-scanner exit $rc, $total finding(s) in $(basename -- "$out") (all severities); uploading $uploaded to code scanning = $kept with security-severity >= $SEVERITY_THRESHOLD + $unscored with no score (kept, not dropped); $dropped below $SEVERITY_THRESHOLD kept only in the artifact"
-if [ "$kernel" -gt 0 ]; then
-  summary "OSV: $kernel kernel finding(s) on the linux source, whose only package here is linux-libc-dev (kernel headers; a container runs the host's kernel), kept only in the artifact"
-fi
-if [ "$total" -gt 0 ] && [ "$uploaded" -eq 0 ]; then
-  summary "OSV: every finding was scored below $SEVERITY_THRESHOLD or excluded as a kernel-header finding, so the code-scanning upload is empty by the filter, not by the scan -- all $total are in the artifact"
-fi
+summary "OSV scan of $base: osv-scanner exit $rc, $total finding(s) in $(basename -- "$out") (all severities): $high with security-severity >= $SEVERITY_THRESHOLD, $low below, $unscored with no score. Kept in the artifact only; the code-scanning upload is empty by design (docs/adr/0003, amendment of 2026-10-14)"

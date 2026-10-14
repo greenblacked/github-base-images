@@ -92,8 +92,10 @@ So the gate takes **exceptions** from `.github/vuln-exceptions.json`, under thes
   warns about an expired entry, so a date passing never fails an unrelated pull request; the red
   gate is the signal.
 - **Always visible.** The gate step prints the exceptions it applied to the log and the job
-  summary. The vulnerability reports, SARIF and SBOM never use them, so an excepted finding still
-  appears in *Security → Code scanning*. The alerts report applies the same image, id, path and
+  summary. The vulnerability reports, the inventory SARIF and the SBOM never use them, so an
+  excepted finding still appears in the build artifacts. (Since 2026-10-14 the code-scanning
+  upload does use them, and an excepted finding no longer appears in *Security → Code scanning*;
+  see [0003](0003-gates-vs-reports.md#amendment-2026-10-14-code-scanning-shows-only-actionable-findings).) The alerts report applies the same image, id, path and
   package-version matching, lists every excepted alert in an *Active exceptions* section and every
   expired entry as a reminder; the first never fails it, and the second excuses nothing.
 
@@ -110,6 +112,8 @@ date bump.
   images are unaffected; `digests` still aggregates what published.
 - The SARIF report no longer differs from the gate in package scope — both cover `os,library` —
   only in including unfixed findings. It remains the standing inventory of accepted risk.
+  (Amended 2026-10-14: the uploaded SARIF now matches the gate's filters and the inventory lives
+  in the build artifacts; see [0003](0003-gates-vs-reports.md#amendment-2026-10-14-code-scanning-shows-only-actionable-findings).)
 - The alerts report makes the Security tab something a run can fail on, which it never was.
   That is deliberate and narrow: only what has a fix and should not be open fails it.
 - Its Dependabot fetch needs the `vulnerability-alerts: read` token permission, granted both in

@@ -1,14 +1,20 @@
 # One readable report over every open security alert on main: code scanning
-# (Trivy and OSV per image and architecture, plus the repository-level tools)
-# and Dependabot. The analysis lives in scripts/alerts-report.sh, which runs
+# (Trivy per image and architecture, plus the repository-level tools) and
+# Dependabot. The analysis lives in scripts/alerts-report.sh, which runs
 # offline against saved API output; this workflow only fetches and hands over.
 #
-# Why it exists: Security -> Code scanning holds thousands of alerts across
-# forty-odd upload categories, and at that volume the list says "how many"
-# and nothing useful. The report says which images carry what, which alerts
-# already have a fix (the ones that should never have shipped), which CVEs
-# sit in a shared base, and which categories belong to images that no longer
-# exist.
+# Why it exists: Security -> Code scanning spans forty-odd upload categories.
+# Until 2026-10-14 it held thousands of alerts, nearly all unfixed; since then
+# it carries only actionable findings (docs/adr/0003), and this report says
+# which images carry what, which alerts have a fix, which CVEs sit in a shared
+# base, which alerts are left over from before the change, and which
+# categories belong to images that no longer exist.
+#
+# The job LOG has the short version: every fixable HIGH/CRITICAL alert no
+# exception covers (image, CVE, package, installed -> fixed), every fixable
+# HIGH/CRITICAL Dependabot alert, and every repository-level alert (tool,
+# rule, path:line, severity), one line each and capped at 200 lines, so it is
+# readable without downloading the artifact.
 #
 # Open fixable alerts are a WARNING, not a failure (docs/adr/0008). Under
 # docs/adr/0006 this job failed on any open fixable HIGH/CRITICAL alert, on
@@ -19,9 +25,10 @@
 # an alert is open by design, can stay open for weeks, and nothing in this
 # repository can close it; failing on it would keep `main` red until then and
 # teach everyone to ignore red. So the report lists every one, the run shows
-# a warning with the count, and the job stays green. Unfixed findings and
-# those under an active entry in .github/vuln-exceptions.json are listed in
-# their own sections, as before.
+# a warning with the count, and the job stays green. Alerts under an active
+# entry in .github/vuln-exceptions.json, and not-actionable image alerts left
+# over from before code scanning was narrowed, are listed in their own
+# sections and never set the exit code.
 #
 # What still FAILS the job is a report that could not be trusted: an API call
 # that failed, Dependabot alerts switched off, input that does not parse, or
@@ -139,7 +146,9 @@ jobs:
       # summary itself, so the run explains itself on its summary page. No
       # pipe on the script's line: the default shell is `bash -e {0}`,
       # errexit without pipefail, and `script | tee` would report tee's exit
-      # status instead of the script's.
+      # status instead of the script's. The script's stdout is the compact
+      # list described in the header, then its one-line summary, which is the
+      # line the warning quotes.
       - name: Build report
         run: |
           rc=0
@@ -150,7 +159,7 @@ jobs:
           case "$rc" in
             0) ;;
             3)
-              echo "::warning::fixable HIGH/CRITICAL alerts are open -- $(cat summary.txt). Most are known upstream: published images inherit them and no release fixes them yet. They are listed in this run's summary and in report.md (artifact code-scanning-report)." ;;
+              echo "::warning::fixable HIGH/CRITICAL alerts are open -- $(tail -n 1 summary.txt). Most are known upstream: published images inherit them and no release fixes them yet. They are listed in this run's summary and in report.md (artifact code-scanning-report)." ;;
             *)
               echo "::error::alerts-report.sh exited $rc -- no trustworthy report"
               exit 1 ;;
