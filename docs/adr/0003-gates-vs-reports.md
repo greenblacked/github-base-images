@@ -212,6 +212,18 @@ goes; the gate is untouched.
   `codeql-actions`) are unchanged: every finding there is already something this repository can
   change.
 
+  *Later the same day:* that held for all of them but a handful that describe the design itself,
+  so the same principle now applies there through a reviewed list rather than a blanket rule.
+  zizmor's `self-repository` finding on the two local reusable-workflow calls is ignored inline,
+  on those two lines. Scorecard's SARIF is filtered before upload by
+  `scripts/filter-scorecard-sarif.sh` against `.github/scorecard-accepted.json`: every entry has
+  a reason, and a pinned-dependency entry covers only a source line that still matches it (the
+  `FROM ${BASE_IMAGE}` lines, the version-pinned npm install, azure-cli's documented pip floors),
+  plus Code-Review, Fuzzing and CII-Best-Practices rule-wide. Branch-Protection (the owner's
+  setting) and Maintained (clears once the repository is 90 days old) stay visible. A filter that
+  fails uploads the unfiltered SARIF; the artifact is always unfiltered. See
+  [docs/security.md](../security.md#repository-level-alerts-accepted-by-design).
+
 **Why:** the inventory had grown to about 6,490 open alerts, of which about 47 were fixable
 HIGH/CRITICAL and about 91 covered by exceptions; the rest had no fixed version anywhere. The
 reasoning above — that accepted risk deserves a browsable standing record — was sound for an image

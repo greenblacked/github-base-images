@@ -517,7 +517,11 @@ jobs:
       # For the merge job's GitHub build provenance attestation, on the same
       # intersection rule.
       attestations: write
-    uses: ./.github/workflows/build-image.yml
+    # zizmor's self-repository audit suggests GitHub's `$/` self-repository
+    # syntax for a local reusable workflow. `./` is the same file at the same
+    # commit as this workflow -- the design of docs/adr/0002 -- so the finding
+    # is accepted, here and on the `alerts` call below (docs/security.md).
+    uses: ./.github/workflows/build-image.yml # zizmor: ignore[self-repository]
     with:
       image: ${{ matrix.image }}
       version: ${{ matrix.version }}
@@ -638,7 +642,8 @@ jobs:
       # Dependabot alerts. Called-workflow permissions are the intersection
       # of this grant and the called job's, so both must name it.
       vulnerability-alerts: read
-    uses: ./.github/workflows/alerts-report.yml
+    # Local reusable workflow, as on the `image` call above.
+    uses: ./.github/workflows/alerts-report.yml # zizmor: ignore[self-repository]
 
   # The one check the `main` ruleset requires from this workflow. Per-image job
   # names depend on which images a PR touches, so none of them can be a

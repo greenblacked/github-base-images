@@ -424,7 +424,21 @@ else
   cat "$CACHE/test-alerts-report.log"; fail=1
 fi
 
-# --- 15. zizmor, best-effort and non-gating -- the same posture as CI, where
+# --- 15. scripts/filter-scorecard-sarif.sh, tested offline against a
+# --- Scorecard-shaped SARIF: an accepted line is dropped, a new unpinned line
+# --- in the same file is not, an unresolvable location is never dropped, and
+# --- a bad .github/scorecard-accepted.json writes nothing. The same suite
+# --- validates the real list and runs it against this tree, so a
+# --- Dockerfile.ci whose FROM ${BASE_IMAGE} it no longer covers fails here,
+# --- not on the next Scorecard run on main (the only place it runs).
+note "filter-scorecard-sarif offline tests"
+if ./scripts/test-filter-scorecard-sarif.sh > "$CACHE/test-filter-scorecard-sarif.log" 2>&1; then
+  tail -1 "$CACHE/test-filter-scorecard-sarif.log"
+else
+  cat "$CACHE/test-filter-scorecard-sarif.log"; fail=1
+fi
+
+# --- 16. zizmor, best-effort and non-gating -- the same posture as CI, where
 # --- its findings surface through code scanning rather than a red job.
 note "zizmor (best-effort, reported not gating)"
 if command -v zizmor >/dev/null; then
