@@ -1,6 +1,6 @@
 # 0003 — Security gates block only what this repo can fix
 
-**Status:** accepted; the part about library vulnerabilities is superseded by [0006](0006-gate-on-fixable-library-vulnerabilities.md)
+**Status:** accepted; the part about library vulnerabilities is superseded by [0006](0006-gate-on-fixable-library-vulnerabilities.md); what is uploaded to code scanning is amended on [2026-10-14](#amendment-2026-10-14-code-scanning-shows-only-actionable-findings)
 
 ## Decision
 
@@ -187,6 +187,56 @@ gate deliberately tolerates rather than duplicate its exit code:
 The gate itself is unchanged: `ignore-unfixed`, `severity: HIGH,CRITICAL`, `vuln-type: os`. Nothing
 above should ever be read as loosening or widening what blocks a publish — only what gets reported
 once a publish already succeeded.
+
+## Amendment (2026-10-14): code scanning shows only actionable findings
+
+**Decision:** *Security → Code scanning* carries only what someone can act on. The full
+inventory — unfixed findings included — stays in each build's artifacts and job log. This reverses
+the "SARIF report is not the gate with the pipes swapped" decision above as far as the **upload**
+goes; the gate is untouched.
+
+- **Trivy, `<image>-<arch>`:** the uploaded SARIF now has `ignore-unfixed: true` and the gate's own
+  exception file (`trivyignores`), on top of HIGH/CRITICAL with `limit-severities-for-sarif: true`
+  and the default `os,library` scope. Every alert names a fixed version and none is one an active
+  exception excuses. The SARIF that used to be uploaded — every HIGH/CRITICAL finding, fixed or not
+  — is still produced as `trivy-<image>-<arch>.sarif` in the `security-report-<image>-<arch>`
+  artifact, beside the every-severity JSON and table.
+- **OSV, `osv-<image>-<arch>`:** the upload is an empty run of osv-scanner, every build. Restricting
+  it to fixed findings was the first choice, but osv-scanner v2.6.0's SARIF puts no fixed version
+  on a result: the only fix data is a Markdown table in the rule's help, built across every
+  ecosystem and release the advisory names, so a CVE fixed in Debian 11 but not 12 reads as fixed
+  on a bookworm image. Trivy's upload covers the fixable findings for the same packages. The
+  findings, every severity, stay in the `osv-report-<image>-<arch>` artifact. The kernel-header
+  exclusion described above went with the upload it filtered.
+- **Repository-level categories** (`repo-secrets`, `workflow-audit`, `scorecard`,
+  `codeql-actions`) are unchanged: every finding there is already something this repository can
+  change.
+
+**Why:** the inventory had grown to about 6,490 open alerts, of which about 47 were fixable
+HIGH/CRITICAL and about 91 covered by exceptions; the rest had no fixed version anywhere. The
+reasoning above — that accepted risk deserves a browsable standing record — was sound for an image
+or two; at forty-odd categories it buried the few alerts that mean "something can be done" under
+thousands that never can, on the one page people are told to look at. A list nobody can act on is
+not a record anyone reads. The record still exists, per run, where it costs nobody attention.
+
+**How the old alerts closed:** by the next upload, with no dismissal by hand. Each upload is
+treated as the complete current state of its category, and an open alert the upload does not
+contain is marked fixed. Both uploads kept their category names for exactly that reason, so the
+first daily rebuild after the change closed every unfixed Trivy alert and every OSV alert of every
+image it rebuilt. `scripts/alerts-report.sh` lists anything still open of that kind as
+"not-actionable, left from before", by category, without failing on it; one that is still listed
+days later means its image has stopped uploading.
+
+**Consequences:**
+
+- On a healthy day the page holds the fixable HIGH/CRITICAL findings the published images carry
+  (*known upstream*, [0008](0008-self-updating.md)) and the repository-level findings. An excepted
+  finding no longer shows there; it is in the gate's summary, the exception file and the alerts
+  report's expired list once it expires — at which point it reappears in code scanning too.
+- "What do we ship that has no fix?" is answered from the artifacts, not the Security tab:
+  `security-report-<image>-<arch>` (Trivy JSON, table and inventory SARIF) and
+  `osv-report-<image>-<arch>`, kept 90 days. The build log prints the full table.
+- The alerts report's job log lists every actionable alert, one line each, capped at 200 lines.
 
 ## Revisit if
 

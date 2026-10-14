@@ -401,7 +401,30 @@ else
   cat "$CACHE/test-check-published.log"; fail=1
 fi
 
-# --- 13. zizmor, best-effort and non-gating -- the same posture as CI, where
+# --- 13. scripts/osv-scan-sbom.sh, tested offline with a fake osv-scanner.
+# --- Its upload SARIF must stay an empty run -- that is what keeps every
+# --- osv-<image>-<arch> code-scanning category closed (docs/adr/0003,
+# --- amendment of 2026-10-14) -- and a scan that did not complete must leave
+# --- nothing behind to upload as a clean one.
+note "osv-scan-sbom offline tests"
+if ./scripts/test-osv-scan-sbom.sh > "$CACHE/test-osv-scan-sbom.log" 2>&1; then
+  tail -1 "$CACHE/test-osv-scan-sbom.log"
+else
+  cat "$CACHE/test-osv-scan-sbom.log"; fail=1
+fi
+
+# --- 14. scripts/alerts-report.sh, tested offline against small copies of
+# --- the code-scanning and Dependabot API output: what is fixable, excepted
+# --- or not actionable, the exit code, and the capped list it prints to the
+# --- job log.
+note "alerts-report offline tests"
+if ./scripts/test-alerts-report.sh > "$CACHE/test-alerts-report.log" 2>&1; then
+  tail -1 "$CACHE/test-alerts-report.log"
+else
+  cat "$CACHE/test-alerts-report.log"; fail=1
+fi
+
+# --- 15. zizmor, best-effort and non-gating -- the same posture as CI, where
 # --- its findings surface through code scanning rather than a red job.
 note "zizmor (best-effort, reported not gating)"
 if command -v zizmor >/dev/null; then

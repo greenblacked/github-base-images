@@ -158,7 +158,7 @@ reserved for problems this repository can fix; the rest is reported so you can s
 | Dependency review | gate (merge) | On pull requests, no new dependency (mostly action versions) with a HIGH/CRITICAL advisory |
 | Repository secret scan | gate (merge) | No credential committed to the repository's working tree |
 | Full scan reports, SBOM | report | Every severity, unfixed findings, licenses, Dockerfile lint, a CycloneDX SBOM per architecture |
-| Security tab (Trivy, OSV) | report | Unfixed HIGH/CRITICAL findings: the accepted risk, browsable over time |
+| Security tab (code scanning) | report | Only what someone can act on: fixable HIGH/CRITICAL findings no exception covers, plus the repository-level audits. The unfixed inventory is in each build's report artifacts |
 | Workflow audits, history scan, Scorecard | report | zizmor, CodeQL, gitleaks over git history, OpenSSF Scorecard |
 | Alerts report | report | One summary of every open alert, daily and after every publish; open fixable alerts are a warning, never a failure |
 | Pin drift | report | A tracking issue when a pinned tool falls behind its vendor |

@@ -217,15 +217,16 @@ jobs:
           output: sbom-${{ inputs.image }}-${{ matrix.arch }}.cdx.json
           exit-code: '0'
 
-      # Deliberately WIDER than the gate below, so this is the standing
-      # inventory of accepted risk rather than a near-duplicate of the exit
-      # code. The one difference from the gate is intentional:
-      #   - no `ignore-unfixed`: on an image whose build just ran
-      #     `apt-get upgrade`, "fixed" and "already applied" are the same
-      #     set, so a fixed-only report is close to a guarantee of an empty
-      #     one. What is left is overwhelmingly unfixed CVEs -- OS packages
-      #     and the runtime's own bundled npm, pip and gem packages alike --
-      #     exactly the accepted risk worth a standing record.
+      # The standing inventory of accepted risk: every HIGH/CRITICAL finding,
+      # fixed or not, as SARIF -- for the artifact below ONLY. It used to be
+      # what code scanning received, and that buried the page: ~6,400 open
+      # alerts, all but a few dozen with no fixed version anywhere (unfixed
+      # Debian CVEs; the runtimes' own bundled npm, pip and gem packages),
+      # which nobody can act on. Since 2026-10-14 code scanning gets the
+      # actionable subset instead ("Vulnerability report for code scanning",
+      # after the exception list below); this file, the JSON and the table
+      # keep the whole inventory per run, for 90 days (docs/adr/0003).
+      #
       # Both cover OS packages and libraries: the gate says `os,library`
       # explicitly, and this step omits `vuln-type`, whose default in the
       # action (see its action.yaml) is the same `os,library`.
@@ -235,9 +236,8 @@ jobs:
       # trivy-action's entrypoint unsets TRIVY_SEVERITY whenever the format is
       # sarif unless this flag is explicitly true (the input has no default),
       # so a SARIF step that only sets `severity:` actually ships every
-      # severity, UNKNOWN and LOW included. `category` must be unique per
-      # image and architecture or each upload overwrites the previous one.
-      - name: Vulnerability report (SARIF)
+      # severity, UNKNOWN and LOW included.
+      - name: Vulnerability inventory (SARIF, artifact only)
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
           image-ref: ${{ inputs.image }}:test
@@ -247,16 +247,6 @@ jobs:
           exit-code: '0'
           limit-severities-for-sarif: true
           severity: HIGH,CRITICAL
-
-      # continue-on-error: code scanning upload must never be the reason an
-      # image fails to publish.
-      - name: Upload SARIF to code scanning
-        if: always()
-        continue-on-error: true
-        uses: github/codeql-action/upload-sarif@2892aa5e19bbd11bc0cff5427e3b750a04d9e3c2 # v4.38.2
-        with:
-          sarif_file: trivy-${{ inputs.image }}-${{ matrix.arch }}.sarif
-          category: ${{ inputs.image }}-${{ matrix.arch }}
 
       # The full tables go to the log and the artifact below, never to the job
       # summary. A step's summary is capped at 1 MiB, and one over the cap is
@@ -315,9 +305,10 @@ jobs:
       # Generated here, per image, rather than committed as a Trivy ignore
       # file, so an exception for one image can never excuse the same CVE in
       # another, and so the list printed below is exactly what this gate run
-      # skips. Only the gate reads it: every report above has already run
-      # without it, so the SARIF, the job summary and the artifact still show
-      # an excepted finding in full.
+      # skips. The gate and the code-scanning SARIF below read it; every
+      # report above has already run without it, so the inventory SARIF, the
+      # JSON, the job summary and the artifact still show an excepted finding
+      # in full.
       #
       # Within the image, every entry is narrowed further by `paths` (the file
       # or target Trivy reports, written out in full: no leading `/` and no
@@ -423,6 +414,49 @@ jobs:
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
           echo "file=$file" >> "$GITHUB_OUTPUT"
+
+      # What code scanning shows: what someone can act on. HIGH/CRITICAL,
+      # `ignore-unfixed`, and the gate's own exception file, so an alert
+      # always names a fixed version and is never one the gate has excused
+      # (docs/adr/0003, amendment of 2026-10-14). The unfixed inventory is
+      # the "Vulnerability inventory" SARIF, the JSON and the table above,
+      # all in the security-report-<image>-<arch> artifact.
+      #
+      # Same category as before, `<image>-<arch>`, on purpose: code scanning
+      # treats each upload as the complete current state of its category and
+      # marks every open alert the upload does not contain as fixed. So the
+      # first upload of each category after this change closed its unfixed
+      # alerts by itself, with no dismissal by hand -- and an alert closes
+      # the same way the day its fix is applied or its exception is added.
+      #
+      # `limit-severities-for-sarif: true` for the reason given at the
+      # inventory step: without it `severity:` is dropped for SARIF. Not
+      # `vuln-type`: the action's default is `os,library`, the gate's scope.
+      # `trivyignores` is empty when the image has no exceptions, exactly as
+      # the gate passes it.
+      - name: Vulnerability report for code scanning (SARIF)
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: ${{ inputs.image }}:test
+          scanners: vuln
+          format: sarif
+          output: trivy-upload-${{ inputs.image }}-${{ matrix.arch }}.sarif
+          exit-code: '0'
+          limit-severities-for-sarif: true
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          trivyignores: ${{ steps.exceptions.outputs.file }}
+
+      # continue-on-error: code scanning upload must never be the reason an
+      # image fails to publish. `category` must be unique per image and
+      # architecture or each upload overwrites the previous one.
+      - name: Upload SARIF to code scanning
+        if: always()
+        continue-on-error: true
+        uses: github/codeql-action/upload-sarif@2892aa5e19bbd11bc0cff5427e3b750a04d9e3c2 # v4.38.2
+        with:
+          sarif_file: trivy-upload-${{ inputs.image }}-${{ matrix.arch }}.sarif
+          category: ${{ inputs.image }}-${{ matrix.arch }}
 
       # The vulnerability gate: fixable HIGH/CRITICAL findings, in OS packages
       # AND in libraries and binaries (Go binaries, npm, pip, gem, jar, ...),
@@ -782,8 +816,15 @@ jobs:
 
   # A second vulnerability opinion from a second database: osv-scanner reads
   # the CycloneDX SBOM the build job already produced -- no second image scan
-  # -- and reports it to code scanning under its own `osv-<image>-<arch>`
-  # category, next to Trivy's.
+  # -- and keeps every finding in the osv-report-<image>-<arch> artifact.
+  #
+  # Code scanning gets an EMPTY run under the `osv-<image>-<arch>` category
+  # (since 2026-10-14; docs/adr/0003). Code scanning shows only what someone
+  # can act on, OSV's SARIF cannot say reliably whether a finding has a fix
+  # for this image's release (scripts/osv-scan-sbom.sh has why), and Trivy's
+  # upload already carries the fixable findings. The empty upload is what
+  # closed the thousands of OSV alerts left from before, and keeps the
+  # category closed: each upload replaces its category's open alerts.
   #
   # Report-only, and deliberately its own job rather than a step in `build`.
   # Findings never fail anything. A scan that could not look -- osv-scanner
@@ -851,10 +892,9 @@ jobs:
       # zero-result SARIF even when it could not reach its database.
       #
       # Two outputs: the full SARIF (every severity) is the 90-day artifact;
-      # the upload SARIF is what code scanning gets -- security-severity
-      # >= 7.0 plus every unscored finding, the same readability trade as the
-      # Trivy SARIF. The script writes the kept/dropped/unscored counts and
-      # its input mapping counts to the step summary itself.
+      # the upload SARIF is the same run with no results, for code scanning
+      # (see the job's header). The script writes the finding counts and its
+      # input mapping counts to the step summary itself.
       #
       # And no pipe on the script's line. This step runs under GitHub's
       # default `bash -e {0}` -- errexit WITHOUT pipefail -- so
@@ -870,16 +910,17 @@ jobs:
       # continue-on-error, like every SARIF upload here: code scanning must
       # never be what turns a run red. No `if: always()`, unlike the Trivy
       # upload: this only runs when the scan step above succeeded, so there
-      # is never a half-written SARIF to upload.
-      - name: Upload SARIF to code scanning
+      # is never a half-written SARIF to upload. The SARIF has no results:
+      # this upload exists to keep the category closed (see the job header).
+      - name: Upload empty OSV SARIF to code scanning
         continue-on-error: true
         uses: github/codeql-action/upload-sarif@2892aa5e19bbd11bc0cff5427e3b750a04d9e3c2 # v4.38.2
         with:
           sarif_file: osv-upload-${{ inputs.image }}-${{ matrix.arch }}.sarif
           category: osv-${{ inputs.image }}-${{ matrix.arch }}
 
-      # The UNFILTERED report: every severity, including what the upload
-      # above leaves out.
+      # The whole report: every finding, every severity. The only place
+      # OSV's findings are kept.
       - name: Upload OSV report
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:

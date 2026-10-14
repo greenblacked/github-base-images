@@ -83,6 +83,16 @@
 #      report. Outranks 1, the same precedence as check-published.sh: a
 #      confirmed finding must not hide behind an unrelated parse problem.
 #
+# Not-actionable image alerts -- an unfixed Trivy finding, one below HIGH, or
+# any OSV finding, in a current image -- are counted and listed but never
+# affect the exit code either. Since 2026-10-14 nothing uploads them
+# (build-image.yml; docs/adr/0003): code scanning carries only fixable
+# HIGH/CRITICAL findings no exception covers, and the unfixed inventory lives
+# in each build's artifacts. Any still open were uploaded before that and close
+# with their category's next upload, so a count that stays above zero for days
+# means an image's build has stopped uploading, or a filter has stopped
+# filtering.
+#
 # Stale alerts -- image-shaped code-scanning categories (`<image>-<arch>`,
 # optionally `osv-`-prefixed) whose image is no longer in images.json -- are
 # counted and listed but never affect the exit code. Nothing will ever upload
@@ -99,6 +109,10 @@ readonly EXIT_FIXABLE=3
 # clear, leaving room for the note that says where the rest went.
 readonly SUMMARY_LIMIT=900000
 readonly TOP_N=25
+# The compact list printed to stdout (the job log) before the one-line
+# summary: what to act on, readable without downloading the artifact. Capped
+# so a flood cannot bury the log; report.md always has everything.
+readonly LOG_LIMIT=200
 
 usage() {
   cat <<'EOF'
@@ -231,8 +245,9 @@ jq -c --arg today "$today" '
 # the difference between "no fix exists" and "could not tell".
 #
 # OSV alerts are counted per image but never judged fixable: osv-scanner's
-# SARIF (build-image.yml's `osv` job) is a second opinion, reported only, and
-# its message carries no fixed version in a form worth depending on.
+# SARIF carries no fixed version in a form worth depending on, which is also
+# why build-image.yml's `osv` job now uploads an empty run (see the header on
+# not-actionable alerts).
 jq --slurpfile images "$tmp/images.json" --slurpfile exc "$tmp/exc.json" '
   def field($k): [ split("\n")[] | select(startswith($k + ":"))
                    | ltrimstr($k + ":") | gsub("^\\s+|\\s+$"; "") ];
@@ -268,6 +283,7 @@ jq --slurpfile images "$tmp/images.json" --slurpfile exc "$tmp/exc.json" '
           pkg: (($msg | field("Package"))[0] // ""),
           installed: (($msg | field("Installed Version"))[0] // ""),
           path: (.most_recent_instance.location.path // ""),
+          line: (.most_recent_instance.location.start_line // null),
           fixed_line: ($fixed | length > 0),
           fixed: ($fixed[0] // "")
         }
@@ -292,6 +308,11 @@ jq --slurpfile images "$tmp/images.json" --slurpfile exc "$tmp/exc.json" '
                elif .looks_image then "category names an image but not as <image>-<arch>"
                else null end)
       | .undecidable = (.why != null)
+      # In a current image but nothing anyone can act on: unfixed, below
+      # HIGH, or OSV. Not uploaded since 2026-10-14; one still open is left
+      # from before and closes with its category'"'"'s next upload.
+      | .leftover = (.kind == "image" and (.undecidable | not)
+                     and (.gating | not) and (.excepted | not))
     )' "$tmp/cs.json" > "$tmp/norm.json"
 
 # Dependabot: severity from the vulnerability, falling back to the advisory;
@@ -328,6 +349,7 @@ n_fixable=$(count 'map(select(.gating)) | length')
 n_excepted=$(count 'map(select(.excepted)) | length')
 n_exc_expired=$(jq 'map(select(.active | not)) | length' "$tmp/exc.json")
 n_undecided=$(count 'map(select(.undecidable)) | length')
+n_leftover=$(count 'map(select(.leftover)) | length')
 d_total=$(dcount 'length')
 d_fixable=$(dcount 'map(select(.gating)) | length')
 d_undecided=$(dcount 'map(select(.decidable | not)) | length')
@@ -363,6 +385,9 @@ section
   echo
   echo "- **$total** open code-scanning alerts: **$n_image** in current images, **$n_stale** in stale categories, **$n_repo** repository-level."
   echo "- **$n_fixable** fixable HIGH/CRITICAL Trivy alerts in current images, not counting **$n_excepted** covered by an active exception."
+  if [ "$n_leftover" -gt 0 ]; then
+    echo "- **$n_leftover** not-actionable image alerts (unfixed, below HIGH, or OSV) left from before code scanning was narrowed; they close with each category's next upload."
+  fi
   if [ "$n_exc_expired" -gt 0 ]; then
     echo "- **$n_exc_expired** expired entries in \`.github/vuln-exceptions.json\` to remove or renew."
   fi
@@ -378,9 +403,15 @@ cat > "$f" <<'EOF'
 
 ### How to read this
 
-- **Unfixed** (no fixed version) is accepted risk waiting on upstream: there is no version to
-  move to yet. The gate ignores these by design (`ignore-unfixed`); they are listed so the risk is
-  visible, not because anything here is broken.
+- **Code scanning shows only what someone can act on**: per image and architecture, Trivy's
+  HIGH/CRITICAL findings that have a fixed version and that no active exception covers, plus the
+  repository-level tools. **Unfixed** findings (no fixed version: accepted risk waiting on
+  upstream) are not uploaded. Their inventory is in every build's artifacts --
+  `security-report-<image>-<arch>` (`trivy-<image>-<arch>.json`, `.txt` and the HIGH/CRITICAL
+  `.sarif`) and `osv-report-<image>-<arch>` (osv-scanner, every severity) -- and in the build
+  job's log. The gate ignores them by design (`ignore-unfixed`).
+- **Not actionable** alerts (unfixed, below HIGH, or OSV) still open in a current image were
+  uploaded before code scanning was narrowed; each closes with its category's next upload.
 - **Fixable** means the advisory names a patched version. The vulnerability gate blocks a build
   that *adds* one of these (OS packages and libraries, HIGH/CRITICAL); one the published image
   already carries is **known upstream** and ships until upstream fixes it, so most of these are
@@ -535,7 +566,7 @@ section
   echo
   echo "### Top $TOP_N CVEs / rule ids by images affected"
   echo
-  echo "Current images only, Trivy and OSV together. A CVE across many images usually lives in a"
+  echo "Current images only. A CVE across many images usually lives in a"
   echo "shared base (Debian, or a runtime's upstream image), so one upstream fix clears all of them."
   echo
   if [ "$n_image" -eq 0 ]; then
@@ -577,6 +608,29 @@ section
       | group_by([.tool, .rule])
       | sort_by((map(.sev) | min_by(sevrank) | sevrank), .[0].tool, .[0].rule)[]
       | "| \(.[0].tool | cell) | \(.[0].rule | cell) | \(map(.sev) | min_by(sevrank)) | \(length) | \(map(.category) | unique | join(", ") | cell) | \(sort_by(.number)[:3] | map(link) | join(" ")) |"
+    ' "$tmp/norm.json"
+  fi
+} > "$f"
+
+section
+{
+  echo
+  echo "### Not-actionable image alerts, left from before"
+  echo
+  if [ "$n_leftover" -eq 0 ]; then
+    echo "None."
+  else
+    echo "Open alerts in current images that nothing uploads any more: unfixed, below HIGH, or OSV."
+    echo "Each category's next upload closes them. A category still listed days later has not"
+    echo "uploaded since -- its image's build is failing, or a filter in \`build-image.yml\` has stopped"
+    echo "filtering."
+    echo
+    echo "| category | tool | alerts | unfixed |"
+    echo "|---|---|---:|---:|"
+    jq -r "$JQ_LIB"'
+      map(select(.leftover))
+      | group_by(.category)[]
+      | "| \(.[0].category | cell) | \(map(.tool) | unique | join(", ") | cell) | \(length) | \(map(select(.trivy_image and .fixed == "")) | length) |"
     ' "$tmp/norm.json"
   fi
 } > "$f"
@@ -672,8 +726,41 @@ if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then
     || printf 'warning: could not append to GITHUB_STEP_SUMMARY\n' >&2
 fi
 
-printf 'alerts-report: code scanning %d open (%d image, %d stale, %d repo-level), %d fixable HIGH/CRITICAL, %d excepted; Dependabot %d open, %d fixable HIGH/CRITICAL; %d undecidable; %d expired exceptions -> %s\n' \
-  "$total" "$n_image" "$n_stale" "$n_repo" "$n_fixable" "$n_excepted" "$d_total" "$d_fixable" \
+# --- the job log ------------------------------------------------------------
+#
+# Everything someone can act on, one line each, so the job log alone answers
+# "what is open and what do I do": the fixable HIGH/CRITICAL alerts no
+# exception covers, the fixable HIGH/CRITICAL Dependabot alerts, and every
+# repository-level alert. Not-actionable leftovers get one line per category.
+# Every line starts with "- " after its indent, and fields have their line
+# breaks removed, so no text from an alert can start a line that the runner
+# would read as a workflow command ("::...").
+jq -r --slurpfile dep "$tmp/depnorm.json" '
+  def one: tostring | gsub("[\r\n]+"; " ");
+  def sevrank: {"critical": 0, "high": 1, "medium": 2, "low": 3, "other": 4}[.] // 5;
+  def num: "#\(.number)";
+  (map(select(.gating)) | sort_by(.image, .arch, (.sev | sevrank), .pkg, .rule)) as $g
+  | ($dep[0] | map(select(.gating)) | sort_by((.sev | sevrank), .pkg)) as $d
+  | (map(select(.kind == "repo")) | sort_by((.sev | sevrank), .tool, .rule, .path, .line)) as $r
+  | (map(select(.leftover)) | group_by(.category)) as $l
+  | "Fixable HIGH/CRITICAL code-scanning alerts, not excepted (\($g | length)):",
+    ($g[] | "  - \(.image | one) \(.arch | one)  \(.rule | one)  \(.sev | ascii_upcase)  \(.pkg | one) \(.installed | one) -> \(.fixed | one)  \(num)"),
+    "Fixable HIGH/CRITICAL Dependabot alerts (\($d | length)):",
+    ($d[] | "  - \(.eco | one) \(.pkg | one) (\(.manifest | one))  \([.ghsa, .cve] | map(select(. != "")) | join("/") | one)  \(.sev | ascii_upcase)  \(.range | one) -> \(.patched | one)  \(num)"),
+    "Repository-level code-scanning alerts (\($r | length)):",
+    ($r[] | "  - \(.tool | one)  \(.rule | one)  \(.path | one)\(if .line == null then "" else ":\(.line)" end)  \(.sev)  [\(.category | one)]  \(num)"),
+    "Not-actionable image alerts left from before, closing on each category'"'"'s next upload (\($l | map(length) | add // 0)):",
+    ($l[] | "  - \(.[0].category | one)  \(map(.tool) | unique | join(",") | one)  \(length) alert(s)")
+' "$tmp/norm.json" > "$tmp/log.txt"
+log_lines=$(wc -l < "$tmp/log.txt")
+head -n "$LOG_LIMIT" "$tmp/log.txt"
+if [ "$log_lines" -gt "$LOG_LIMIT" ]; then
+  printf -- '- ... %d more line(s) not shown; report.md (artifact code-scanning-report) has every alert\n' \
+    "$((log_lines - LOG_LIMIT))"
+fi
+
+printf 'alerts-report: code scanning %d open (%d image, %d stale, %d repo-level), %d fixable HIGH/CRITICAL, %d excepted, %d not actionable (left from before); Dependabot %d open, %d fixable HIGH/CRITICAL; %d undecidable; %d expired exceptions -> %s\n' \
+  "$total" "$n_image" "$n_stale" "$n_repo" "$n_fixable" "$n_excepted" "$n_leftover" "$d_total" "$d_fixable" \
   "$((n_undecided + d_undecided))" "$n_exc_expired" "$report_file"
 
 if [ $((n_fixable + d_fixable)) -gt 0 ]; then
