@@ -2,19 +2,19 @@
   {
     "rule": "PinnedDependenciesID",
     "path": "^ci-[a-z0-9]+/Dockerfile\\.ci$",
-    "match": "^FROM \\$\\{BASE_IMAGE\\}\\s*$",
+    "match": "^FROM \\$\\{BASE_IMAGE\\}$",
     "reason": "The base image is passed in as a tag by design: the verified mirror on main, the upstream tag on pull requests, rebuilt daily so it picks up the base's security updates (docs/adr/0001, 0007, 0008). The mirror step verifies the digest it copies."
   },
   {
     "rule": "PinnedDependenciesID",
     "path": "^ci-node[0-9]+/Dockerfile\\.ci$",
-    "match": "^RUN npm install --global \"npm@\\$\\{NPM_VERSION\\}\"",
+    "match": "^RUN npm install --global \"npm@\\$\\{NPM_VERSION\\}\" && rm -rf /root/\\.npm$",
     "reason": "npm is pinned to an exact version by ARG NPM_VERSION, which scripts/check-pins.sh tracks and the pin-bump bot moves (docs/adr/0007); Scorecard only accepts a hash, which npm install --global cannot take."
   },
   {
     "rule": "PinnedDependenciesID",
     "path": "^ci-cloud/Dockerfile\\.ci$",
-    "match": "^RUN /opt/az/bin/python3 -m pip install --no-cache-dir --disable-pip-version-check \\\\$",
+    "match": "^RUN /opt/az/bin/python3 -m pip install --no-cache-dir --disable-pip-version-check --root-user-action=ignore --upgrade 'PyJWT>=[0-9.]+' 'cryptography>=[0-9.]+' 'pyOpenSSL>=[0-9.]+' 'urllib3>=[0-9.]+' && /opt/az/bin/python3 -m pip check && az version > /dev/null$",
     "reason": "Deliberate >= floors on the PyJWT, cryptography, pyOpenSSL and urllib3 that azure-cli bundles, so each daily rebuild takes the newest fixed release; documented above the RUN, and pip check plus az version guard the result."
   },
   {

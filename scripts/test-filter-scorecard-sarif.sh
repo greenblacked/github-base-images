@@ -78,13 +78,13 @@ cat > "$work/accepted.json" <<'EOF'
   {"rule": "PinnedDependenciesID", "path": "^ci-[a-z0-9]+/Dockerfile\\.ci$",
    "match": "^FROM \\$\\{BASE_IMAGE\\}\\s*$", "reason": "base passed as a tag by design"},
   {"rule": "PinnedDependenciesID", "path": "^ci-node[0-9]+/Dockerfile\\.ci$",
-   "match": "^RUN npm install --global \"npm@\\$\\{NPM_VERSION\\}\"", "reason": "npm pinned by version"},
+   "match": "^RUN npm install --global \"npm@\\$\\{NPM_VERSION\\}\" && rm -rf /root/\\.npm$", "reason": "npm pinned by version"},
   {"rule": "PinnedDependenciesID", "path": "^crlf\\.Dockerfile$",
    "match": "^FROM \\$\\{BASE_IMAGE\\}$", "reason": "crlf"},
   {"rule": "CodeReviewID", "reason": "single maintainer"},
   {"rule": "FuzzingID", "reason": "nothing to fuzz"},
   {"rule": "CIIBestPracticesID", "reason": "optional badge"},
-  {"rule": "TokenPermissionsID", "path": "^nowhere$", "match": "x", "reason": "never matches"}
+  {"rule": "TokenPermissionsID", "path": "^nowhere$", "match": "^x$", "reason": "never matches"}
 ]
 EOF
 
@@ -185,12 +185,40 @@ check "a result with one uncovered location of two is kept" \
   quiet jq -e '[.runs[0].results[] | select((.locations | length) == 2 and .locations[1].physicalLocation.region.startLine == 8)] | length == 1' "$work/out2.sarif"
 check "no location is logged as such" logged "kept     PinnedDependenciesID  (no location)"
 
+echo "the whole instruction is matched, not only its first line"
+# Scorecard reports a multi-line RUN at its first line. A package added on a
+# continuation line must keep the alert even though the first line still
+# reads like the accepted one.
+mkdir -p "$work/repo/ci-node8"
+cat > "$work/repo/ci-node8/Dockerfile.ci" <<'DF'
+FROM ${BASE_IMAGE}
+RUN npm install --global "npm@${NPM_VERSION}" \
+    && rm -rf /root/.npm
+RUN npm install --global "npm@${NPM_VERSION}" \
+    # a comment inside the instruction is skipped, as Docker does
+    && rm -rf /root/.npm
+RUN npm install --global "npm@${NPM_VERSION}" \
+    && npm install --global left-pad \
+    && rm -rf /root/.npm
+DF
+sarif \
+  "$(res PinnedDependenciesID ci-node8/Dockerfile.ci 2)" \
+  "$(res PinnedDependenciesID ci-node8/Dockerfile.ci 4)" \
+  "$(res PinnedDependenciesID ci-node8/Dockerfile.ci 7)" \
+  > "$work/in6.sarif"
+run "$work/accepted.json" "$work/in6.sarif" "$work/out6.sarif"
+check "exits 0" [ "$rc" -eq 0 ]
+check "the accepted two-line RUN is dropped" not_logged "kept     PinnedDependenciesID  ci-node8/Dockerfile.ci:2"
+check "a comment line inside the RUN does not stop the match" not_logged "kept     PinnedDependenciesID  ci-node8/Dockerfile.ci:4"
+check "a package added on a continuation line is kept" logged "kept     PinnedDependenciesID  ci-node8/Dockerfile.ci:7"
+check "  ... and only that one is left" [ "$(jq '.runs[0].results | length' "$work/out6.sarif")" -eq 1 ]
+
 echo "a path outside the checkout is never read"
 # A path pattern loose enough to match them, so only the path checks stop it.
 mkdir -p "$work/repo/ci-zzz" "$work/outside"
 printf '%s\n' "$from_line" > "$work/repo/ci-zzz/Dockerfile.ci"
 printf '%s\n' "$from_line" > "$work/outside/Dockerfile.ci"
-printf '%s\n' '[{"rule": "PinnedDependenciesID", "path": "^.*Dockerfile\\.ci$", "match": "^FROM ", "reason": "loose"}]' > "$work/loose.json"
+printf '%s\n' '[{"rule": "PinnedDependenciesID", "path": "^.*Dockerfile\\.ci$", "match": "^FROM .*$", "reason": "loose"}]' > "$work/loose.json"
 sarif \
   "$(res PinnedDependenciesID ci-zzz/Dockerfile.ci 1)" \
   "$(res PinnedDependenciesID ci-aaa/../ci-zzz/Dockerfile.ci 1)" \
@@ -223,6 +251,7 @@ bad_list "path without match" '[{"rule": "PinnedDependenciesID", "path": "^x$", 
 bad_list "match without path" '[{"rule": "PinnedDependenciesID", "match": "x", "reason": "r"}]' '"path" and "match" go together'
 bad_list "unanchored path" '[{"rule": "PinnedDependenciesID", "path": "Dockerfile", "match": "x", "reason": "r"}]' 'must be anchored'
 bad_list "bad regex" '[{"rule": "PinnedDependenciesID", "path": "^(x$", "match": "x", "reason": "r"}]' 'is not a valid regular expression'
+bad_list "unanchored match" '[{"rule": "PinnedDependenciesID", "path": "^x$", "match": "^FROM ", "reason": "r"}]' 'must be anchored'
 bad_list "not an array" '{"rule": "FuzzingID", "reason": "r"}' 'not a JSON array'
 bad_list "not an object" '["FuzzingID"]' 'not an object'
 bad_list "not JSON" '[{"rule": ' 'is not valid JSON'

@@ -432,10 +432,12 @@ before uploading it, driven by
 | `CIIBestPracticesID` | rule-wide | the OpenSSF Best Practices badge is optional |
 
 An entry is either rule-wide (`rule`, `reason`) or tied to a line: `path`, an anchored regular
-expression for the file, and `match`, one for the flagged line itself. For a line entry the script
-reads the line Scorecard names (`region.startLine`) from the checked-out commit and drops the
-result only if it matches — so a new `RUN pip install foo` beside an accepted `FROM` line is still
-reported. A result it cannot place (no location, a path outside the checkout, a line past the
+expression for the file, and `match`, an anchored one for the whole Dockerfile instruction that
+starts on the flagged line. For a line entry the script reads that instruction from the
+checked-out commit (Scorecard names its first line, `region.startLine`; continuation lines are
+joined the way Docker joins them, and whitespace is collapsed) and drops the result only if all of
+it matches. So a new `RUN pip install foo` beside an accepted `FROM` line is still reported, and so
+is a package added on a continuation line of an accepted multi-line `RUN`. A result it cannot place (no location, a path outside the checkout, a line past the
 end) is kept unless a rule-wide entry covers its rule. Every entry needs a `reason`, and an unknown
 key fails, so a typo cannot widen an entry. The job log lists every dropped result (rule,
 `path:line`, reason), every kept one, and any entry that matched nothing.

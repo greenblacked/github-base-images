@@ -36,19 +36,22 @@
 #   {"rule": "CodeReviewID", "reason": "..."}
 #       rule-wide: every result of that rule is dropped.
 #   {"rule": "PinnedDependenciesID", "path": "^ci-[a-z0-9]+/Dockerfile\\.ci$",
-#    "match": "^FROM \\$\\{BASE_IMAGE\\}\\s*$", "reason": "..."}
+#    "match": "^FROM \\$\\{BASE_IMAGE\\}$", "reason": "..."}
 #       a result of that rule is dropped only if EVERY location it has is a
-#       file whose path matches `path` and whose flagged line (the SARIF
-#       region.startLine, read from the checkout) matches `match`.
+#       file whose path matches `path` and whose flagged instruction matches
+#       `match`: the whole Dockerfile instruction starting on the SARIF
+#       region.startLine, read from the checkout, continuation lines joined
+#       and whitespace collapsed to single spaces.
 #
-# `path` and `match` are jq (Oniguruma) regular expressions; `path` must be
-# anchored at both ends. Every entry needs a non-empty `reason`, and any key
+# `path` and `match` are jq (Oniguruma) regular expressions, both anchored
+# at both ends, so `match` has to describe the whole instruction. Every entry needs a non-empty `reason`, and any key
 # other than these four is an error, so a typo cannot quietly widen or
 # disable an entry.
 #
-# Matching the line rather than the file is the point: a new unpinned
+# Matching the instruction rather than the file is the point: a new unpinned
 # `RUN pip install foo` in a Dockerfile whose FROM line is accepted is still
-# reported. A result whose location cannot be resolved -- no locations, a
+# reported, and so is a package added on a continuation line of an accepted
+# multi-line RUN. A result whose location cannot be resolved -- no locations, a
 # path that is absolute, has `..`, or is not a file in the checkout, a line
 # past the end -- is kept, unless a rule-wide entry covers its rule. So is
 # one whose line no longer matches because the tree moved under Scorecard:
@@ -121,8 +124,9 @@ if ! problems=$(jq -r '
             | if ($e[$k] | text) | not then "\($at): \($k) must be a non-empty string"
               elif ($e[$k] | compiles) | not then "\($at): \($k) \($e[$k] | tojson) is not a valid regular expression"
               else empty end ),
-          ( select(($e.path | text) and (($e.path | startswith("^") and endswith("$")) | not))
-            | "\($at): path \($e.path | tojson) must be anchored with ^ and $" )
+          ( ("path", "match") as $k
+            | select(($e[$k] | text) and (($e[$k] | startswith("^") and endswith("$")) | not))
+            | "\($at): \($k) \($e[$k] | tojson) must be anchored with ^ and $" )
         end
     end' "$accepted"); then
   die "$accepted is not valid JSON"
@@ -179,7 +183,28 @@ while IFS=$'\t' read -r uri line; do
   [[ "$line" =~ ^[1-9][0-9]{0,6}$ ]] || continue
   f="$root/$uri"
   [ -f "$f" ] || continue
-  if text=$(awk -v n="$line" 'NR == n { sub(/\r$/, ""); print; found = 1; exit } END { exit !found }' "$f"); then
+  # The whole Dockerfile instruction that starts on that line, not just the
+  # line: Scorecard reports a multi-line RUN at its first line, so matching
+  # one line would let a package added on a continuation line hide behind an
+  # accepted first line. Lines joined the way Docker joins them (a trailing
+  # backslash continues the instruction; comment lines inside it are
+  # skipped), whitespace collapsed to single spaces, so an entry's `match`
+  # is tested against one normalised line and must match all of it.
+  if text=$(awk -v n="$line" '
+      NR < n { next }
+      { sub(/\r$/, "") }
+      NR > n && /^[[:space:]]*#/ { next }
+      {
+        cont = sub(/\\[[:space:]]*$/, "")
+        out = out " " $0
+        found = 1
+        if (!cont) exit
+      }
+      END {
+        if (!found) exit 1
+        gsub(/[[:space:]]+/, " ", out); sub(/^ /, "", out); sub(/ $/, "", out)
+        print out
+      }' "$f"); then
     jq -cn --arg k "$uri:$line" --arg v "$text" '{key: $k, value: $v}' >> "$work/lines.jsonl"
   fi
 done < "$work/wanted.tsv"
