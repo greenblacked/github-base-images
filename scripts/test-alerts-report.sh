@@ -70,7 +70,7 @@ osv() {
   osv 7 osv-ci-go-amd64; echo ,
   # Stale image category.
   trivy 8 ci-old-amd64 CVE-2025-5000 high openssl 1 2 y; echo ,
-  repo 9 zizmor workflow-audit unpinned-uses high .github/workflows/a.yml 12; echo ,
+  repo 9 zizmor workflow-audit unpinned-uses high ".github/workflows/a##[error]b.yml" 12; echo ,
   repo 10 Scorecard scorecard BranchProtectionID high no-file null
   echo ']'
 } > "$work/cs.json"
@@ -116,14 +116,14 @@ check "log does not list the unfixed alert as fixable" bash -c "! grep -q 'CVE-2
 check "log counts fixable code-scanning alerts" has "Fixable HIGH/CRITICAL code-scanning alerts, not excepted (3):"
 check "log lists the fixable Dependabot alert" has "  - npm lodash (package-lock.json)  GHSA-aaaa-bbbb-cccc/CVE-2021-1  HIGH  < 4.17.21 -> 4.17.21  #1"
 check "log omits the unpatched Dependabot alert" bash -c "! grep -q left-pad '$work/out'"
-check "log lists a repo-level alert as tool, rule, path:line, severity" has "  - zizmor  unpinned-uses  .github/workflows/a.yml:12  high  [workflow-audit]  #9"
+check "log lists a repo-level alert as tool, rule, path:line, severity" has "  - zizmor  unpinned-uses  .github/workflows/a## [error]b.yml:12  high  [workflow-audit]  #9"
 check "log lists a repo-level alert with no line" has "  - Scorecard  BranchProtectionID  no-file  high  [scorecard]  #10"
 check "log counts repo-level alerts" has "Repository-level code-scanning alerts (2):"
 check "log groups not-actionable leftovers by category" has "Not-actionable image alerts left from before, closing on each category's next upload (3):"
 check "  ... ci-go-amd64 Trivy" has "  - ci-go-amd64  Trivy  1 alert(s)"
 check "  ... osv-ci-go-amd64" has "  - osv-ci-go-amd64  osv-scanner  1 alert(s)"
 check "  ... ci-node22-amd64 (fixable MEDIUM)" has "  - ci-node22-amd64  Trivy  1 alert(s)"
-check "no stdout line can be read as a workflow command" bash -c "! grep -qE '^[[:space:]]*::' '$work/out'"
+check "no stdout line can be read as a workflow command" bash -c "! grep -qE '^[[:space:]]*::' '$work/out' && ! grep -qF '##[' '$work/out'"
 check "report has the not-actionable section" grep -q '^### Not-actionable image alerts, left from before' "$work/report.md"
 check "report names the inventory artifacts" grep -q 'security-report-<image>-<arch>' "$work/report.md"
 check "report lists the expired exception" grep -q 'CVE-2025-3001 | brace-expansion | ci-node22 | '"$past" "$work/report.md"
@@ -139,7 +139,7 @@ check "no leftovers" has "closing on each category's next upload (0):"
 echo "not-actionable leftovers alone never fail the report"
 { echo '['; trivy 3 ci-go-amd64 CVE-2025-2000 high libc6 2.36 "" debian; echo ,; osv 7 osv-ci-go-arm64; echo ']'; } > "$work/cs3.json"
 run "$work/cs3.json" "$work/dep2.json" '/dev/null'
-check "an unreadable exceptions file is exit 1" [ "$rc" -eq 1 ]
+check "an exceptions path that is not a regular file is exit 1" [ "$rc" -eq 1 ]
 echo '[]' > "$work/exc0.json"
 run "$work/cs3.json" "$work/dep2.json" "$work/exc0.json"
 check "exit 0 with 2 leftovers" [ "$rc" -eq 0 ]

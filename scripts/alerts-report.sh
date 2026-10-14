@@ -734,9 +734,11 @@ fi
 # repository-level alert. Not-actionable leftovers get one line per category.
 # Every line starts with "- " after its indent, and fields have their line
 # breaks removed, so no text from an alert can start a line that the runner
-# would read as a workflow command ("::...").
+# would read as a workflow command ("::..."); "##[" is broken up as well,
+# because the runner still honours the legacy "##[command]" form anywhere
+# in a line.
 jq -r --slurpfile dep "$tmp/depnorm.json" '
-  def one: tostring | gsub("[\r\n]+"; " ");
+  def one: tostring | gsub("[\r\n]+"; " ") | gsub("##\\["; "## [");
   def sevrank: {"critical": 0, "high": 1, "medium": 2, "low": 3, "other": 4}[.] // 5;
   def num: "#\(.number)";
   (map(select(.gating)) | sort_by(.image, .arch, (.sev | sevrank), .pkg, .rule)) as $g
