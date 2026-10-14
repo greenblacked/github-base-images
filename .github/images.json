@@ -96,6 +96,12 @@
     "upstream": "python:3.14-slim-trixie"
   },
   {
+    "image": "ci-python315",
+    "version": "trixie-v1",
+    "mirror": "mirror-python:3.15-slim-trixie",
+    "upstream": "python:3.15-slim-trixie"
+  },
+  {
     "image": "ci-ruby34",
     "version": "bookworm-v1",
     "mirror": "mirror-ruby:3.4-slim-bookworm",
