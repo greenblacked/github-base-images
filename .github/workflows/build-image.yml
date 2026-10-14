@@ -59,6 +59,13 @@ jobs:
       # Required by the SARIF upload to code scanning.
       security-events: write
 
+    # The base image this build is FROM, defined once so the build and the
+    # vulnerability gate's base-image baseline (below) cannot disagree about
+    # it: the upstream ref on a pull request or any branch but main, so those
+    # runs never depend on (or mutate) the mirror; the mirror on main.
+    env:
+      BUILD_BASE_IMAGE: ${{ (github.event_name == 'pull_request' || github.ref != 'refs/heads/main') && inputs.upstream || format('ghcr.io/{0}/{1}', github.repository_owner, inputs.mirror) }}
+
     strategy:
       fail-fast: false
       matrix:
@@ -133,7 +140,7 @@ jobs:
           file: ./${{ inputs.image }}/${{ env.DOCKERFILE }}
           platforms: ${{ matrix.platform }}
           build-args: |
-            BASE_IMAGE=${{ (github.event_name == 'pull_request' || github.ref != 'refs/heads/main') && inputs.upstream || format('ghcr.io/{0}/{1}', github.repository_owner, inputs.mirror) }}
+            BASE_IMAGE=${{ env.BUILD_BASE_IMAGE }}
           load: true
           push: false
           tags: ${{ inputs.image }}:test
@@ -433,15 +440,36 @@ jobs:
       # delivers Debian's security updates published nothing for them, and
       # every pull request that rebuilt them was red too.
       #
-      # So the gate is now a regression check, in four steps:
+      # So the gate is now a regression check, in six steps:
       #   1. scan the candidate (this build) to JSON;
       #   2. find the image published now: the per-arch manifest of
       #      ghcr.io/<owner>/<image>:<version>;
       #   3. scan that image the same way;
-      #   4. scripts/vuln-gate.sh compares the two by (VulnerabilityID,
-      #      PkgName, result type) and fails on anything new. What both carry is "known
-      #      upstream" and listed; what only the published image carries is
-      #      "fixed by this build" and listed.
+      #   4. find the base image this build is FROM (BUILD_BASE_IMAGE above:
+      #      the mirror on main, the upstream ref elsewhere), per-arch;
+      #   5. scan that image the same way;
+      #   6. scripts/vuln-gate.sh compares them by (VulnerabilityID,
+      #      PkgName, result type) and fails on anything new: in the
+      #      candidate, but neither in the published image nor in the base
+      #      image. What the published image also carries is "known
+      #      upstream" and listed; what only the base image explains is
+      #      "inherited from the base image" and listed; what only the
+      #      published image carries is "fixed by this build" and listed.
+      #
+      # Steps 4 and 5 were added when comparing with the published image
+      # alone turned out to block on a newer BASE: the .NET SDK 8.0.426 image
+      # bundles vulnerable Microsoft.Build.Tasks.Core and
+      # System.Security.Cryptography.Xml under usr/share/dotnet/sdk/, the
+      # published ci-dotnet8 (older SDK) does not, so they read as new -- and
+      # blocked the daily rebuild carrying twelve runtime fixes, two of them
+      # CRITICAL. A new image, with nothing published, blocked on everything
+      # its python base ships. This repository cannot fix what a base image
+      # ships; blocking only withholds what the rebuild does fix, and the
+      # base's own fixes arrive through the daily rebuild like any upstream
+      # fix. The base-image baseline is additive and best-effort: if it
+      # cannot be resolved or scanned, the gate runs exactly as it did
+      # without it, and says so in a notice.
+      #
       # Fail closed: if there is no published image (a new image or a new
       # contract tag), or it cannot be resolved or scanned for any reason, the
       # comparison runs against an EMPTY baseline -- every finding blocks,
@@ -480,6 +508,9 @@ jobs:
       # when this image has none. The pinned action accepts exactly one YAML
       # ignore file and errors on a path that does not exist, which is why an
       # image with no exceptions gets an empty input rather than an empty file.
+      #
+      # Steps 3 and 5 set the same flags as step 1 below, so all three scans
+      # differ only in the image they read.
       #
       # This step has no continue-on-error: a candidate scan that could not run
       # fails the job, since there would be nothing to judge.
@@ -566,11 +597,75 @@ jobs:
           skip-setup-trivy: true
           cache: 'false'
 
+      # The base image this build is FROM, for this architecture: the same
+      # script as the step above, in its --upstream mode, so the same index
+      # read, the same retries and the same one-linux/<arch>-manifest rule.
+      # The ref is BUILD_BASE_IMAGE, the very value the build step passed as
+      # BASE_IMAGE, resolved to a per-arch digest so the scan below reads one
+      # fixed image. For ci-tools, ci-cloud, ci-security and ci-db that is
+      # debian:bookworm-slim (or its mirror); for ci-dotnet8 the .NET SDK
+      # image; and so on -- whatever images.json names.
+      #
+      # It is resolved now, after the build, not taken from the build: the
+      # test build loads into the daemon, which records no base digest. On
+      # main the mirror tag was written by this run's own mirror job before
+      # any image job started, so it names what the build used. On a pull
+      # request the upstream tag could, in principle, move between the
+      # build and this read (concurrent runs on main can also re-mirror).
+      # The gate would then compare with a slightly newer base than the one
+      # built on: usually that only blocks something the actual base did
+      # carry -- a red build that a re-run fixes -- and what it excuses is
+      # still only what that upstream base, not this repository, ships.
+      #
+      # No credentials of its own. On main the base is the mirror on
+      # ghcr.io, and the "Login" step above has already logged the daemon
+      # in with this job's token, which `imagetools inspect` here and Trivy
+      # below both pick up from the Docker config; elsewhere the base is a
+      # public upstream (Docker Hub, mcr.microsoft.com), read anonymously.
+      # Nothing here offers the job token to a registry other than ghcr.io.
+      #
+      # Never fails: every way of not finding the base is `ref=` plus a
+      # `note` and a ::notice, and the gate runs without it.
+      - name: Base image baseline (${{ matrix.arch }})
+        id: upstream
+        env:
+          REF: ${{ env.BUILD_BASE_IMAGE }}
+          ARCH: ${{ matrix.arch }}
+        run: ./scripts/vuln-baseline.sh --upstream "$REF" "$ARCH"
+
+      # The base image, scanned exactly as the other two (see above), from
+      # the registry: TRIVY_IMAGE_SRC=remote, as for the published image.
+      # continue-on-error, and only here and on the published scan: a base
+      # that could not be scanned means no base-image baseline, which is the
+      # gate as it was before there was one.
+      - name: Vulnerability scan of the base image (${{ matrix.arch }})
+        id: upstream_scan
+        if: steps.upstream.outputs.ref != ''
+        continue-on-error: true
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        env:
+          TRIVY_SKIP_DB_UPDATE: 'true'
+          TRIVY_IMAGE_SRC: remote
+        with:
+          image-ref: ${{ steps.upstream.outputs.ref }}
+          scanners: vuln
+          format: json
+          output: gate-upstream-${{ inputs.image }}-${{ matrix.arch }}.json
+          exit-code: '0'
+          ignore-unfixed: true
+          severity: HIGH,CRITICAL
+          vuln-type: os,library
+          trivyignores: ${{ steps.exceptions.outputs.file }}
+          skip-setup-trivy: true
+          cache: 'false'
+
       # The decision. scripts/vuln-gate.sh exits 0 when nothing is new, 3 when
       # something is, 1 when it could not read a report -- and only 0 passes.
       # It writes a compact summary (counts, the new and fixed findings, the
       # known ones as a short list), capped far below the step-summary limit
-      # whatever the scan found; every new finding is also in the log.
+      # whatever the scan found; every new finding is also in the log. The
+      # base image is passed only when it was both resolved and scanned;
+      # otherwise the gate runs without it, as before, with a notice.
       - name: Vulnerability gate (${{ matrix.arch }})
         env:
           IMAGE: ${{ inputs.image }}
@@ -578,6 +673,8 @@ jobs:
           BASE_REF: ${{ steps.baseline.outputs.ref }}
           BASE_NOTE: ${{ steps.baseline.outputs.note }}
           BASE_SCAN: ${{ steps.baseline_scan.outcome }}
+          UP_REF: ${{ steps.upstream.outputs.ref }}
+          UP_SCAN: ${{ steps.upstream_scan.outcome }}
         run: |
           args=(--label "$IMAGE ($ARCH)"
                 --candidate "gate-candidate-$IMAGE-$ARCH.json"
@@ -591,6 +688,11 @@ jobs:
           else
             args+=(--no-baseline "${BASE_NOTE:-no published image was resolved}")
           fi
+          if [ -n "$UP_REF" ] && [ "$UP_SCAN" = success ]; then
+            args+=(--upstream "gate-upstream-$IMAGE-$ARCH.json" --upstream-ref "$UP_REF")
+          elif [ -n "$UP_REF" ]; then
+            echo "::notice::the base image $UP_REF could not be scanned (outcome: ${UP_SCAN:-not run}) -- the vulnerability gate runs without the base-image baseline for $ARCH"
+          fi
           rc=0
           ./scripts/vuln-gate.sh "${args[@]}" || rc=$?
           if [ -f "gate-$IMAGE-$ARCH.md" ]; then
@@ -599,13 +701,13 @@ jobs:
           fi
           case "$rc" in
             0) ;;
-            3) echo "::error::$IMAGE ($ARCH) adds fixable HIGH/CRITICAL vulnerabilities that the published image does not have; they are listed in the job summary and the log above"
+            3) echo "::error::$IMAGE ($ARCH) adds fixable HIGH/CRITICAL vulnerabilities that neither the published image nor the base image has; they are listed in the job summary and the log above"
                exit 1 ;;
             *) echo "::error::the vulnerability gate could not decide for $IMAGE ($ARCH) (vuln-gate.sh exit $rc; see the log) -- treated as a failure, not a pass"
                exit 1 ;;
           esac
 
-      # Both scans and the decision, for reading a gate result later. always():
+      # All three scans and the decision, for reading a gate result later. always():
       # a failed gate is exactly when they are wanted.
       - name: Upload gate reports
         if: always()
@@ -615,6 +717,7 @@ jobs:
           path: |
             gate-candidate-${{ inputs.image }}-${{ matrix.arch }}.json
             gate-baseline-${{ inputs.image }}-${{ matrix.arch }}.json
+            gate-upstream-${{ inputs.image }}-${{ matrix.arch }}.json
             gate-${{ inputs.image }}-${{ matrix.arch }}.json
             gate-${{ inputs.image }}-${{ matrix.arch }}.md
           if-no-files-found: warn
