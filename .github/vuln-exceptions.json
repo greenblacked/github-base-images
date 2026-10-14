@@ -13,30 +13,6 @@
   },
   {
     "image": "ci-cloud",
-    "id": "CVE-2026-69247",
-    "package": "cryptography",
-    "installed": "48.0.1",
-    "reason": "cryptography 48.0.1 is bundled with azure-cli 2.90.0, the newest in Microsoft's bookworm repository, and no azure-cli release carries a fixed cryptography yet. (gcloud's copy, 46.0.7, is removed in the Dockerfile with the unused bundled Python.)",
-    "upstream": "https://github.com/Azure/azure-cli/releases",
-    "expires": "2026-10-26",
-    "paths": [
-      "opt/az/lib/python3.14/site-packages/cryptography-48.0.1.dist-info/METADATA"
-    ]
-  },
-  {
-    "image": "ci-cloud",
-    "id": "CVE-2026-69249",
-    "package": "cryptography",
-    "installed": "48.0.1",
-    "reason": "cryptography 48.0.1 is bundled with azure-cli 2.90.0, the newest in Microsoft's bookworm repository, and no azure-cli release carries a fixed cryptography yet. (gcloud's copy, 46.0.7, is removed in the Dockerfile with the unused bundled Python.)",
-    "upstream": "https://github.com/Azure/azure-cli/releases",
-    "expires": "2026-10-26",
-    "paths": [
-      "opt/az/lib/python3.14/site-packages/cryptography-48.0.1.dist-info/METADATA"
-    ]
-  },
-  {
-    "image": "ci-cloud",
     "id": "GHSA-6v7p-g79w-8964",
     "package": "msgpack",
     "installed": "1.1.2",

@@ -78,7 +78,7 @@ for it (a step summary is capped at 1 MiB):
     `.github/vuln-exceptions.json`, for a finding whose fixed version is in no released artifact
     yet (a module compiled into the latest upstream release binary, a package vendored inside pip).
     Exceptions are per image, per CVE and per path or package version, last 90 days at most, apply
-    to both scans, and are printed in the gate step's log and summary. The reports and SARIF above
+    to all three scans, and are printed in the gate step's log and summary. The reports and SARIF above
     never use them. See [Vulnerability exceptions](#vulnerability-exceptions).
   - All three scans and the decision are kept as the `vuln-gate-<image>-<arch>` artifact.
 - **Secret scan** — **gates at any severity**. A baked-in credential in a public CI image is

@@ -413,8 +413,9 @@ check "no linux/arm64 in the base's index: a notice, no ref" \
   bash -c "[ -z \"\$(sed -n 's/^ref=//p' '$gho')\" ] && grep -q '^::notice::the base image debian:bookworm-slim has no single linux/arm64 manifest' '$bout'"
 REGISTRY_USER=bot REGISTRY_TOKEN=s3cret run_up ghcr.io/o/mirror-debian:bookworm-slim ok amd64
 check "with credentials: logged in to the ref's registry" bash -c "grep -q '^login ghcr.io --username bot' '$work/login'"
+rm -f "$work/login"
 REGISTRY_USER=bot REGISTRY_TOKEN=s3cret run_up debian:bookworm-slim ok amd64
-check "  a Docker Hub ref logs in to docker.io, never to a host made of the image name" bash -c "grep -q '^login docker.io ' '$work/login'"
+check "  a Docker Hub ref: credentials are never offered, the read is anonymous" bash -c "[ ! -s '$work/login' ] && grep -q '^::notice::not offering' '$bout' && [ -n \"\$(sed -n 's/^ref=//p' '$gho')\" ]"
 REGISTRY_USER=bot REGISTRY_TOKEN=s3cret FAKE_LOGIN=fail run_up ghcr.io/o/mirror-debian:bookworm-slim ok amd64
 check "login refused: a notice, no ref" bash -c "[ -z \"\$(sed -n 's/^ref=//p' '$gho')\" ] && grep -q '^::notice::could not log in to ghcr.io' '$bout'"
 rc=0; "$baseline" --upstream only-two > /dev/null 2>&1 || rc=$?

@@ -54,8 +54,9 @@
 # with the published image alone, exactly as it did before there was one, so
 # every way of not finding the base is a ::notice, not a warning, and the
 # messages say that instead of "strict". Credentials, when set, are used only
-# for the registry the ref names; build-image.yml sets them only for a ref on
-# ghcr.io, so the job token is never offered to Docker Hub or mcr.
+# when the ref is on ghcr.io: for any other registry they are ignored (with a
+# notice) and the read is anonymous, so the job token is never offered to
+# Docker Hub or mcr, whatever the calling step sets.
 #
 # Exit: 0 with the outputs above; 2 usage. Requires docker (with buildx) and jq.
 set -euo pipefail
@@ -116,6 +117,11 @@ strict() {
 }
 retry_level=warning
 [ "$mode" = upstream ] && retry_level=notice
+
+if [ "$mode" = upstream ] && [ "$registry" != ghcr.io ] && [ -n "${REGISTRY_TOKEN:-}" ]; then
+  echo "::notice::not offering this job's credentials to $registry: the base image $image is read anonymously"
+  unset REGISTRY_USER REGISTRY_TOKEN
+fi
 
 if [ -n "${REGISTRY_USER:-}" ] && [ -n "${REGISTRY_TOKEN:-}" ]; then
   # Inside $tmp, so the EXIT trap removes it with the credential in it. The

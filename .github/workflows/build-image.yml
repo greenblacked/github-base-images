@@ -479,14 +479,14 @@ jobs:
       # fail a build a successful comparison would have passed, never pass one
       # it would have failed.
       #
-      # Same scanner, same database, same flags for both scans, or the
+      # Same scanner, same database, same flags for all three scans, or the
       # comparison would measure the difference between two scans rather than
       # two images:
       #   - `skip-setup-trivy: true` -- the Trivy that the report steps above
       #     installed, already on PATH (setup-trivy adds it), so the same
       #     binary;
       #   - `cache: 'false'` and TRIVY_SKIP_DB_UPDATE -- no restore from the
-      #     Actions cache and no download, so both scans read the database
+      #     Actions cache and no download, so all three scans read the database
       #     the report steps above left on disk, byte for byte. Restoring the
       #     cache between them could swap in a different day's database the
       #     moment another job saved one. If there is no database on disk,
@@ -618,8 +618,8 @@ jobs:
       # still only what that upstream base, not this repository, ships.
       #
       # No credentials of its own. On main the base is the mirror on
-      # ghcr.io, and the "Login" step above has already logged the daemon
-      # in with this job's token, which `imagetools inspect` here and Trivy
+      # ghcr.io, and the "Login" step above has already logged the Docker CLI
+      # config in with this job's token, which `imagetools inspect` here and Trivy
       # below both pick up from the Docker config; elsewhere the base is a
       # public upstream (Docker Hub, mcr.microsoft.com), read anonymously.
       # Nothing here offers the job token to a registry other than ghcr.io.
@@ -628,6 +628,7 @@ jobs:
       # `note` and a ::notice, and the gate runs without it.
       - name: Base image baseline (${{ matrix.arch }})
         id: upstream
+        continue-on-error: true
         env:
           REF: ${{ env.BUILD_BASE_IMAGE }}
           ARCH: ${{ matrix.arch }}
