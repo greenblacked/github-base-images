@@ -80,6 +80,15 @@ Pull requests never touch the mirrors: PR builds use the upstream base directly,
 cannot mutate registry state — and the first PR adding a new image does not need its mirror to
 exist yet.
 
+The base a build used is also the vulnerability gate's second baseline. After the build,
+`build-image.yml` resolves that same reference (one job-level `BUILD_BASE_IMAGE` value feeds both
+the `BASE_IMAGE` build arg and the gate) to its per-arch digest with `scripts/vuln-baseline.sh
+--upstream`, scans it like the published image, and hands it to `scripts/vuln-gate.sh`: findings
+the base image carries are *inherited from the base image* and never block
+([security.md](security.md#tests-and-security-scanning), [ADR 0008](adr/0008-self-updating.md#amendment-2026-10-14-the-base-image-is-a-second-baseline)).
+On `main` that is the mirror, read with the build job's registry login; elsewhere the public
+upstream, read anonymously. If it cannot be read or scanned, the gate runs without it.
+
 ## PR validation and linting
 
 A PR runs the full per-image pipeline — build both architectures natively, smoke test, all five
@@ -446,7 +455,8 @@ pin bump, and keeps the set of images in step with upstream's support lines
   distribution and version assertions moved, and add the `images.json` entry, the Dependabot
   entry, the catalog row and the docs bullet. The sibling's unexpired package-scoped
   [vulnerability exceptions](security.md#vulnerability-exceptions) are copied with the same
-  expiry, since a new image is gated against an empty baseline.
+  expiry, since a new image is gated against an empty baseline (less only what its base image
+  already ships).
 - **Deprecations** record the image in [.github/lifecycle.json](../.github/lifecycle.json), from
   which the catalog marker, the README and SECURITY.md notices and the docs section are generated.
   `.github/lifecycle.json` is not a pipeline file, so such a pull request builds nothing.

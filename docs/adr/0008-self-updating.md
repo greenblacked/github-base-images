@@ -3,7 +3,8 @@
 **Status:** accepted; supersedes the absolute vulnerability gate and the failing alerts report of
 [0006](0006-gate-on-fixable-library-vulnerabilities.md), and the auto-merge, review and
 publishing parts of [0007](0007-automatic-updates.md); how the merge bot is started is corrected by
-[0009](0009-image-lifecycle.md#merge-bot-trigger)
+[0009](0009-image-lifecycle.md#merge-bot-trigger); the gate gains the base image as a second
+baseline in the [2026-10-14 amendment](#amendment-2026-10-14-the-base-image-is-a-second-baseline)
 
 **Date:** 2026-10-06
 
@@ -195,3 +196,60 @@ hand, or give the workflow a token with `workflows: write`), and the run stays g
   unnecessary, or the ruleset becomes active, which would make GitHub auto-merge an equivalent
   option.
 - The daily cadence costs more runner time than this repository can use.
+
+## Amendment (2026-10-14): the base image is a second baseline
+
+**Context.** Comparing with the published image alone still blocked on findings a *newer base*
+brings. Two failures showed it:
+
+- `ci-dotnet8`: the .NET SDK 8.0.426 image ships its own copies of `Microsoft.Build.Tasks.Core`
+  and `System.Security.Cryptography.Xml` under `usr/share/dotnet/sdk/8.0.426/`, with fixable
+  advisories against them. The published `ci-dotnet8`, built on the previous SDK, did not have
+  them, so the gate called them new and blocked — including the daily rebuild on `main`, which
+  carried twelve runtime fixes, two of them CRITICAL.
+- `ci-python315`, a new image: with nothing published, the gate ran strict and blocked on findings
+  that come from the upstream `python` image itself.
+
+Nothing in this repository can change what Microsoft or Docker put in a base image. Blocking on it
+holds back exactly the fixes the rebuild does carry, which is the failure this ADR set out to end.
+
+**Decision.** For each image and architecture, `build-image.yml` also scans the base image the
+build is `FROM`, with the same Trivy, database, flags and exceptions as the other two scans. The
+reference is the `BASE_IMAGE` build arg the build used, defined once in the job (the mirror on
+`main`, the `images.json` `upstream` elsewhere), resolved to its per-arch digest by
+`scripts/vuln-baseline.sh --upstream`. [scripts/vuln-gate.sh](../../scripts/vuln-gate.sh) takes it
+as `--upstream`, and a fourth class joins the three above:
+
+- **inherited from the base image** (candidate and base image, not the published image): listed,
+  does not block.
+
+So what blocks is the candidate minus the published image minus the base image. The identity is
+unchanged: (vulnerability id, package name, package type). A finding both the published image and
+the base image carry stays *known upstream*, so the inherited list is exactly what the base image
+alone excuses. The base-image baseline works with the strict comparison too: a new image is
+blocked only for what it adds on top of its base. The gate result JSON gains an `inherited` list
+and the base image's reference.
+
+It is additive and best-effort. If the base cannot be resolved or scanned, the gate runs as it
+did before this amendment (published comparison, or strict), with a notice saying why; an
+unreadable base report that *was* handed to the gate is still a failure, never "no findings". No
+new credential: on `main` the mirror is read with the job's existing registry login, elsewhere
+the public upstream is read anonymously, and the job token is never offered to another registry.
+
+**Consequences.**
+
+- Whatever a base image ships at a fixed version ships here too, until upstream publishes a fixed
+  base. The daily rebuild re-mirrors the base, so the fix arrives the day upstream ships it. It is
+  listed as inherited in every gate summary and stays an alert in code scanning meanwhile.
+- What the build adds on top of the base (a tool, a pin, a package the Dockerfile installs) is
+  judged exactly as before. Since the identity ignores the path, a package the build installs
+  that matches one the base already carries with the same advisory is excused too. That is the
+  same trade-off as for *known upstream*, and it is accepted for the same reason.
+- The base is read after the build, not recorded by it. On `main` the mirror tag was written by
+  the same run's mirror job; on a pull request the upstream tag could move in between. That can
+  make one run compare with a slightly newer base than it built on, which is a re-run, not a hole.
+- Pull requests read the upstream base from Docker Hub or MCR once more per architecture. A rate
+  limit there costs the base-image baseline for that run, not the gate.
+
+**Revisit if** a base image's inherited list grows and stays for weeks with fixed releases
+available upstream: then the base is not being refreshed, which is a pipeline bug.
