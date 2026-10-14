@@ -442,9 +442,10 @@ key fails, so a typo cannot widen an entry. The job log lists every dropped resu
 
 It fails closed: the filtered file is written only on success, and when the script fails the job
 warns and uploads the **unfiltered** SARIF, so a broken filter shows everything rather than hiding
-anything. The `scorecard-results` artifact is always the unfiltered result. The upload keeps the
-`scorecard` category, so the accepted alerts close on the first filtered upload, with no
-dismissal by hand. `scripts/lint.sh` validates the list and runs it against the tree, so a
+anything. The `scorecard-results` artifact is always the unfiltered result. The categories are
+Scorecard's own (`supply-chain/local`, `supply-chain/online-scm`, `supply-chain/branchprotection`,
+from the SARIF's `automationDetails`, which the filter keeps), so the accepted alerts close on the
+first filtered upload, with no dismissal by hand. `scripts/lint.sh` validates the list and runs it against the tree, so a
 Dockerfile whose `FROM ${BASE_IMAGE}` stops being covered fails lint rather than reappearing in
 the Security tab. The filter is a separate job because Scorecard, when publishing results, only
 accepts a job made of its approved actions — no `run:` steps.

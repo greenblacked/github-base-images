@@ -232,7 +232,7 @@ jobs:
           path: scorecard.sarif
           retention-days: 90
 
-  # The Scorecard result, to code scanning (category `scorecard`), minus the
+  # The Scorecard result, to code scanning, minus the
   # findings this repository accepts by design. Code scanning shows what
   # someone can act on (docs/adr/0003, amendment of 2026-10-14); each accepted
   # finding is listed with its reason in .github/scorecard-accepted.json, and
@@ -249,10 +249,18 @@ jobs:
   #
   # Fails closed: the script writes its output only on success, and if it
   # fails for any reason the unfiltered SARIF is uploaded instead, so a
-  # broken filter shows every alert rather than hiding any. Same category as
-  # before the filter existed: each upload is the category's complete state,
-  # so the accepted alerts close on the first filtered upload, and one that
-  # stops matching (a moved or new line) opens again on the next.
+  # broken filter shows every alert rather than hiding any. The categories
+  # are Scorecard's own: its SARIF sets runs[].automationDetails.id
+  # (supply-chain/local, supply-chain/online-scm, supply-chain/branchprotection),
+  # which takes precedence over the `category:` input, and the filter copies
+  # each run's automationDetails and rules unchanged. So each upload is still
+  # those categories' complete state: the accepted alerts close on the first
+  # filtered upload (the rule ran, no result), and one that stops matching
+  # (a moved or new line) opens again on the next.
+  #
+  # The download is continue-on-error: if Scorecard died before writing its
+  # SARIF there is no artifact, the scorecard job is already red for it, and
+  # this job has nothing to upload.
   scorecard-upload:
     name: Scorecard to code scanning
     needs: scorecard
@@ -271,6 +279,8 @@ jobs:
           persist-credentials: false
 
       - name: Download the Scorecard result
+        id: download
+        continue-on-error: true
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: scorecard-results
@@ -278,14 +288,24 @@ jobs:
 
       - name: Filter accepted findings
         id: filter
+        if: steps.download.outcome == 'success'
         continue-on-error: true
-        run: ./scripts/filter-scorecard-sarif.sh scorecard-results/scorecard.sarif scorecard-upload.sarif
+        # Between stop-commands markers: the listing echoes paths and reasons,
+        # and none of that text may be read as a workflow command.
+        run: |
+          token=$(head -c 16 /dev/urandom | od -An -tx1 | tr -d ' \n')
+          echo "::stop-commands::$token"
+          rc=0
+          ./scripts/filter-scorecard-sarif.sh scorecard-results/scorecard.sarif scorecard-upload.sarif || rc=$?
+          echo "::$token::"
+          exit "$rc"
 
       - name: Warn when the filter did not run
-        if: steps.filter.outcome != 'success'
+        if: steps.download.outcome == 'success' && steps.filter.outcome != 'success'
         run: echo "::warning::the Scorecard filter failed; uploading the unfiltered SARIF, so accepted findings show in code scanning until it is fixed"
 
       - name: Upload SARIF to code scanning
+        if: steps.download.outcome == 'success'
         continue-on-error: true
         uses: github/codeql-action/upload-sarif@2892aa5e19bbd11bc0cff5427e3b750a04d9e3c2 # v4.38.2
         with:

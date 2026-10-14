@@ -14,7 +14,7 @@
   {
     "rule": "PinnedDependenciesID",
     "path": "^ci-cloud/Dockerfile\\.ci$",
-    "match": "^RUN /opt/az/bin/python3 -m pip install ",
+    "match": "^RUN /opt/az/bin/python3 -m pip install --no-cache-dir --disable-pip-version-check \\\\$",
     "reason": "Deliberate >= floors on the PyJWT, cryptography, pyOpenSSL and urllib3 that azure-cli bundles, so each daily rebuild takes the newest fixed release; documented above the RUN, and pip check plus az version guard the result."
   },
   {
