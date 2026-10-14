@@ -387,6 +387,8 @@ daily, on every push and pull request, and on a dispatch.
 - **OpenSSF Scorecard** — branch protection, token permissions, pinned dependencies, dangerous
   workflow patterns. Produces the score behind the README badge. Runs on `main` only, since several
   checks inspect repository settings rather than the tree, and the action refuses any other ref.
+  What reaches code scanning leaves out the findings accepted by design
+  ([below](#repository-level-alerts-accepted-by-design)); the artifact keeps them.
 
 Four of these publish SARIF to the Security tab — everything above except the git-history scan,
 whose findings are deliberately kept out of a view people triage to empty, and dependency review,
@@ -399,6 +401,64 @@ there too, under their own `<image>-<arch>` categories — fixable HIGH/CRITICAL
 
 > **First run:** the Scorecard badge stays grey until the workflow has run once on `main` and
 > published its results. Both badges track `main`, so they will not reflect a pull request.
+
+### Repository-level alerts accepted by design
+
+The repository-level categories follow the same rule as the image ones: code scanning shows what
+someone can act on ([ADR 0003, amendment of 2026-10-14](adr/0003-gates-vs-reports.md#amendment-2026-10-14-code-scanning-shows-only-actionable-findings)).
+A few findings there are true and permanent, because they describe how this repository is built
+on purpose. They are accepted in one reviewed place per tool, each with its reason, and every
+other finding — a new one of the same kind included — still shows.
+
+**zizmor (`workflow-audit`).** `self-repository` on the two local reusable-workflow calls in
+`build-and-push.yml` (`uses: ./.github/workflows/build-image.yml` and `alerts-report.yml`):
+calling a workflow from this repository at this commit is the design of
+[ADR 0002](adr/0002-images-json-reusable-workflow.md). Each is suppressed on its own line with
+`# zizmor: ignore[self-repository]` and a comment, like the other inline ignores, so any other
+`uses:` is still audited.
+
+**Scorecard (`scorecard`).** The `scorecard-upload` job in `security.yml` runs
+[`scripts/filter-scorecard-sarif.sh`](../scripts/filter-scorecard-sarif.sh) over Scorecard's SARIF
+before uploading it, driven by
+[`.github/scorecard-accepted.json`](../.github/scorecard-accepted.json):
+
+| Rule | Accepted where | Why |
+|---|---|---|
+| `PinnedDependenciesID` | the `FROM ${BASE_IMAGE}` line of every `ci-*/Dockerfile.ci` | the base is a tag by design — the verified mirror on `main`, upstream on pull requests, rebuilt daily ([0001](adr/0001-mirror-upstream-bases.md), [0007](adr/0007-automatic-updates.md), [0008](adr/0008-self-updating.md)) |
+| `PinnedDependenciesID` | the `npm install --global "npm@${NPM_VERSION}"` line of every `ci-node*` | pinned by exact version, moved by the pin-bump bot; npm cannot take a hash |
+| `PinnedDependenciesID` | the azure-cli `pip install` line in `ci-cloud` | deliberate `>=` floors on its bundled PyJWT, cryptography, pyOpenSSL and urllib3, documented above it |
+| `CodeReviewID` | rule-wide | one maintainer; automated PRs merge after the required checks ([0008](adr/0008-self-updating.md)) |
+| `FuzzingID` | rule-wide | Dockerfiles and shell: nothing to fuzz |
+| `CIIBestPracticesID` | rule-wide | the OpenSSF Best Practices badge is optional |
+
+An entry is either rule-wide (`rule`, `reason`) or tied to a line: `path`, an anchored regular
+expression for the file, and `match`, one for the flagged line itself. For a line entry the script
+reads the line Scorecard names (`region.startLine`) from the checked-out commit and drops the
+result only if it matches — so a new `RUN pip install foo` beside an accepted `FROM` line is still
+reported. A result it cannot place (no location, a path outside the checkout, a line past the
+end) is kept unless a rule-wide entry covers its rule. Every entry needs a `reason`, and an unknown
+key fails, so a typo cannot widen an entry. The job log lists every dropped result (rule,
+`path:line`, reason), every kept one, and any entry that matched nothing.
+
+It fails closed: the filtered file is written only on success, and when the script fails the job
+warns and uploads the **unfiltered** SARIF, so a broken filter shows everything rather than hiding
+anything. The `scorecard-results` artifact is always the unfiltered result. The upload keeps the
+`scorecard` category, so the accepted alerts close on the first filtered upload, with no
+dismissal by hand. `scripts/lint.sh` validates the list and runs it against the tree, so a
+Dockerfile whose `FROM ${BASE_IMAGE}` stops being covered fails lint rather than reappearing in
+the Security tab. The filter is a separate job because Scorecard, when publishing results, only
+accepts a job made of its approved actions — no `run:` steps.
+
+Two Scorecard alerts are **not** accepted, and stay visible on purpose:
+
+- **`BranchProtectionID`** is the owner's action: activate the `main` ruleset (Settings → Rules →
+  Rulesets) with the [required checks](#required-checks) below.
+- **`MaintainedID`** fires because Scorecard counts a repository younger than 90 days as
+  unmaintained. This one was created on 2026-07-20, so it clears on its own from about
+  2026-10-18.
+
+Changing the list is a reviewed pull request like any other; delete an entry once its finding is
+gone (the log's "matched no result" note says when).
 
 ## Required checks
 
