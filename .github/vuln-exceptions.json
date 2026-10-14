@@ -13,6 +13,69 @@
   },
   {
     "image": "ci-cloud",
+    "id": "CVE-2026-78667",
+    "package": "stdlib",
+    "installed": "v1.26.6 (gcloud-crc32c), v1.26.8 (kubectl)",
+    "reason": "Compiled into gcloud-crc32c (Google Cloud CLI 589.0.0), kubectl 1.37.1, each the latest release and pinned as such in ci-cloud, so only new releases built with Go 1.26.9 or 1.27.2 can carry the fix; Go 1.26.9 shipped on 2026-10-02 and no release of these tools is built with it yet, and the pin-bump bot picks those releases up automatically.",
+    "upstream": "https://github.com/kubernetes/kubernetes/releases",
+    "expires": "2026-11-13",
+    "paths": [
+      "opt/google-cloud-sdk/bin/gcloud-crc32c",
+      "usr/local/bin/kubectl"
+    ]
+  },
+  {
+    "image": "ci-cloud",
+    "id": "CVE-2026-78669",
+    "package": "stdlib, golang.org/x/net",
+    "installed": "stdlib v1.26.6 (gcloud-crc32c), v1.26.8 (kubectl); golang.org/x/net v0.57.0 (kubectl)",
+    "reason": "Compiled into gcloud-crc32c (Google Cloud CLI 589.0.0), kubectl 1.37.1, each the latest release and pinned as such in ci-cloud, so only new releases built with Go 1.26.9 or 1.27.2 and golang.org/x/net 0.60.0 can carry the fix; Go 1.26.9 shipped on 2026-10-02 and no release of these tools is built with it yet, and the pin-bump bot picks those releases up automatically.",
+    "upstream": "https://github.com/kubernetes/kubernetes/releases",
+    "expires": "2026-11-13",
+    "paths": [
+      "opt/google-cloud-sdk/bin/gcloud-crc32c",
+      "usr/local/bin/kubectl"
+    ]
+  },
+  {
+    "image": "ci-cloud",
+    "id": "CVE-2026-97031",
+    "package": "stdlib",
+    "installed": "v1.26.6 (gcloud-crc32c), v1.26.8 (kubectl)",
+    "reason": "Compiled into gcloud-crc32c (Google Cloud CLI 589.0.0), kubectl 1.37.1, each the latest release and pinned as such in ci-cloud, so only new releases built with Go 1.26.9 or 1.27.2 can carry the fix; Go 1.26.9 shipped on 2026-10-02 and no release of these tools is built with it yet, and the pin-bump bot picks those releases up automatically.",
+    "upstream": "https://github.com/kubernetes/kubernetes/releases",
+    "expires": "2026-11-13",
+    "paths": [
+      "opt/google-cloud-sdk/bin/gcloud-crc32c",
+      "usr/local/bin/kubectl"
+    ]
+  },
+  {
+    "image": "ci-cloud",
+    "id": "CVE-2026-97687",
+    "package": "urllib3",
+    "installed": "2.7.0",
+    "reason": "urllib3 is vendored inside pip 26.2.1 (pip/_vendor) which azure-cli's bundled Python ships, and pip's vendor.txt in 26.2.1, the latest release, still pins urllib3==2.7.0; only a pip release vendoring urllib3 2.8.0 can carry the fix, and the daily rebuild picks it up from the base image.",
+    "upstream": "https://github.com/pypa/pip/blob/main/src/pip/_vendor/vendor.txt",
+    "expires": "2026-11-13",
+    "purls": [
+      "pkg:pypi/urllib3@2.7.0"
+    ]
+  },
+  {
+    "image": "ci-cloud",
+    "id": "CVE-2026-97689",
+    "package": "urllib3",
+    "installed": "2.7.0",
+    "reason": "urllib3 is vendored inside pip 26.2.1 (pip/_vendor) which azure-cli's bundled Python ships, and pip's vendor.txt in 26.2.1, the latest release, still pins urllib3==2.7.0; only a pip release vendoring urllib3 2.8.0 can carry the fix, and the daily rebuild picks it up from the base image.",
+    "upstream": "https://github.com/pypa/pip/blob/main/src/pip/_vendor/vendor.txt",
+    "expires": "2026-11-13",
+    "purls": [
+      "pkg:pypi/urllib3@2.7.0"
+    ]
+  },
+  {
+    "image": "ci-cloud",
     "id": "GHSA-6v7p-g79w-8964",
     "package": "msgpack",
     "installed": "1.1.2",
@@ -49,6 +112,30 @@
   },
   {
     "image": "ci-db",
+    "id": "CVE-2026-78667",
+    "package": "stdlib",
+    "installed": "v1.26.7 (golang-migrate)",
+    "reason": "Compiled into golang-migrate v4.20.1, the latest release and pinned as such in ci-db, so only a new release built with Go 1.26.9 or 1.27.2 can carry the fix; Go 1.26.9 shipped on 2026-10-02 and no newer release is built with it yet, and the pin-bump bot picks those releases up automatically.",
+    "upstream": "https://github.com/golang-migrate/migrate/releases",
+    "expires": "2026-11-13",
+    "paths": [
+      "usr/local/bin/migrate"
+    ]
+  },
+  {
+    "image": "ci-db",
+    "id": "CVE-2026-78669",
+    "package": "stdlib, golang.org/x/net",
+    "installed": "stdlib v1.26.7 (golang-migrate); golang.org/x/net v0.56.0 (golang-migrate)",
+    "reason": "Compiled into golang-migrate v4.20.1, the latest release and pinned as such in ci-db, so only a new release built with Go 1.26.9 or 1.27.2 and golang.org/x/net 0.60.0 can carry the fix; Go 1.26.9 shipped on 2026-10-02 and no newer release is built with it yet, and the pin-bump bot picks those releases up automatically.",
+    "upstream": "https://github.com/golang-migrate/migrate/releases",
+    "expires": "2026-11-13",
+    "paths": [
+      "usr/local/bin/migrate"
+    ]
+  },
+  {
+    "image": "ci-db",
     "id": "CVE-2026-84304",
     "package": "google.golang.org/grpc",
     "installed": "v1.82.0",
@@ -73,6 +160,18 @@
   },
   {
     "image": "ci-db",
+    "id": "CVE-2026-97031",
+    "package": "stdlib",
+    "installed": "v1.26.7 (golang-migrate)",
+    "reason": "Compiled into golang-migrate v4.20.1, the latest release and pinned as such in ci-db, so only a new release built with Go 1.26.9 or 1.27.2 can carry the fix; Go 1.26.9 shipped on 2026-10-02 and no newer release is built with it yet, and the pin-bump bot picks those releases up automatically.",
+    "upstream": "https://github.com/golang-migrate/migrate/releases",
+    "expires": "2026-11-13",
+    "paths": [
+      "usr/local/bin/migrate"
+    ]
+  },
+  {
+    "image": "ci-db",
     "id": "GHSA-hrxh-6v49-42gf",
     "package": "google.golang.org/grpc",
     "installed": "v1.82.0",
@@ -84,20 +183,68 @@
     ]
   },
   {
+    "image": "ci-dotnet10",
+    "id": "CVE-2026-84008",
+    "package": "System.Security.Cryptography.Pkcs",
+    "installed": "10.0.10",
+    "reason": "System.Security.Cryptography.Pkcs 10.0.10 is bundled in PowerShell 7.6.7 (pwsh.deps.json), which Microsoft's mcr.microsoft.com/dotnet/sdk:10.0-noble base image installs as a global tool; the newest image (SDK 10.0.402, runtime 10.0.13) still ships PowerShell 7.6.7, the latest stable release, so only the next PowerShell release can carry the fixed 10.0.13, and the daily rebuild picks it up from the base image. Narrowed to the 7.6.7 paths (amd64 and arm64): a PowerShell release moves them, so this lapses with it.",
+    "upstream": "https://github.com/PowerShell/PowerShell/releases",
+    "expires": "2026-11-13",
+    "paths": [
+      "usr/share/powershell/.store/powershell.linux.arm64/7.6.7/powershell.linux.arm64/7.6.7/tools/net10.0/any/pwsh.deps.json",
+      "usr/share/powershell/.store/powershell.linux.x64/7.6.7/powershell.linux.x64/7.6.7/tools/net10.0/any/pwsh.deps.json"
+    ]
+  },
+  {
+    "image": "ci-dotnet10",
+    "id": "CVE-2026-96958",
+    "package": "System.Security.Cryptography.Xml",
+    "installed": "10.0.10",
+    "reason": "System.Security.Cryptography.Xml 10.0.10 is bundled in PowerShell 7.6.7 (pwsh.deps.json), which Microsoft's mcr.microsoft.com/dotnet/sdk:10.0-noble base image installs as a global tool; the newest image (SDK 10.0.402, runtime 10.0.13) still ships PowerShell 7.6.7, the latest stable release, so only the next PowerShell release can carry the fixed 10.0.13, and the daily rebuild picks it up from the base image. Narrowed to the 7.6.7 paths (amd64 and arm64): a PowerShell release moves them, so this lapses with it.",
+    "upstream": "https://github.com/PowerShell/PowerShell/releases",
+    "expires": "2026-11-13",
+    "paths": [
+      "usr/share/powershell/.store/powershell.linux.arm64/7.6.7/powershell.linux.arm64/7.6.7/tools/net10.0/any/pwsh.deps.json",
+      "usr/share/powershell/.store/powershell.linux.x64/7.6.7/powershell.linux.x64/7.6.7/tools/net10.0/any/pwsh.deps.json"
+    ]
+  },
+  {
+    "image": "ci-dotnet10",
+    "id": "CVE-2026-96959",
+    "package": "System.Security.Cryptography.Xml",
+    "installed": "10.0.10",
+    "reason": "System.Security.Cryptography.Xml 10.0.10 is bundled in PowerShell 7.6.7 (pwsh.deps.json), which Microsoft's mcr.microsoft.com/dotnet/sdk:10.0-noble base image installs as a global tool; the newest image (SDK 10.0.402, runtime 10.0.13) still ships PowerShell 7.6.7, the latest stable release, so only the next PowerShell release can carry the fixed 10.0.13, and the daily rebuild picks it up from the base image. Narrowed to the 7.6.7 paths (amd64 and arm64): a PowerShell release moves them, so this lapses with it.",
+    "upstream": "https://github.com/PowerShell/PowerShell/releases",
+    "expires": "2026-11-13",
+    "paths": [
+      "usr/share/powershell/.store/powershell.linux.arm64/7.6.7/powershell.linux.arm64/7.6.7/tools/net10.0/any/pwsh.deps.json",
+      "usr/share/powershell/.store/powershell.linux.x64/7.6.7/powershell.linux.x64/7.6.7/tools/net10.0/any/pwsh.deps.json"
+    ]
+  },
+  {
+    "image": "ci-dotnet10",
+    "id": "CVE-2026-96960",
+    "package": "System.Security.Cryptography.Xml",
+    "installed": "10.0.10",
+    "reason": "System.Security.Cryptography.Xml 10.0.10 is bundled in PowerShell 7.6.7 (pwsh.deps.json), which Microsoft's mcr.microsoft.com/dotnet/sdk:10.0-noble base image installs as a global tool; the newest image (SDK 10.0.402, runtime 10.0.13) still ships PowerShell 7.6.7, the latest stable release, so only the next PowerShell release can carry the fixed 10.0.13, and the daily rebuild picks it up from the base image. Narrowed to the 7.6.7 paths (amd64 and arm64): a PowerShell release moves them, so this lapses with it.",
+    "upstream": "https://github.com/PowerShell/PowerShell/releases",
+    "expires": "2026-11-13",
+    "paths": [
+      "usr/share/powershell/.store/powershell.linux.arm64/7.6.7/powershell.linux.arm64/7.6.7/tools/net10.0/any/pwsh.deps.json",
+      "usr/share/powershell/.store/powershell.linux.x64/7.6.7/powershell.linux.x64/7.6.7/tools/net10.0/any/pwsh.deps.json"
+    ]
+  },
+  {
     "image": "ci-dotnet8",
     "id": "CVE-2025-26646",
     "package": "Microsoft.Build.Tasks.Core",
-    "installed": "17.11.48",
-    "reason": "Microsoft.Build.Tasks.Core 17.11.48 ships inside .NET SDK 8.0.425, the SDK in the newest mcr.microsoft.com/dotnet/sdk:8.0 image, and no released 8.0 SDK carries the fixed package yet.",
+    "installed": "17.11.48, 17.11.69",
+    "reason": "Microsoft.Build.Tasks.Core 17.11.69 (MSBuild, FSharp, NuGet and dotnet deps.json) and 17.11.48 (dotnet-format) ship inside .NET SDK 8.0.426, the SDK in the newest mcr.microsoft.com/dotnet/sdk:8.0 image; the advisory fixes no 17.11.x, and no released 8.0 SDK carries a fixed one. ci-dotnet8 is deprecated and retires at .NET 8's end of life on 2026-11-10 (.github/lifecycle.json), so this expires with it. Narrowed by purl rather than path so the next SDK patch release, which moves the sdk/<version>/ directory, does not break it.",
     "upstream": "https://github.com/dotnet/dotnet-docker",
-    "expires": "2026-10-26",
-    "paths": [
-      "usr/share/dotnet/sdk/8.0.425/DotnetTools/dotnet-format/dotnet-format.deps.json",
-      "usr/share/dotnet/sdk/8.0.425/FSharp/fsc.deps.json",
-      "usr/share/dotnet/sdk/8.0.425/FSharp/fsi.deps.json",
-      "usr/share/dotnet/sdk/8.0.425/MSBuild.deps.json",
-      "usr/share/dotnet/sdk/8.0.425/NuGet.CommandLine.XPlat.deps.json",
-      "usr/share/dotnet/sdk/8.0.425/dotnet.deps.json"
+    "expires": "2026-11-10",
+    "purls": [
+      "pkg:nuget/Microsoft.Build.Tasks.Core@17.11.48",
+      "pkg:nuget/Microsoft.Build.Tasks.Core@17.11.69"
     ]
   },
   {
@@ -105,11 +252,11 @@
     "id": "CVE-2026-47302",
     "package": "System.Security.Cryptography.Xml",
     "installed": "8.0.3",
-    "reason": "System.Security.Cryptography.Xml 8.0.3 ships inside .NET SDK 8.0.425, the SDK in the newest mcr.microsoft.com/dotnet/sdk:8.0 image, and no released 8.0 SDK carries the fixed package yet.",
+    "reason": "System.Security.Cryptography.Xml 8.0.3 ships inside .NET SDK 8.0.426 (dotnet-format), the SDK in the newest mcr.microsoft.com/dotnet/sdk:8.0 image, and no released 8.0 SDK carries a fixed one. ci-dotnet8 is deprecated and retires at .NET 8's end of life on 2026-11-10 (.github/lifecycle.json), so this expires with it. Narrowed by purl rather than path so the next SDK patch release, which moves the sdk/<version>/ directory, does not break it.",
     "upstream": "https://github.com/dotnet/dotnet-docker",
-    "expires": "2026-10-26",
-    "paths": [
-      "usr/share/dotnet/sdk/8.0.425/DotnetTools/dotnet-format/dotnet-format.deps.json"
+    "expires": "2026-11-10",
+    "purls": [
+      "pkg:nuget/System.Security.Cryptography.Xml@8.0.3"
     ]
   },
   {
@@ -117,11 +264,11 @@
     "id": "CVE-2026-47304",
     "package": "System.Security.Cryptography.Xml",
     "installed": "8.0.3",
-    "reason": "System.Security.Cryptography.Xml 8.0.3 ships inside .NET SDK 8.0.425, the SDK in the newest mcr.microsoft.com/dotnet/sdk:8.0 image, and no released 8.0 SDK carries the fixed package yet.",
+    "reason": "System.Security.Cryptography.Xml 8.0.3 ships inside .NET SDK 8.0.426 (dotnet-format), the SDK in the newest mcr.microsoft.com/dotnet/sdk:8.0 image, and no released 8.0 SDK carries a fixed one. ci-dotnet8 is deprecated and retires at .NET 8's end of life on 2026-11-10 (.github/lifecycle.json), so this expires with it. Narrowed by purl rather than path so the next SDK patch release, which moves the sdk/<version>/ directory, does not break it.",
     "upstream": "https://github.com/dotnet/dotnet-docker",
-    "expires": "2026-10-26",
-    "paths": [
-      "usr/share/dotnet/sdk/8.0.425/DotnetTools/dotnet-format/dotnet-format.deps.json"
+    "expires": "2026-11-10",
+    "purls": [
+      "pkg:nuget/System.Security.Cryptography.Xml@8.0.3"
     ]
   },
   {
@@ -129,11 +276,11 @@
     "id": "CVE-2026-50525",
     "package": "System.Security.Cryptography.Xml",
     "installed": "8.0.3",
-    "reason": "System.Security.Cryptography.Xml 8.0.3 ships inside .NET SDK 8.0.425, the SDK in the newest mcr.microsoft.com/dotnet/sdk:8.0 image, and no released 8.0 SDK carries the fixed package yet.",
+    "reason": "System.Security.Cryptography.Xml 8.0.3 ships inside .NET SDK 8.0.426 (dotnet-format), the SDK in the newest mcr.microsoft.com/dotnet/sdk:8.0 image, and no released 8.0 SDK carries a fixed one. ci-dotnet8 is deprecated and retires at .NET 8's end of life on 2026-11-10 (.github/lifecycle.json), so this expires with it. Narrowed by purl rather than path so the next SDK patch release, which moves the sdk/<version>/ directory, does not break it.",
     "upstream": "https://github.com/dotnet/dotnet-docker",
-    "expires": "2026-10-26",
-    "paths": [
-      "usr/share/dotnet/sdk/8.0.425/DotnetTools/dotnet-format/dotnet-format.deps.json"
+    "expires": "2026-11-10",
+    "purls": [
+      "pkg:nuget/System.Security.Cryptography.Xml@8.0.3"
     ]
   },
   {
@@ -141,11 +288,11 @@
     "id": "CVE-2026-50527",
     "package": "System.Security.Cryptography.Xml",
     "installed": "8.0.3",
-    "reason": "System.Security.Cryptography.Xml 8.0.3 ships inside .NET SDK 8.0.425, the SDK in the newest mcr.microsoft.com/dotnet/sdk:8.0 image, and no released 8.0 SDK carries the fixed package yet.",
+    "reason": "System.Security.Cryptography.Xml 8.0.3 ships inside .NET SDK 8.0.426 (dotnet-format), the SDK in the newest mcr.microsoft.com/dotnet/sdk:8.0 image, and no released 8.0 SDK carries a fixed one. ci-dotnet8 is deprecated and retires at .NET 8's end of life on 2026-11-10 (.github/lifecycle.json), so this expires with it. Narrowed by purl rather than path so the next SDK patch release, which moves the sdk/<version>/ directory, does not break it.",
     "upstream": "https://github.com/dotnet/dotnet-docker",
-    "expires": "2026-10-26",
-    "paths": [
-      "usr/share/dotnet/sdk/8.0.425/DotnetTools/dotnet-format/dotnet-format.deps.json"
+    "expires": "2026-11-10",
+    "purls": [
+      "pkg:nuget/System.Security.Cryptography.Xml@8.0.3"
     ]
   },
   {
@@ -153,11 +300,71 @@
     "id": "CVE-2026-50648",
     "package": "System.Security.Cryptography.Xml",
     "installed": "8.0.3",
-    "reason": "System.Security.Cryptography.Xml 8.0.3 ships inside .NET SDK 8.0.425, the SDK in the newest mcr.microsoft.com/dotnet/sdk:8.0 image, and no released 8.0 SDK carries the fixed package yet.",
+    "reason": "System.Security.Cryptography.Xml 8.0.3 ships inside .NET SDK 8.0.426 (dotnet-format), the SDK in the newest mcr.microsoft.com/dotnet/sdk:8.0 image, and no released 8.0 SDK carries a fixed one. ci-dotnet8 is deprecated and retires at .NET 8's end of life on 2026-11-10 (.github/lifecycle.json), so this expires with it. Narrowed by purl rather than path so the next SDK patch release, which moves the sdk/<version>/ directory, does not break it.",
     "upstream": "https://github.com/dotnet/dotnet-docker",
-    "expires": "2026-10-26",
-    "paths": [
-      "usr/share/dotnet/sdk/8.0.425/DotnetTools/dotnet-format/dotnet-format.deps.json"
+    "expires": "2026-11-10",
+    "purls": [
+      "pkg:nuget/System.Security.Cryptography.Xml@8.0.3"
+    ]
+  },
+  {
+    "image": "ci-dotnet8",
+    "id": "CVE-2026-84008",
+    "package": "System.Security.Cryptography.Pkcs",
+    "installed": "8.0.1",
+    "reason": "System.Security.Cryptography.Pkcs 8.0.1 ships inside .NET SDK 8.0.426 (dotnet-format), the SDK in the newest mcr.microsoft.com/dotnet/sdk:8.0 image, and no released 8.0 SDK carries a fixed one. ci-dotnet8 is deprecated and retires at .NET 8's end of life on 2026-11-10 (.github/lifecycle.json), so this expires with it. Narrowed by purl rather than path so the next SDK patch release, which moves the sdk/<version>/ directory, does not break it.",
+    "upstream": "https://github.com/dotnet/dotnet-docker",
+    "expires": "2026-11-10",
+    "purls": [
+      "pkg:nuget/System.Security.Cryptography.Pkcs@8.0.1"
+    ]
+  },
+  {
+    "image": "ci-dotnet8",
+    "id": "CVE-2026-96222",
+    "package": "System.Security.Cryptography.Xml",
+    "installed": "8.0.3",
+    "reason": "System.Security.Cryptography.Xml 8.0.3 ships inside .NET SDK 8.0.426 (dotnet-format), the SDK in the newest mcr.microsoft.com/dotnet/sdk:8.0 image, and no released 8.0 SDK carries a fixed one. ci-dotnet8 is deprecated and retires at .NET 8's end of life on 2026-11-10 (.github/lifecycle.json), so this expires with it. Narrowed by purl rather than path so the next SDK patch release, which moves the sdk/<version>/ directory, does not break it.",
+    "upstream": "https://github.com/dotnet/dotnet-docker",
+    "expires": "2026-11-10",
+    "purls": [
+      "pkg:nuget/System.Security.Cryptography.Xml@8.0.3"
+    ]
+  },
+  {
+    "image": "ci-dotnet8",
+    "id": "CVE-2026-96958",
+    "package": "System.Security.Cryptography.Xml",
+    "installed": "8.0.3",
+    "reason": "System.Security.Cryptography.Xml 8.0.3 ships inside .NET SDK 8.0.426 (dotnet-format), the SDK in the newest mcr.microsoft.com/dotnet/sdk:8.0 image, and no released 8.0 SDK carries a fixed one. ci-dotnet8 is deprecated and retires at .NET 8's end of life on 2026-11-10 (.github/lifecycle.json), so this expires with it. Narrowed by purl rather than path so the next SDK patch release, which moves the sdk/<version>/ directory, does not break it.",
+    "upstream": "https://github.com/dotnet/dotnet-docker",
+    "expires": "2026-11-10",
+    "purls": [
+      "pkg:nuget/System.Security.Cryptography.Xml@8.0.3"
+    ]
+  },
+  {
+    "image": "ci-dotnet8",
+    "id": "CVE-2026-96959",
+    "package": "System.Security.Cryptography.Xml",
+    "installed": "8.0.3",
+    "reason": "System.Security.Cryptography.Xml 8.0.3 ships inside .NET SDK 8.0.426 (dotnet-format), the SDK in the newest mcr.microsoft.com/dotnet/sdk:8.0 image, and no released 8.0 SDK carries a fixed one. ci-dotnet8 is deprecated and retires at .NET 8's end of life on 2026-11-10 (.github/lifecycle.json), so this expires with it. Narrowed by purl rather than path so the next SDK patch release, which moves the sdk/<version>/ directory, does not break it.",
+    "upstream": "https://github.com/dotnet/dotnet-docker",
+    "expires": "2026-11-10",
+    "purls": [
+      "pkg:nuget/System.Security.Cryptography.Xml@8.0.3"
+    ]
+  },
+  {
+    "image": "ci-dotnet8",
+    "id": "CVE-2026-96960",
+    "package": "System.Security.Cryptography.Xml",
+    "installed": "8.0.3",
+    "reason": "System.Security.Cryptography.Xml 8.0.3 ships inside .NET SDK 8.0.426 (dotnet-format), the SDK in the newest mcr.microsoft.com/dotnet/sdk:8.0 image, and no released 8.0 SDK carries a fixed one. ci-dotnet8 is deprecated and retires at .NET 8's end of life on 2026-11-10 (.github/lifecycle.json), so this expires with it. Narrowed by purl rather than path so the next SDK patch release, which moves the sdk/<version>/ directory, does not break it.",
+    "upstream": "https://github.com/dotnet/dotnet-docker",
+    "expires": "2026-11-10",
+    "purls": [
+      "pkg:nuget/System.Security.Cryptography.Xml@8.0.3"
     ]
   },
   {
@@ -170,6 +377,30 @@
     "expires": "2026-10-26",
     "purls": [
       "pkg:pypi/setuptools@70.3.0"
+    ]
+  },
+  {
+    "image": "ci-python313",
+    "id": "CVE-2026-97687",
+    "package": "urllib3",
+    "installed": "2.7.0",
+    "reason": "urllib3 is vendored inside pip 26.2.1 (pip/_vendor) in the upstream python:3.13 image, and pip's vendor.txt in 26.2.1, the latest release, still pins urllib3==2.7.0; only a pip release vendoring urllib3 2.8.0 can carry the fix, and the daily rebuild picks it up from the base image.",
+    "upstream": "https://github.com/pypa/pip/blob/main/src/pip/_vendor/vendor.txt",
+    "expires": "2026-11-13",
+    "purls": [
+      "pkg:pypi/urllib3@2.7.0"
+    ]
+  },
+  {
+    "image": "ci-python313",
+    "id": "CVE-2026-97689",
+    "package": "urllib3",
+    "installed": "2.7.0",
+    "reason": "urllib3 is vendored inside pip 26.2.1 (pip/_vendor) in the upstream python:3.13 image, and pip's vendor.txt in 26.2.1, the latest release, still pins urllib3==2.7.0; only a pip release vendoring urllib3 2.8.0 can carry the fix, and the daily rebuild picks it up from the base image.",
+    "upstream": "https://github.com/pypa/pip/blob/main/src/pip/_vendor/vendor.txt",
+    "expires": "2026-11-13",
+    "purls": [
+      "pkg:pypi/urllib3@2.7.0"
     ]
   },
   {
@@ -194,6 +425,30 @@
     "expires": "2026-10-26",
     "purls": [
       "pkg:pypi/setuptools@70.3.0"
+    ]
+  },
+  {
+    "image": "ci-python314",
+    "id": "CVE-2026-97687",
+    "package": "urllib3",
+    "installed": "2.7.0",
+    "reason": "urllib3 is vendored inside pip 26.2.1 (pip/_vendor) in the upstream python:3.14 image, and pip's vendor.txt in 26.2.1, the latest release, still pins urllib3==2.7.0; only a pip release vendoring urllib3 2.8.0 can carry the fix, and the daily rebuild picks it up from the base image.",
+    "upstream": "https://github.com/pypa/pip/blob/main/src/pip/_vendor/vendor.txt",
+    "expires": "2026-11-13",
+    "purls": [
+      "pkg:pypi/urllib3@2.7.0"
+    ]
+  },
+  {
+    "image": "ci-python314",
+    "id": "CVE-2026-97689",
+    "package": "urllib3",
+    "installed": "2.7.0",
+    "reason": "urllib3 is vendored inside pip 26.2.1 (pip/_vendor) in the upstream python:3.14 image, and pip's vendor.txt in 26.2.1, the latest release, still pins urllib3==2.7.0; only a pip release vendoring urllib3 2.8.0 can carry the fix, and the daily rebuild picks it up from the base image.",
+    "upstream": "https://github.com/pypa/pip/blob/main/src/pip/_vendor/vendor.txt",
+    "expires": "2026-11-13",
+    "purls": [
+      "pkg:pypi/urllib3@2.7.0"
     ]
   },
   {
@@ -674,6 +929,38 @@
   },
   {
     "image": "ci-security",
+    "id": "CVE-2026-78667",
+    "package": "stdlib",
+    "installed": "v1.26.4 (cosign), v1.24.11 (gitleaks), v1.26.8 (grype), v1.26.8 (syft), trivy 0.76.0 toolchain unconfirmed",
+    "reason": "Compiled into cosign 3.1.3, gitleaks 8.30.1, grype 0.120.1, syft 1.54.1, trivy 0.76.0, each the latest upstream release and pinned as such in ci-security, so only new releases built with Go 1.26.9 or 1.27.2 can carry the fix; Go 1.26.9 shipped on 2026-10-02 and no release of these tools is built with it yet, and the pin-bump bot picks those releases up automatically. trivy 0.76.0 (2026-10-14) already carries golang.org/x/net 0.60.0; its path stays listed only in case its Go toolchain predates 1.27.2, which could not be confirmed when it was taken.",
+    "upstream": "https://github.com/sigstore/cosign/releases",
+    "expires": "2026-11-13",
+    "paths": [
+      "usr/local/bin/cosign",
+      "usr/local/bin/gitleaks",
+      "usr/local/bin/grype",
+      "usr/local/bin/syft",
+      "usr/local/bin/trivy"
+    ]
+  },
+  {
+    "image": "ci-security",
+    "id": "CVE-2026-78669",
+    "package": "stdlib, golang.org/x/net",
+    "installed": "stdlib v1.26.4 (cosign), v1.24.11 (gitleaks), v1.26.8 (grype), v1.26.8 (syft), trivy 0.76.0 toolchain unconfirmed; golang.org/x/net v0.56.0 (cosign), v0.59.0 (grype), v0.59.0 (syft)",
+    "reason": "Compiled into cosign 3.1.3, gitleaks 8.30.1, grype 0.120.1, syft 1.54.1, trivy 0.76.0, each the latest upstream release and pinned as such in ci-security, so only new releases built with Go 1.26.9 or 1.27.2 and golang.org/x/net 0.60.0 can carry the fix; Go 1.26.9 shipped on 2026-10-02 and no release of these tools is built with it yet, and the pin-bump bot picks those releases up automatically. trivy 0.76.0 (2026-10-14) already carries golang.org/x/net 0.60.0; its path stays listed only in case its Go toolchain predates 1.27.2, which could not be confirmed when it was taken.",
+    "upstream": "https://github.com/sigstore/cosign/releases",
+    "expires": "2026-11-13",
+    "paths": [
+      "usr/local/bin/cosign",
+      "usr/local/bin/gitleaks",
+      "usr/local/bin/grype",
+      "usr/local/bin/syft",
+      "usr/local/bin/trivy"
+    ]
+  },
+  {
+    "image": "ci-security",
     "id": "CVE-2026-84304",
     "package": "google.golang.org/grpc",
     "installed": "v1.82.0 (cosign), v1.82.1 (trivy)",
@@ -695,6 +982,22 @@
     "expires": "2026-10-26",
     "paths": [
       "usr/local/bin/cosign",
+      "usr/local/bin/trivy"
+    ]
+  },
+  {
+    "image": "ci-security",
+    "id": "CVE-2026-97031",
+    "package": "stdlib",
+    "installed": "v1.26.4 (cosign), v1.24.11 (gitleaks), v1.26.8 (grype), v1.26.8 (syft), trivy 0.76.0 toolchain unconfirmed",
+    "reason": "Compiled into cosign 3.1.3, gitleaks 8.30.1, grype 0.120.1, syft 1.54.1, trivy 0.76.0, each the latest upstream release and pinned as such in ci-security, so only new releases built with Go 1.26.9 or 1.27.2 can carry the fix; Go 1.26.9 shipped on 2026-10-02 and no release of these tools is built with it yet, and the pin-bump bot picks those releases up automatically. trivy 0.76.0 (2026-10-14) already carries golang.org/x/net 0.60.0; its path stays listed only in case its Go toolchain predates 1.27.2, which could not be confirmed when it was taken.",
+    "upstream": "https://github.com/sigstore/cosign/releases",
+    "expires": "2026-11-13",
+    "paths": [
+      "usr/local/bin/cosign",
+      "usr/local/bin/gitleaks",
+      "usr/local/bin/grype",
+      "usr/local/bin/syft",
       "usr/local/bin/trivy"
     ]
   },
@@ -724,6 +1027,30 @@
   },
   {
     "image": "ci-python315",
+    "id": "CVE-2026-97687",
+    "package": "urllib3",
+    "installed": "2.7.0",
+    "reason": "urllib3 is vendored inside pip 26.2.1 (pip/_vendor) in the upstream python:3.15 image, and pip's vendor.txt in 26.2.1, the latest release, still pins urllib3==2.7.0; only a pip release vendoring urllib3 2.8.0 can carry the fix, and the daily rebuild picks it up from the base image.",
+    "upstream": "https://github.com/pypa/pip/blob/main/src/pip/_vendor/vendor.txt",
+    "expires": "2026-11-13",
+    "purls": [
+      "pkg:pypi/urllib3@2.7.0"
+    ]
+  },
+  {
+    "image": "ci-python315",
+    "id": "CVE-2026-97689",
+    "package": "urllib3",
+    "installed": "2.7.0",
+    "reason": "urllib3 is vendored inside pip 26.2.1 (pip/_vendor) in the upstream python:3.15 image, and pip's vendor.txt in 26.2.1, the latest release, still pins urllib3==2.7.0; only a pip release vendoring urllib3 2.8.0 can carry the fix, and the daily rebuild picks it up from the base image.",
+    "upstream": "https://github.com/pypa/pip/blob/main/src/pip/_vendor/vendor.txt",
+    "expires": "2026-11-13",
+    "purls": [
+      "pkg:pypi/urllib3@2.7.0"
+    ]
+  },
+  {
+    "image": "ci-python315",
     "id": "GHSA-6v7p-g79w-8964",
     "package": "msgpack",
     "installed": "1.1.2",
@@ -732,6 +1059,49 @@
     "expires": "2026-10-26",
     "purls": [
       "pkg:pypi/msgpack@1.1.2"
+    ]
+  },
+  {
+    "image": "ci-tools",
+    "id": "CVE-2026-78667",
+    "package": "stdlib",
+    "installed": "v1.26.8 (kubectl), v1.26.8 (terraform)",
+    "reason": "Compiled into kubectl 1.37.1 and terraform 1.16.6, each the latest release and pinned as such in ci-tools (terraform 1.16.6 already carries golang.org/x/net 0.60.0 but is still built with Go 1.26.8), so only new releases built with Go 1.26.9 or 1.27.2 can carry the fix; Go 1.26.9 shipped on 2026-10-02 and no release of either is built with it yet, and the pin-bump bot picks those releases up automatically.",
+    "upstream": "https://github.com/kubernetes/kubernetes/releases",
+    "expires": "2026-11-13",
+    "paths": [
+      "usr/local/bin/kubectl",
+      "usr/local/bin/terraform"
+    ]
+  },
+  {
+    "image": "ci-tools",
+    "id": "CVE-2026-78669",
+    "package": "stdlib, golang.org/x/net",
+    "installed": "stdlib v1.26.8 (kubectl), v1.26.8 (terraform); golang.org/x/net v0.57.0 (kubectl)",
+    "reason": "Compiled into kubectl 1.37.1 and terraform 1.16.6, each the latest release and pinned as such in ci-tools (terraform 1.16.6 already carries golang.org/x/net 0.60.0 but is still built with Go 1.26.8), so only new releases built with Go 1.26.9 or 1.27.2 (and, for kubectl, golang.org/x/net 0.60.0) can carry the fix; Go 1.26.9 shipped on 2026-10-02 and no release of either is built with it yet, and the pin-bump bot picks those releases up automatically. Narrowed by purl to the stdlib in both and kubectl's golang.org/x/net v0.57.0, so no other x/net is excused.",
+    "upstream": "https://github.com/kubernetes/kubernetes/releases",
+    "expires": "2026-11-13",
+    "paths": [
+      "usr/local/bin/kubectl",
+      "usr/local/bin/terraform"
+    ],
+    "purls": [
+      "pkg:golang/stdlib@v1.26.8",
+      "pkg:golang/golang.org/x/net@v0.57.0"
+    ]
+  },
+  {
+    "image": "ci-tools",
+    "id": "CVE-2026-97031",
+    "package": "stdlib",
+    "installed": "v1.26.8 (kubectl), v1.26.8 (terraform)",
+    "reason": "Compiled into kubectl 1.37.1 and terraform 1.16.6, each the latest release and pinned as such in ci-tools (terraform 1.16.6 already carries golang.org/x/net 0.60.0 but is still built with Go 1.26.8), so only new releases built with Go 1.26.9 or 1.27.2 can carry the fix; Go 1.26.9 shipped on 2026-10-02 and no release of either is built with it yet, and the pin-bump bot picks those releases up automatically.",
+    "upstream": "https://github.com/kubernetes/kubernetes/releases",
+    "expires": "2026-11-13",
+    "paths": [
+      "usr/local/bin/kubectl",
+      "usr/local/bin/terraform"
     ]
   }
 ]

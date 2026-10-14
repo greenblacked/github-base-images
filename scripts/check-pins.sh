@@ -105,7 +105,13 @@ trap 'rm -rf "$tmp"' EXIT INT TERM
 # runtime's images lost, must not quietly drop a tool from the drift report --
 # except for a row written `*?/Dockerfile.ci`: a workaround pin that is meant
 # to go away with the image that needs it (the json gem replacement in
-# ci-ruby40). That one is skipped once no image carries it.
+# ci-ruby40), or once upstream ships the fix (the brace-expansion and undici
+# copies the Node images swap into npm's own tree). That one is skipped once
+# no image carries it.
+#
+# An npm argument written `<package>@<major>` resolves to the newest release on
+# that major rather than to the `latest` dist-tag: the copies swapped into
+# npm's tree have to stay on the major npm itself depends on.
 #
 # gitleaks is the exception, listed twice: the copy security.yml runs over the
 # git history is a separate pin that nothing forces to agree with the image's,
@@ -126,6 +132,8 @@ gitleaks   | ci-security/Dockerfile.ci            | GITLEAKS_VERSION   | github 
 migrate    | ci-db/Dockerfile.ci                  | MIGRATE_VERSION    | github    | golang-migrate/migrate
 osv-scanner | .github/workflows/build-image.yml   | OSV_SCANNER_VERSION | github   | google/osv-scanner
 npm        | */Dockerfile.ci                      | NPM_VERSION        | npm       | npm
+npm-brace-expansion | *?/Dockerfile.ci            | NPM_BRACE_EXPANSION_VERSION | npm | brace-expansion@5
+npm-undici | *?/Dockerfile.ci                     | NPM_UNDICI_VERSION | npm       | undici@6
 json       | *?/Dockerfile.ci                     | JSON_VERSION       | rubygems  | json
 hadolint   | scripts/lint.sh                      | HADOLINT_VERSION   | github    | hadolint/hadolint
 actionlint | scripts/lint.sh                      | ACTIONLINT_VERSION | github    | rhysd/actionlint
@@ -181,7 +189,21 @@ resolve_dockerstatic() {
     | sed 's/docker-//;s/\.tgz//' | sort -V | tail -1
 }
 
-resolve_npm() { fetch "https://registry.npmjs.org/$1" | jq -r '."dist-tags".latest // empty'; }
+resolve_npm() {
+  local pkg="$1" major=""
+  # `name@major`, and not a scoped `@scope/name` with no major after it.
+  case "$pkg" in
+    ?*@*) major=${pkg##*@}; pkg=${pkg%@*} ;;
+  esac
+  if [ -z "$major" ]; then
+    fetch "https://registry.npmjs.org/$pkg" | jq -r '."dist-tags".latest // empty'
+    return
+  fi
+  # Stable releases only, as the `latest` tag is: no prerelease suffix.
+  fetch "https://registry.npmjs.org/$pkg" \
+    | jq -r '.versions // {} | keys[]' \
+    | grep -E "^${major}\.[0-9]+\.[0-9]+$" | sort -V | tail -1
+}
 
 # The ruby platform only: json also ships -java builds, which carry the same
 # number and would otherwise count twice. Prereleases are excluded, as they

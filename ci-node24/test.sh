@@ -40,6 +40,23 @@ check "node is present"            'node --version'
 check "node is v24"                '[ "$(node -p "process.versions.node.split(\".\")[0]")" = 24 ]'
 check "npm is present"             'npm --version'
 check "npm is v12 (bundled deps patched)" '[ "$(npm --version | cut -d. -f1)" = 12 ]'
+
+# Two of npm's own dependencies are replaced in the Dockerfile, because the
+# newest npm still bundles vulnerable copies: brace-expansion (CVE-2026-102276,
+# CVE-2026-102278; fixed in 5.0.11) and undici (CVE-2026-19534; fixed in
+# 6.28.1). Asserted as floors, not exact versions, so these still hold once an
+# npm release bundles the fixes and that step leaves npm's copies alone.
+npm_dep_at_least='node -e "const [root, name, min] = process.argv.slice(1); const have = require(root + \"/npm/node_modules/\" + name + \"/package.json\").version; const v = have.split(\".\").map(Number), m = min.split(\".\").map(Number); if (!((v[0] - m[0] || v[1] - m[1] || v[2] - m[2]) >= 0)) { console.error(name + \" \" + have + \" is below \" + min); process.exit(1); }" "$(npm root -g)"'
+check "npm bundles brace-expansion >= 5.0.11" "$npm_dep_at_least brace-expansion 5.0.11"
+check "npm bundles undici >= 6.28.1"       "$npm_dep_at_least undici 6.28.1"
+# ...and npm still works with them. `npm ls --all` fails on a bundled copy
+# outside the range its dependent asks for; the pack (a `files` glob with a
+# brace, which goes through brace-expansion) and the offline install of the
+# result exercise npm's own code paths; undici is loaded for its API, since
+# only node-gyp's downloads reach it.
+check "npm dependency tree is valid" 'npm ls --global --all > /dev/null'
+check "npm packs and installs offline" 'd=$(mktemp -d) && mkdir "$d/probe" "$d/app" && cd "$d/probe" && printf "{\"name\":\"probe\",\"version\":\"1.0.0\",\"main\":\"a.js\",\"files\":[\"{a,b}.js\"]}" > package.json && echo "module.exports = 42" > a.js && echo > b.js && echo > c.js && npm pack --silent --pack-destination "$d" > /dev/null && [ "$(tar -tzf "$d/probe-1.0.0.tgz" | sort | tr "\n" " ")" = "package/a.js package/b.js package/package.json " ] && cd "$d/app" && echo "{}" > package.json && npm install --offline --no-audit --no-fund --silent "$d/probe-1.0.0.tgz" && [ "$(node -p "require(\"probe\")")" = 42 ]'
+check "npm's undici loads"             'node -e "const u = require(process.argv[1] + \"/npm/node_modules/undici\"); process.exit(typeof u.fetch === \"function\" && typeof u.Agent === \"function\" ? 0 : 1)" "$(npm root -g)"'
 check "bash is present"            'bash --version'
 check "git is present"             'git --version'
 check "curl is present"            'curl --version'

@@ -114,6 +114,16 @@ cat > "$fx/npm.json" <<'EOF'
 EOF
 serve "https://registry.npmjs.org/npm" npm.json
 
+# undici 6.29.1: a within-major registry bump of the copy swapped into npm's
+# tree; 8.12.1, a newer major, is what the latest tag says.
+cat > "$fx/undici.json" <<'EOF'
+{"dist-tags":{"latest":"8.12.1","six":"6.29.1"},
+ "versions":{"6.29.0":{"dist":{"integrity":"sha512-old"}},"6.29.1":{"dist":{"integrity":"sha512-dW5kaWNp"}},
+             "8.12.1":{"dist":{"integrity":"sha512-bmV3"}}},
+ "time":{"6.29.0":"2026-09-01T00:00:00.000Z","6.29.1":"2026-09-10T08:00:00.000Z","8.12.1":"2026-09-12T00:00:00.000Z"}}
+EOF
+serve "https://registry.npmjs.org/undici" undici.json
+
 # composer 2.10.4: getcomposer.org's sha256sum file, both PHP images.
 printf '%s  composer.phar\n' "$(fake composer)" > "$fx/composer.txt"
 serve "https://getcomposer.org/download/2.10.4/composer.phar.sha256sum" composer.txt
@@ -144,6 +154,7 @@ carriers() {
   return 0
 }
 NODE_FILES=$(carriers NPM_VERSION); PHP_FILES=$(carriers COMPOSER_VERSION); JSON_FILES=$(carriers JSON_VERSION)
+UNDICI_FILES=$(carriers NPM_UNDICI_VERSION)
 if [ -z "$NODE_FILES" ] || [ -z "$PHP_FILES" ]; then
   echo "no image pins npm or Composer; these tests need one of each" >&2; exit 1
 fi
@@ -177,6 +188,7 @@ new_tree() {
   for f in $PHP_FILES; do force "$t/$f" COMPOSER_VERSION 2.10.3; done
   force "$t/.github/workflows/build-image.yml" OSV_SCANNER_VERSION 2.6.0
   for f in $JSON_FILES; do force "$t/$f" JSON_VERSION 2.19.9; done
+  for f in $UNDICI_FILES; do force "$t/$f" NPM_UNDICI_VERSION 6.29.0; done
   printf '%s' "$t"
 }
 pin() { # FILE KEY
@@ -453,6 +465,25 @@ check "an optional key no image carries: exit 0, skipped" [ "$rc:$(jq '.tools | 
 check "  and the log says so" grep -q 'json: no image in .github/images.json pins JSON_VERSION any more, and it is optional; skipped' "$work/c5d.err"
 rc=0; "$t/scripts/check-pins.sh" --only nosuch > /dev/null 2>&1 || rc=$?
 check "an unknown --only is still a usage error" [ "$rc" -eq 2 ]
+
+echo "case 5d: npm's swapped-in undici moves in every Node image"
+if [ -n "$UNDICI_FILES" ]; then
+  t=$(new_tree fived)
+  rc=0; "$bump" --root "$t" --unit npm-undici --to 6.29.1 --quiet --format json > "$work/r5f.json" 2>/dev/null || rc=$?
+  check "exit 0" [ "$rc" -eq 0 ]
+  expect_field "$work/r5f.json" npm-undici status bumped
+  expect_field "$work/r5f.json" npm-undici class auto
+  for f in $UNDICI_FILES; do expect_pin "$t" "$f" NPM_UNDICI_VERSION 6.29.1; done
+  check "every Node image carries the pin, so the move is not vacuous" \
+    [ "$(printf '%s\n' "$UNDICI_FILES" | wc -l)" -eq "$(printf '%s\n' "$NODE_FILES" | wc -l)" ]
+  # check-pins resolves this pin within its major, but a hand-run --to that
+  # crosses one is still only ever a review bump.
+  rc=0; "$bump" --root "$t" --unit npm-undici --to 8.12.1 --quiet --format json > "$work/r5g.json" 2>/dev/null || rc=$?
+  expect_field "$work/r5g.json" npm-undici class review
+else
+  # The replacement retired (npm bundles a fixed undici): nothing to move.
+  ok "no image swaps undici into npm any more; skipped"
+fi
 
 # --- scripts/pin-bump-prs.sh ---------------------------------------------------
 # Real git against a local bare repository as origin, so pushes, leases and
