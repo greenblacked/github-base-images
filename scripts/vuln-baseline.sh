@@ -68,7 +68,7 @@ usage() {
 }
 mode=published
 if [ "${1:-}" = --upstream ]; then
-  [ $# -eq 3 ] && [ -n "$2" ] && [ -n "$3" ] || usage
+  if [ $# -ne 3 ] || [ -z "$2" ] || [ -z "$3" ]; then usage; fi
   mode=upstream
   ref_in="$2" arch="$3"
   # Split the reference into its repository and its tag or digest: the tag is
