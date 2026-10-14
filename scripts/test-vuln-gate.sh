@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Offline tests for scripts/vuln-gate.sh, the vulnerability gate's comparison
 # of a candidate build against the published image, and for
-# scripts/vuln-baseline.sh, which finds that published image (case 8). No
+# scripts/vuln-baseline.sh, which finds that published image (case 8) and the
+# per-arch base image (case 10). Case 9 is the base-image baseline. No
 # network, no Trivy, no registry: every report is a small Trivy JSON file
 # written below, in the shape Trivy 0.70 writes (SchemaVersion 2,
 # Results[].Vulnerabilities[]), and the registry is a fake docker on PATH.
@@ -212,6 +213,7 @@ if [ "$1" = login ]; then
 fi
 # Every other call: which config it read its credentials from.
 echo "${DOCKER_CONFIG:-unset}" >> "$FAKE_LOGIN_LOG.reads"
+echo "$*" >> "$FAKE_LOGIN_LOG.reads.args"
 n=$(( $(cat "$FAKE_DOCKER_COUNT" 2>/dev/null || echo 0) + 1 )); echo "$n" > "$FAKE_DOCKER_COUNT"
 read -r -a plan <<< "$FAKE_DOCKER"
 case "${plan[$((n - 1))]:-err}" in
@@ -232,7 +234,7 @@ jq -n --arg a "$AMD" --arg r "$ARM" '{mediaType: "application/vnd.oci.image.inde
   {digest: "sha256:\(("3" * 64))", platform: {os: "unknown", architecture: "unknown"}}]}' > "$work/index.json"
 # run_base PLAN ARCH -- sets rc, bout (stdout), gho (the GITHUB_OUTPUT file).
 run_base() {
-  gho="$work/gho"; bout="$work/bout"; : > "$gho"; rm -f "$work/count" "$work/sleeps" "$work/login" "$work/login.reads"; rc=0
+  gho="$work/gho"; bout="$work/bout"; : > "$gho"; rm -f "$work/count" "$work/sleeps" "$work/login" "$work/login.reads" "$work/login.reads.args"; rc=0
   PATH="$work/bin:$PATH" FAKE_DOCKER="$1" FAKE_INDEX="${INDEX:-$work/index.json}" FAKE_DOCKER_COUNT="$work/count" \
     FAKE_SLEEP_LOG="$work/sleeps" FAKE_LOGIN_LOG="$work/login" GITHUB_OUTPUT="$gho" \
     "$baseline" ghcr.io/o/ci-test v1 "$2" > "$bout" 2>&1 || rc=$?
@@ -285,6 +287,141 @@ check "  a warning naming the login" grep -q '^::warning::could not log in to gh
 check "  nothing read after it" [ "$(calls)" -eq 0 ]
 cfg=$(awk '{print $(NF-1)}' "$work/login")
 check "  and the throwaway config is gone" [ ! -e "$cfg" ]
+
+echo "case 9: the base image the build is FROM -- what it ships is inherited, never blocking"
+# The .NET case: the published image has urllib3; the new base brings PyJWT
+# (the SDK's bundled packages, in the real failure); the build itself adds
+# openssl, which neither has.
+report "$work/base9.json" "$URLLIB"
+report "$work/up9.json" "$JWT"
+report "$work/cand9.json" "$URLLIB" "$JWT"
+run_gate --candidate "$work/cand9.json" --baseline "$work/base9.json" --baseline-ref ghcr.io/o/ci-test@sha256:abc \
+  --upstream "$work/up9.json" --upstream-ref mcr.example/sdk@sha256:def --result "$work/result.json"
+check "a finding only the base image explains: exit 0" [ "$rc" -eq 0 ]
+check "  0 new" in_summary "| **new in this build (blocking)** | **0** |"
+check "  1 known" in_summary "| known upstream (published image has them too) | 1 |"
+check "  1 inherited" in_summary "| inherited from the base image (not blocking) | 1 |"
+check "  listed under its own heading, at the candidate's versions" \
+  bash -c "grep -A4 '#### Inherited from the base image (not blocking)' '$sum' | grep -qF '| CVE-2026-102268 | PyJWT | python-pkg | CRITICAL | 2.13.0 | 2.13.1 | Python |'"
+check "  the summary names the base image" in_summary "\`mcr.example/sdk@sha256:def\`"
+check "  --result: inherited" [ "$(res '.inherited | map(.id) | join(",")')" = "CVE-2026-102268" ]
+check "  --result: new is empty" [ "$(res '.new | length')" = "0" ]
+check "  --result: the base image's ref" [ "$(res '.upstream.ref')" = "mcr.example/sdk@sha256:def" ]
+check "  the log line counts it" grep -q '^vuln-gate: ci-test (amd64): 0 new, 1 known upstream, 1 inherited from the base image, 0 fixed$' "$out"
+# Without --upstream the same comparison blocks -- the failure this fixes --
+# and the result says there was no base image.
+run_gate --candidate "$work/cand9.json" --baseline "$work/base9.json" --result "$work/result.json"
+check "the same build without --upstream: exit 3" [ "$rc" -eq 3 ]
+check "  no inherited row" bash -c "! grep -q 'inherited from the base image' '$sum'"
+check "  --result: upstream is null, inherited empty" [ "$(res '[.upstream, (.inherited | length)] | tojson')" = '[null,0]' ]
+# What neither the published image nor the base carries still blocks.
+report "$work/cand9b.json" "$URLLIB" "$JWT" "$OPENSSL"
+run_gate --candidate "$work/cand9b.json" --baseline "$work/base9.json" \
+  --upstream "$work/up9.json" --upstream-ref mcr.example/sdk@sha256:def --result "$work/result.json"
+check "a finding in neither baseline: exit 3" [ "$rc" -eq 3 ]
+check "  only it is new" [ "$(res '[.new[].id, .known[].id, .inherited[].id] | join(",")')" = "CVE-2026-11111,CVE-2026-97687,CVE-2026-102268" ]
+check "  the blocking table has it" in_summary "| CVE-2026-11111 | openssl | python-pkg | HIGH | 3.0.15-1 | 3.0.16-1 | Python |"
+# In both baselines: known, not inherited -- inherited is only what the base
+# image alone excuses.
+report "$work/up9c.json" "$URLLIB" "$JWT"
+run_gate --candidate "$work/cand9.json" --baseline "$work/base9.json" \
+  --upstream "$work/up9c.json" --upstream-ref r --result "$work/result.json"
+check "in both the published and the base image: known, not inherited" \
+  [ "$(res '[(.known | map(.id) | join(",")), (.inherited | map(.id) | join(","))] | join("|")')" = "CVE-2026-97687|CVE-2026-102268" ]
+# The identity is the same three fields: the same id in another package, or
+# the same package of another type, is not inherited.
+typed "$work/up9d.json" debian "base (debian 12.12)" "$(vuln CVE-2026-102268 PyJWT 2.13.0 2.13.1)"
+run_gate --candidate "$work/cand9.json" --baseline "$work/base9.json" --upstream "$work/up9d.json" --upstream-ref r
+check "the base has the CVE in a package of another type: still new, exit 3" [ "$rc" -eq 3 ]
+report "$work/up9e.json" "$(vuln CVE-2026-102268 requests 2.40.0 2.40.1)"
+run_gate --candidate "$work/cand9.json" --baseline "$work/base9.json" --upstream "$work/up9e.json" --upstream-ref r
+check "the base has the CVE in another package: still new, exit 3" [ "$rc" -eq 3 ]
+# A finding only the base has (the build upgraded it away) is nothing here.
+report "$work/up9f.json" "$JWT" "$OPENSSL"
+run_gate --candidate "$work/cand9.json" --baseline "$work/base9.json" --upstream "$work/up9f.json" --upstream-ref r \
+  --result "$work/result.json"
+check "a base-only finding is neither inherited nor fixed" [ "$(res '[(.inherited | length), (.fixed | length)] | tojson')" = '[1,0]' ]
+
+echo "case 9b: a new image -- strict, except for what the base image ships"
+run_gate --candidate "$work/cand9b.json" --no-baseline "ghcr.io/o/ci-test:v1 has never been published" \
+  --upstream "$work/up9c.json" --upstream-ref python@sha256:abc --result "$work/result.json"
+check "a finding the base lacks still blocks: exit 3" [ "$rc" -eq 3 ]
+check "  1 new (openssl), 2 inherited" [ "$(res '[(.new | map(.id) | join(",")), (.inherited | length)] | join("|")')" = "CVE-2026-11111|2" ]
+check "  strict, and still says why" in_summary "**Strict: no baseline.** ghcr.io/o/ci-test:v1 has never been published"
+check "  and that the base image is the exception" in_summary "except those the base image already carries"
+check "  --result: strict, with the base image" [ "$(res '[.baseline.strict, .upstream.ref] | tojson')" = '[true,"python@sha256:abc"]' ]
+run_gate --candidate "$work/cand9.json" --no-baseline "never published" --upstream "$work/up9c.json" --upstream-ref r
+check "everything it carries comes from the base: exit 0" [ "$rc" -eq 0 ]
+check "  0 new, 2 inherited" bash -c "grep -qF '| **new in this build (blocking)** | **0** |' '$sum' && grep -qF '| inherited from the base image (not blocking) | 2 |' '$sum'"
+
+echo "case 9c: the base-image report is validated like the others"
+bad_upstream() { # WHAT FILE-CONTENT-WRITER...
+  local what="$1"; shift
+  "$@" > "$work/badup.json"
+  run_gate --candidate "$work/good.json" --baseline "$work/good.json" --upstream "$work/badup.json" --upstream-ref r
+  check "base image report $what: exit 1" [ "$rc" -eq 1 ]
+}
+bad_upstream "empty file" printf ''
+bad_upstream "SchemaVersion 3" jq '.SchemaVersion = 3' "$work/good.json"
+bad_upstream "a finding with no PkgName" jq 'del(.Results[1].Vulnerabilities[0].PkgName)' "$work/good.json"
+bad_upstream "not JSON" echo 'nope'
+check "  the message names the base image report" grep -q 'base image report .*badup.json is not a usable Trivy JSON report' "$out"
+run_gate --candidate "$work/good.json" --no-baseline x --upstream "$work/nope.json" --upstream-ref r
+check "a missing base image report, even when strict: exit 1" [ "$rc" -eq 1 ]
+check "  and no summary is left behind" [ ! -e "$sum" ]
+run_gate --candidate "$work/good.json" --baseline "$work/good.json" --upstream "$work/good.json"
+check "--upstream without --upstream-ref: exit 2" [ "$rc" -eq 2 ]
+run_gate --candidate "$work/good.json" --baseline "$work/good.json" --upstream-ref r
+check "--upstream-ref without --upstream: exit 2" [ "$rc" -eq 2 ]
+
+echo "case 9d: a huge base image keeps the summary small"
+# The 3000 findings of case 7 all come from the base; 200 are new.
+run_gate --candidate "$work/bigcand.json" --no-baseline "new image" --upstream "$work/bigbase.json" --upstream-ref r
+check "exit 3" [ "$rc" -eq 3 ]
+size=$(wc -c < "$sum")
+check "summary is under 64 KiB ($size bytes)" [ "$size" -lt 65536 ]
+check "the inherited table is cut, and says how many more" in_summary "...and 2950 more in the vuln-gate artifact."
+
+echo "case 10: vuln-baseline.sh --upstream -- the per-arch base image"
+# run_up REF PLAN ARCH -- like run_base, for the base image.
+run_up() {
+  gho="$work/gho"; bout="$work/bout"; : > "$gho"; rm -f "$work/count" "$work/sleeps" "$work/login" "$work/login.reads" "$work/login.reads.args"; rc=0
+  PATH="$work/bin:$PATH" FAKE_DOCKER="$2" FAKE_INDEX="${INDEX:-$work/index.json}" FAKE_DOCKER_COUNT="$work/count" \
+    FAKE_SLEEP_LOG="$work/sleeps" FAKE_LOGIN_LOG="$work/login" GITHUB_OUTPUT="$gho" \
+    "$baseline" --upstream "$1" "$3" > "$bout" 2>&1 || rc=$?
+}
+run_up mcr.microsoft.com/dotnet/sdk:8.0-bookworm-slim ok arm64
+check "found: the arm64 manifest, by digest, in the base's repository" [ "$rc:$(outv ref)" = "0:mcr.microsoft.com/dotnet/sdk@$ARM" ]
+check "  no note" [ -z "$(outv note)" ]
+check "  read by the full reference" grep -q 'imagetools inspect --raw mcr.microsoft.com/dotnet/sdk:8.0-bookworm-slim$' "$work/login.reads.args"
+run_up debian:bookworm-slim ok amd64
+check "a Docker Hub short name keeps its name" [ "$(outv ref)" = "debian@$AMD" ]
+run_up localhost:5000/x/base:1 ok amd64
+check "a registry port is not a tag" [ "$(outv ref)" = "localhost:5000/x/base@$AMD" ]
+run_up "ghcr.io/o/mirror-debian@$AMD" ok amd64
+check "a digest reference keeps its repository" [ "$(outv ref)" = "ghcr.io/o/mirror-debian@$AMD" ]
+run_up debian:bookworm-slim notfound amd64
+check "not found: no ref, exit 0" [ "$rc:$(outv ref)" = "0:" ]
+check "  a notice saying the gate goes without the base, not strict" \
+  grep -q '^::notice::the base image debian:bookworm-slim was not found in the registry -- the vulnerability gate runs without the base-image baseline for amd64' "$bout"
+check "  never the word strict" bash -c "! grep -q strict '$bout'"
+run_up debian:bookworm-slim "err err err err" amd64
+check "registry errors throughout: no ref, retried, exit 0" [ "$rc:$(outv ref):$(calls)" = "0::4" ]
+check "  every message a notice, none a warning" bash -c "! grep -q '^::warning::' '$bout' && [ \"\$(grep -c '^::notice::' '$bout')\" -eq 4 ]"
+INDEX="$work/index-amd.json" run_up debian:bookworm-slim ok arm64
+check "no linux/arm64 in the base's index: a notice, no ref" \
+  bash -c "[ -z \"\$(sed -n 's/^ref=//p' '$gho')\" ] && grep -q '^::notice::the base image debian:bookworm-slim has no single linux/arm64 manifest' '$bout'"
+REGISTRY_USER=bot REGISTRY_TOKEN=s3cret run_up ghcr.io/o/mirror-debian:bookworm-slim ok amd64
+check "with credentials: logged in to the ref's registry" bash -c "grep -q '^login ghcr.io --username bot' '$work/login'"
+rm -f "$work/login"
+REGISTRY_USER=bot REGISTRY_TOKEN=s3cret run_up debian:bookworm-slim ok amd64
+check "  a Docker Hub ref: credentials are never offered, the read is anonymous" bash -c "[ ! -s '$work/login' ] && grep -q '^::notice::not offering' '$bout' && [ -n \"\$(sed -n 's/^ref=//p' '$gho')\" ]"
+REGISTRY_USER=bot REGISTRY_TOKEN=s3cret FAKE_LOGIN=fail run_up ghcr.io/o/mirror-debian:bookworm-slim ok amd64
+check "login refused: a notice, no ref" bash -c "[ -z \"\$(sed -n 's/^ref=//p' '$gho')\" ] && grep -q '^::notice::could not log in to ghcr.io' '$bout'"
+rc=0; "$baseline" --upstream only-two > /dev/null 2>&1 || rc=$?
+check "usage: exit 2" [ "$rc" -eq 2 ]
+rc=0; "$baseline" --upstream "" amd64 > /dev/null 2>&1 || rc=$?
+check "an empty ref: exit 2" [ "$rc" -eq 2 ]
 
 echo
 echo "$pass passed, $failures failed"

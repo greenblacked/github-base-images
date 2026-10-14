@@ -75,6 +75,25 @@ RUN curl -fsSL --retry 3 --retry-all-errors --max-time 120 \
     && apt-get install --yes --no-install-recommends azure-cli \
     && rm -rf /var/lib/apt/lists/*
 
+# azure-cli bundles its own Python under /opt/az, and its releases lag the
+# libraries inside it: 2.90.0 and 2.91.0 both ship PyJWT 2.13.0 (a CRITICAL
+# signature-validation bypass among six), cryptography 48.0.1 and urllib3
+# 2.7.0, all fixed upstream. azure-cli-core leaves PyJWT and cryptography
+# unpinned and msal allows cryptography<51, so upgrading them in place is
+# within what azure-cli declares it supports; pyOpenSSL moves with
+# cryptography because older pyOpenSSL caps it. Floors rather than pins, for
+# the same reason azure-cli itself is unpinned: each daily rebuild takes the
+# newest fixed release, so the next advisory against one of these is fixed
+# by the rebuild with no change here. `pip check` fails the build if the
+# upgrade ever conflicts with what azure-cli requires, and `az version`
+# proves the CLI still starts. pip's own vendored copies (pip/_vendor) are
+# not touched -- only a pip release can change those.
+RUN /opt/az/bin/python3 -m pip install --no-cache-dir --disable-pip-version-check \
+        --root-user-action=ignore --upgrade \
+        'PyJWT>=2.14.0' 'cryptography>=50.0.0' 'pyOpenSSL>=26.4.0' 'urllib3>=2.8.0' \
+    && /opt/az/bin/python3 -m pip check \
+    && az version > /dev/null
+
 # The Google Cloud CLI is a versioned tarball. Google publishes no per-file
 # SHA-256 alongside it -- the release bucket carries no .sha256 companions --
 # so this download is NOT checksum-verified, exactly like the Docker static
