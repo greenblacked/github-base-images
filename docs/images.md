@@ -52,6 +52,8 @@ repository's exact version rather than one frozen into the image.
 
 ### Python
 
+- **`ci-python315`** — Python 3.15 and pip, on Debian Trixie. No compiler toolchain: projects
+  that build native wheels add `build-essential` in their own workflow.
 - **`ci-python314`** — Python 3.14 and pip, on Debian Trixie. Otherwise identical to
   `ci-python313`, including the absent compiler toolchain.
 - **`ci-python313`** — Python 3.13 and pip. No compiler toolchain: projects that build native
