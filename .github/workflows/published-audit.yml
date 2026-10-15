@@ -30,7 +30,7 @@
 # condition nobody caused this week would only train people to ignore it.
 name: Published image audit
 
-on: # zizmor: ignore[dangerous-triggers]
+on:
   # workflow_run is flagged as "almost always used insecurely" because the
   # common misuse is checking out and running a PR's head commit with this
   # workflow's privileged secrets. Nothing here does that: no step reads
@@ -41,7 +41,9 @@ on: # zizmor: ignore[dangerous-triggers]
   # The direct trigger: re-check within minutes of whatever build-and-push.yml
   # just did to main, success or not -- a failed run may still have left an
   # earlier, now-stale tag as the last thing consumers can pull.
-  workflow_run:
+  # The ignore comment sits on the trigger line itself: zizmor 1.31 reports
+  # this finding there, not at `on:`.
+  workflow_run: # zizmor: ignore[dangerous-triggers]
     workflows: ["Build and Push to GHCR"]
     types: [completed]
     branches: [main]
