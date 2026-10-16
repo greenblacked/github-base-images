@@ -315,12 +315,14 @@ check "exits 0" [ "$rc" -eq 0 ]
 check "every ci-node* image's npm pin line was found" \
   [ "$(jq '[.runs[0].results[] | select(.message.text | test("npmCommand"))] | length' "$work/real.sarif")" \
     -eq "$(jq '[.[] | select(.image | test("^ci-node[0-9]+$"))] | length' "$repo/.github/images.json")" ]
-check "kept exactly BranchProtection, Maintained and the unaccepted line" \
-  diff -u <(printf '%s\n' "BranchProtectionID $nofile:1" "MaintainedID $nofile:1" "PinnedDependenciesID ci-node22/Dockerfile.ci:1") \
+check "kept exactly Maintained and the unaccepted line" \
+  diff -u <(printf '%s\n' "MaintainedID $nofile:1" "PinnedDependenciesID ci-node22/Dockerfile.ci:1") \
           <(kept_ids "$work/real-out.sarif")
 check "no accepted entry is unused" not_logged "matched no result"
-check "the accepted list never names BranchProtectionID or MaintainedID" \
-  quiet jq -e 'all(.[]; .rule != "BranchProtectionID" and .rule != "MaintainedID")' "$repo/.github/scorecard-accepted.json"
+check "the accepted list never names MaintainedID" \
+  quiet jq -e 'all(.[]; .rule != "MaintainedID")' "$repo/.github/scorecard-accepted.json"
+check "BranchProtectionID is accepted rule-wide, with the ruleset in its reason" \
+  quiet jq -e '[.[] | select(.rule == "BranchProtectionID")] | length == 1 and (.[0] | has("path") | not) and (.[0].reason | test("ruleset"))' "$repo/.github/scorecard-accepted.json"
 
 echo
 echo "$pass passed, $failures failed"
