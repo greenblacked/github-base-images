@@ -291,8 +291,8 @@ jobs:
         if: steps.download.outcome == 'success'
         continue-on-error: true
         # BranchProtectionID is accepted only while main really is protected:
-        # the rules GitHub applies to main must include pull requests and
-        # required status checks, read here with this job's token (contents:
+        # the rules GitHub applies to main must include deletion and
+        # force-push protection, pull requests and required status checks, read here with this job's token (contents:
         # read). If they do not, or cannot be read, that entry is dropped from
         # the list for this run and the alert shows again.
         #
@@ -304,10 +304,11 @@ jobs:
           accepted=.github/scorecard-accepted.json
           types=$(gh api "repos/$GITHUB_REPOSITORY/rules/branches/main" --jq '[.[].type] | join(" ")' 2>/dev/null) || types=""
           protected=1
-          case " $types " in *" pull_request "*) ;; *) protected=0 ;; esac
-          case " $types " in *" required_status_checks "*) ;; *) protected=0 ;; esac
+          for rule in deletion non_fast_forward pull_request required_status_checks; do
+            case " $types " in *" $rule "*) ;; *) protected=0 ;; esac
+          done
           if [ "$protected" -eq 0 ]; then
-            echo "::notice::main does not require pull requests and status checks (rules: ${types:-unreadable}); BranchProtectionID is not accepted this run"
+            echo "::notice::main is missing a rule the BranchProtectionID acceptance relies on (needs deletion, non_fast_forward, pull_request, required_status_checks; has: ${types:-unreadable}); BranchProtectionID is not accepted this run"
             jq 'map(select(.rule != "BranchProtectionID"))' "$accepted" > "$RUNNER_TEMP/scorecard-accepted.json"
             accepted=$RUNNER_TEMP/scorecard-accepted.json
           fi

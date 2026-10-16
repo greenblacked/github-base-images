@@ -458,7 +458,7 @@ accepts a job made of its approved actions — no `run:` steps.
   Scorecard's top tiers also want two or more approving reviewers and code-owner review, which a
   single-maintainer repository cannot have, so the check never reaches 10. The `scorecard-upload`
   job reads the rules GitHub applies to `main` on every run, and drops this entry (so the alert
-  shows again) whenever they stop including pull requests and required status checks.
+  shows again) whenever they stop including any of deletion and force-push protection, pull requests and required status checks.
 
 One Scorecard alert is **not** accepted, and stays visible on purpose:
 

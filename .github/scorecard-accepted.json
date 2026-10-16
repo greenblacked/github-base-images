@@ -31,6 +31,6 @@
   },
   {
     "rule": "BranchProtectionID",
-    "reason": "main is protected by the `main` ruleset (no deletion, no force push, pull requests required, the four required checks, admin bypass only). Scorecard's top tiers also need two or more approving reviewers and code-owner review, which a single-maintainer repository cannot have, so the check never reaches 10 here. The scorecard-upload job drops this entry, and the alert shows again, whenever main stops requiring pull requests and status checks."
+    "reason": "main is protected by the `main` ruleset (no deletion, no force push, pull requests required, the four required checks, admin bypass only). Scorecard's top tiers also need two or more approving reviewers and code-owner review, which a single-maintainer repository cannot have, so the check never reaches 10 here. The scorecard-upload job drops this entry, and the alert shows again, whenever main stops having any of those rules."
   }
 ]

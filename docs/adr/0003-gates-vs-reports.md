@@ -220,8 +220,8 @@ goes; the gate is untouched.
   a reason, and a pinned-dependency entry covers only a source line that still matches it (the
   `FROM ${BASE_IMAGE}` lines, the version-pinned npm install, azure-cli's documented pip floors),
   plus Code-Review, Fuzzing and CII-Best-Practices rule-wide. Branch-Protection was accepted on
-  2026-10-16, once the `main` ruleset required pull requests and the four checks, and only while
-  it does (the upload job re-reads main's rules each run). Maintained (clears once the
+  2026-10-16, once the `main` ruleset blocked deletion and force pushes and required pull requests
+  and the four checks, and only while it does (the upload job re-reads main's rules each run). Maintained (clears once the
   repository is 90 days old) stays visible. A filter that
   fails uploads the unfiltered SARIF; the artifact is always unfiltered. See
   [docs/security.md](../security.md#repository-level-alerts-accepted-by-design).
