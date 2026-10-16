@@ -24,9 +24,10 @@
 # Dockerfile builds FROM a base passed in as a tag (the verified mirror on
 # main, rebuilt daily -- docs/adr/0001, 0007, 0008), npm is pinned by version
 # rather than hash, there is one maintainer, nothing to fuzz. Those alerts
-# never close, and they sat beside the two that do need someone (branch
-# protection, which is the owner's setting, and Maintained, which clears once
-# the repository is 90 days old). The full Scorecard result is still the
+# never close, and they sat beside the ones that do need someone (branch
+# protection, accepted only while main's ruleset requires pull requests and
+# checks -- security.yml checks that each run -- and Maintained, which clears
+# once the repository is 90 days old). The full Scorecard result is still the
 # `scorecard-results` artifact, unfiltered.
 #
 # The accepted list

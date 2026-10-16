@@ -452,10 +452,16 @@ Dockerfile whose `FROM ${BASE_IMAGE}` stops being covered fails lint rather than
 the Security tab. The filter is a separate job because Scorecard, when publishing results, only
 accepts a job made of its approved actions — no `run:` steps.
 
-Two Scorecard alerts are **not** accepted, and stay visible on purpose:
+- **`BranchProtectionID`** is accepted while `main` is actually protected. The `main` ruleset is
+  active: no deletion, no force push, pull requests required (0 approvals), the
+  [required checks](#required-checks) below, and repository admins as the only bypass.
+  Scorecard's top tiers also want two or more approving reviewers and code-owner review, which a
+  single-maintainer repository cannot have, so the check never reaches 10. The `scorecard-upload`
+  job reads the rules GitHub applies to `main` on every run, and drops this entry (so the alert
+  shows again) whenever they stop including pull requests and required status checks.
 
-- **`BranchProtectionID`** is the owner's action: activate the `main` ruleset (Settings → Rules →
-  Rulesets) with the [required checks](#required-checks) below.
+One Scorecard alert is **not** accepted, and stays visible on purpose:
+
 - **`MaintainedID`** fires because Scorecard counts a repository younger than 90 days as
   unmaintained. This one was created on 2026-07-20, so it clears on its own from about
   2026-10-18.

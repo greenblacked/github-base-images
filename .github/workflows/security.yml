@@ -290,13 +290,31 @@ jobs:
         id: filter
         if: steps.download.outcome == 'success'
         continue-on-error: true
+        # BranchProtectionID is accepted only while main really is protected:
+        # the rules GitHub applies to main must include pull requests and
+        # required status checks, read here with this job's token (contents:
+        # read). If they do not, or cannot be read, that entry is dropped from
+        # the list for this run and the alert shows again.
+        #
         # Between stop-commands markers: the listing echoes paths and reasons,
         # and none of that text may be read as a workflow command.
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
+          accepted=.github/scorecard-accepted.json
+          types=$(gh api "repos/$GITHUB_REPOSITORY/rules/branches/main" --jq '[.[].type] | join(" ")' 2>/dev/null) || types=""
+          protected=1
+          case " $types " in *" pull_request "*) ;; *) protected=0 ;; esac
+          case " $types " in *" required_status_checks "*) ;; *) protected=0 ;; esac
+          if [ "$protected" -eq 0 ]; then
+            echo "::notice::main does not require pull requests and status checks (rules: ${types:-unreadable}); BranchProtectionID is not accepted this run"
+            jq 'map(select(.rule != "BranchProtectionID"))' "$accepted" > "$RUNNER_TEMP/scorecard-accepted.json"
+            accepted=$RUNNER_TEMP/scorecard-accepted.json
+          fi
           token=$(head -c 16 /dev/urandom | od -An -tx1 | tr -d ' \n')
           echo "::stop-commands::$token"
           rc=0
-          ./scripts/filter-scorecard-sarif.sh scorecard-results/scorecard.sarif scorecard-upload.sarif || rc=$?
+          ./scripts/filter-scorecard-sarif.sh --accepted "$accepted" scorecard-results/scorecard.sarif scorecard-upload.sarif || rc=$?
           echo "::$token::"
           exit "$rc"
 
