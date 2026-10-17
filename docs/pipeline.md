@@ -24,8 +24,8 @@ The image list lives in one place: [.github/images.json](../.github/images.json)
 per-image pipeline in [build-image.yml](../.github/workflows/build-image.yml) once per entry
 ([ADR 0002](adr/0002-images-json-reusable-workflow.md)). For each image a run builds: mirror the
 base (on `main`), build and smoke-test each architecture on a native runner, scan and gate, push
-the per-arch digests, merge them into one multi-arch index, sign and attest it, and verify the
-result. Adding an image is covered in
+each architecture and check that what was pushed is layer for layer the image that was tested,
+merge the per-arch digests into one multi-arch index, sign and attest it, and verify the result. Adding an image is covered in
 [CONTRIBUTING.md](../CONTRIBUTING.md#adding-another-image).
 
 ## Mirrored upstream base
@@ -122,7 +122,7 @@ job, is in [Required checks](security.md#required-checks).
 A push or pull request builds **only the images whose directories changed** (a pull request that
 changes none, and no pipeline file, builds nothing) — a one-line fix to `ci-ruby34` does not
 rebuild every other image or move `latest` on them. Changing the pipeline itself (either
-workflow file, `images.json`, or the six scripts `build-image.yml` runs) rebuilds everything; a
+workflow file, `images.json`, the seven scripts `build-image.yml` runs, or the secret gate's two config files) rebuilds everything; a
 change to `.github/vuln-exceptions.json` rebuilds the images whose entries changed. A
 `workflow_dispatch` on a branch other than `main` is planned the same way as a pull request,
 against where the branch left `main`. That is how the automated update PRs get their checks

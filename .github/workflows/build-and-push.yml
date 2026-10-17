@@ -41,6 +41,9 @@ on:
       - 'scripts/vuln-baseline.sh'
       - 'scripts/verify-ref.sh'
       - 'scripts/check-public.sh'
+      - 'scripts/verify-published-layers.sh'
+      - '.github/trivy-secret.yaml'
+      - '.github/trivy-secret-ignore.yaml'
   # PRs run the full lint -> build -> smoke test -> scan pipeline, but every
   # step that writes to the registry is skipped: PR builds use the upstream
   # base instead of the mirror, and nothing is pushed or tagged. A green PR run
@@ -154,9 +157,10 @@ jobs:
             select_all "diff against $range failed"
           fi
 
-          # A change to the pipeline itself invalidates every image. The six
-          # scripts count as pipeline: build-image.yml runs them on every image.
-          if grep -qE '^(\.github/(workflows/(build-and-push|build-image)\.yml|images\.json)|scripts/(check-published|osv-scan-sbom|vuln-gate|vuln-baseline|verify-ref|check-public)\.sh)$' <<<"$changed"; then
+          # A change to the pipeline itself invalidates every image. The seven
+          # scripts and the secret gate's two files count as pipeline:
+          # build-image.yml uses them on every image.
+          if grep -qE '^(\.github/(workflows/(build-and-push|build-image)\.yml|images\.json|trivy-secret(-ignore)?\.yaml)|scripts/(check-published|osv-scan-sbom|vuln-gate|vuln-baseline|verify-ref|check-public|verify-published-layers)\.sh)$' <<<"$changed"; then
             select_all "pipeline definition changed"
           fi
 

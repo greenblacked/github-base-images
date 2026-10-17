@@ -130,9 +130,55 @@ jobs:
         id: epoch
         run: echo "day=$(date -u +%Y-%m-%d)" >> "$GITHUB_OUTPUT"
 
+      # The base image this build is FROM, for this architecture, pinned to a
+      # digest BEFORE anything is built: scripts/vuln-baseline.sh in its
+      # --upstream mode (the same index read, the same retries and the same
+      # one-linux/<arch>-manifest rule as the "Published baseline" step
+      # below) resolves BUILD_BASE_IMAGE to its per-arch manifest. For
+      # ci-tools, ci-cloud, ci-security and ci-db that is debian:bookworm-slim
+      # (or its mirror); for ci-dotnet8 the .NET SDK image; and so on --
+      # whatever images.json names.
+      #
+      # That one digest is then used three times: as BASE_IMAGE for the test
+      # build, as BASE_IMAGE for the push build, and as the image the gate's
+      # base-image scan reads. So the two builds cannot start from different
+      # bases, and the gate compares with exactly the base that was built on.
+      # Both used to read the tag: the test build resolved it, the push
+      # resolved it again minutes later, and this step resolved it once more
+      # after the build. A tag that moved in between -- the upstream on a
+      # pull request, or the mirror on main, which concurrent runs on main
+      # can re-mirror -- would have given the push a different base from the
+      # one tested, and the gate a different base from the one built on.
+      #
+      # No credentials of its own. On main the base is the mirror on
+      # ghcr.io, and the "Login" step above has already logged the Docker CLI
+      # config in with this job's token, which `imagetools inspect` here, the
+      # builds and Trivy below all pick up from the Docker config; elsewhere
+      # the base is a public upstream (Docker Hub, mcr.microsoft.com), read
+      # anonymously. Nothing here offers the job token to a registry other
+      # than ghcr.io.
+      #
+      # Never fails: every way of not finding the base is `ref=` plus a
+      # `note` and a ::notice. The builds then fall back to the tag itself,
+      # as before, and the gate runs without the base-image baseline. A tag
+      # that moves between the two builds in that case is still caught: the
+      # pushed layers would not match the tested ones, and "Verify the
+      # pushed image is the tested one" fails the job before anything is
+      # published.
+      - name: Base image baseline (${{ matrix.arch }})
+        id: upstream
+        continue-on-error: true
+        env:
+          REF: ${{ env.BUILD_BASE_IMAGE }}
+          ARCH: ${{ matrix.arch }}
+        run: ./scripts/vuln-baseline.sh --upstream "$REF" "$ARCH"
+
       # Build into the local daemon only. Nothing is pushed until the smoke
       # tests and the gates below have passed. Non-publishing runs build from
-      # upstream so they never depend on (or mutate) the mirror.
+      # upstream so they never depend on (or mutate) the mirror. Every input
+      # here -- context, Dockerfile, platform, build args -- is repeated
+      # verbatim by the Push step below, which is what lets the push
+      # re-export these exact layers (see there).
       - name: Build ${{ inputs.image }} (${{ matrix.arch }})
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
@@ -140,7 +186,7 @@ jobs:
           file: ./${{ inputs.image }}/${{ env.DOCKERFILE }}
           platforms: ${{ matrix.platform }}
           build-args: |
-            BASE_IMAGE=${{ env.BUILD_BASE_IMAGE }}
+            BASE_IMAGE=${{ steps.upstream.outputs.ref || env.BUILD_BASE_IMAGE }}
           load: true
           push: false
           tags: ${{ inputs.image }}:test
@@ -172,8 +218,13 @@ jobs:
           output: trivy-${{ inputs.image }}-${{ matrix.arch }}.txt
           exit-code: '0'
 
+      # With the secret gate's scanner configuration (built-in allow rules
+      # off; see the "Secret gate" step) but without its fixture exceptions,
+      # so this report lists every match the gate read, excused or not.
       - name: Secret report (table)
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        env:
+          TRIVY_SECRET_CONFIG: .github/trivy-secret.yaml
         with:
           image-ref: ${{ inputs.image }}:test
           scanners: secret
@@ -486,8 +537,9 @@ jobs:
       #   2. find the image published now: the per-arch manifest of
       #      ghcr.io/<owner>/<image>:<version>;
       #   3. scan that image the same way;
-      #   4. find the base image this build is FROM (BUILD_BASE_IMAGE above:
-      #      the mirror on main, the upstream ref elsewhere), per-arch;
+      #   4. take the base image this build is FROM (BUILD_BASE_IMAGE above:
+      #      the mirror on main, the upstream ref elsewhere), as the per-arch
+      #      digest the "Base image baseline" step pinned before the build;
       #   5. scan that image the same way;
       #   6. scripts/vuln-gate.sh compares them by (VulnerabilityID,
       #      PkgName, result type) and fails on anything new: in the
@@ -638,43 +690,6 @@ jobs:
           skip-setup-trivy: true
           cache: 'false'
 
-      # The base image this build is FROM, for this architecture: the same
-      # script as the step above, in its --upstream mode, so the same index
-      # read, the same retries and the same one-linux/<arch>-manifest rule.
-      # The ref is BUILD_BASE_IMAGE, the very value the build step passed as
-      # BASE_IMAGE, resolved to a per-arch digest so the scan below reads one
-      # fixed image. For ci-tools, ci-cloud, ci-security and ci-db that is
-      # debian:bookworm-slim (or its mirror); for ci-dotnet8 the .NET SDK
-      # image; and so on -- whatever images.json names.
-      #
-      # It is resolved now, after the build, not taken from the build: the
-      # test build loads into the daemon, which records no base digest. On
-      # main the mirror tag was written by this run's own mirror job before
-      # any image job started, so it names what the build used. On a pull
-      # request the upstream tag could, in principle, move between the
-      # build and this read (concurrent runs on main can also re-mirror).
-      # The gate would then compare with a slightly newer base than the one
-      # built on: usually that only blocks something the actual base did
-      # carry -- a red build that a re-run fixes -- and what it excuses is
-      # still only what that upstream base, not this repository, ships.
-      #
-      # No credentials of its own. On main the base is the mirror on
-      # ghcr.io, and the "Login" step above has already logged the Docker CLI
-      # config in with this job's token, which `imagetools inspect` here and Trivy
-      # below both pick up from the Docker config; elsewhere the base is a
-      # public upstream (Docker Hub, mcr.microsoft.com), read anonymously.
-      # Nothing here offers the job token to a registry other than ghcr.io.
-      #
-      # Never fails: every way of not finding the base is `ref=` plus a
-      # `note` and a ::notice, and the gate runs without it.
-      - name: Base image baseline (${{ matrix.arch }})
-        id: upstream
-        continue-on-error: true
-        env:
-          REF: ${{ env.BUILD_BASE_IMAGE }}
-          ARCH: ${{ matrix.arch }}
-        run: ./scripts/vuln-baseline.sh --upstream "$REF" "$ARCH"
-
       # The base image, scanned exactly as the other two (see above), from
       # the registry: TRIVY_IMAGE_SRC=remote, as for the published image.
       # continue-on-error, and only here and on the published scan: a base
@@ -769,48 +784,113 @@ jobs:
       # repo, so it gates at any severity -- not only HIGH/CRITICAL, and with
       # no "unfixed" carve-out, because there is no upstream to wait on.
       #
-      # What it does NOT look at. This runs Trivy's secret scanner with its
-      # defaults, and those include Trivy's built-in allow rules
-      # (pkg/fanal/secret/builtin-allow-rules.go): a file whose path matches
-      # one is never read at all. At the Trivy release this action installs,
-      # that is any path containing `test` (as `test...` at the start, or
-      # `/test`, `-test`, `_test`, `.test`) or `example`; any `vendor/`,
-      # `locale/` or `locales/` directory; `*.md` files and Python `.dist-info/`
-      # metadata; and, by prefix, usr/share/, usr/include/, usr/lib/ (which
-      # takes in usr/lib/python3/dist-packages and usr/lib/gems),
-      # usr/local/lib/pythonX.Y/ (every pip-installed site-packages), usr/local/go/,
-      # opt/yarn-v*/, usr/src/wordpress/ and var/log/anaconda/. Binary files
-      # are skipped too (Python .pyc aside), and so is anything under 10 bytes.
-      # So this gate is "no secret Trivy can see in the files it reads", not
-      # "no secret anywhere in the image": a key under, say, a vendored test
-      # directory or in site-packages would pass. Most of what this
-      # repository's builds add -- tools in /usr/local/bin, SDKs under /opt,
-      # configuration in /etc and home directories -- is outside those paths
-      # and is read; anything installed into a system Python's site-packages,
-      # or into a directory with `test` or `vendor` in its path, is not. (The
-      # gsutil urllib3 fixtures that ci-cloud deletes were caught because
-      # their path, .../urllib3/dummyserver/, matches no allow rule.)
+      # What it reads: every file Trivy's secret analyzer accepts, including
+      # the paths Trivy's built-in allow rules used to skip unread. Those
+      # rules (pkg/fanal/secret/builtin-allow-rules.go) skipped any path
+      # containing `test` (`test...` at the start, or `/test`, `-test`,
+      # `_test`, `.test`) or `example`; any `vendor/`, `locale/` or `locales/`
+      # directory; `*.md` and Python `.dist-info/` metadata; and, by prefix,
+      # usr/share/, usr/include/, usr/lib/, usr/local/lib/pythonX.Y/ (every
+      # pip site-packages), usr/local/go/, opt/yarn-v*/, usr/src/wordpress/
+      # and var/log/anaconda/. So a key in a vendored test directory or in
+      # site-packages passed this gate unseen. .github/trivy-secret.yaml,
+      # passed as TRIVY_SECRET_CONFIG, now disables every one of them by ID
+      # (`disable-allow-rules`). Trivy's detection rules are unchanged.
       #
-      # The allow rules are deliberately left on. Turning them off would
-      # surface every test fixture that upstream packages vendor (private
-      # keys for test servers, sample tokens), in images this repository
-      # does not otherwise touch, and fail builds on findings nobody here can
-      # judge or remove without unreviewed exceptions. docs/security.md says
-      # the same for readers of the image.
+      # What it still cannot read, because Trivy skips it in code rather
+      # than by an allow rule, so no configuration reaches it: anything
+      # under a `node_modules` or `.git` directory, lock files (go.sum,
+      # package-lock.json, yarn.lock, ...), archives and images by extension
+      # (.zip, .gz, .tar, .deb, .png, ...), binaries other than Python .pyc,
+      # and files under 10 bytes. docs/security.md lists them too.
+      #
+      # What it excuses, two ways, both reviewed in the repository:
+      #   - one content allow rule in .github/trivy-secret.yaml: AWS's own
+      #     documentation placeholder key IDs (AKIAIOSFODNN7EXAMPLE and five
+      #     more, each named), which the AWS CLI's help examples are full of;
+      #   - .github/trivy-secret-ignore.yaml, passed as this step's
+      #     `trivyignores`: published test and documentation fixtures that
+      #     upstream software ships in these images (the Go standard
+      #     library's test keys, the test suites gsutil vendors, the AWS CLI's
+      #     sample key-pair output, PyJWT's README token), each excused for
+      #     one Trivy rule ID at one exact path. Any other rule firing on the
+      #     same file, or the same rule on any other file, still fails.
+      # The "Secret report" above uses the configuration but not the
+      # exceptions, so every excused match is still listed in the
+      # security-report artifact.
+      #
+      # Neither changes with the Trivy release silently. The allow-rule IDs
+      # are the ones in Trivy's source at the version the pinned trivy-action
+      # installs, and a later release can add one; so the configuration step
+      # below fails when the Trivy on PATH is not the version .github/trivy-secret.yaml
+      # was written for (its `# trivy-version:` line), and it fails if the
+      # file is missing, because Trivy reads a missing secret config as "no
+      # config" -- every built-in allow rule back on -- without an error.
+      - name: Secret gate configuration (${{ matrix.arch }})
+        env:
+          CONFIG: .github/trivy-secret.yaml
+          IGNORE: .github/trivy-secret-ignore.yaml
+        run: |
+          for f in "$CONFIG" "$IGNORE"; do
+            if [ ! -s "$f" ]; then
+              echo "::error::$f is missing or empty -- the secret gate will not run without it (Trivy would silently fall back to its built-in allow rules)"
+              exit 1
+            fi
+          done
+          want=$(sed -nE 's/^# trivy-version: ([0-9][0-9.]*)$/\1/p' "$CONFIG")
+          have=$(trivy --version | sed -nE 's/^Version: ([0-9][0-9.]*)$/\1/p')
+          if [ -z "$want" ] || [ "$want" != "$have" ]; then
+            echo "::error::$CONFIG was written for Trivy ${want:-<no trivy-version line>}, but this job runs Trivy ${have:-<unknown>}. Compare pkg/fanal/secret/builtin-allow-rules.go at v$have with its disable-allow-rules list, update the list and the trivy-version line, then re-run"
+            exit 1
+          fi
+          echo "secret gate: Trivy $have, built-in allow rules disabled by $CONFIG, fixture exceptions from $IGNORE"
+
       - name: Secret gate (${{ matrix.arch }})
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        env:
+          TRIVY_SECRET_CONFIG: .github/trivy-secret.yaml
         with:
           image-ref: ${{ inputs.image }}:test
           scanners: secret
           format: table
           exit-code: '1'
+          trivyignores: .github/trivy-secret-ignore.yaml
 
       # Push each architecture under its own tag. A tagged push is what creates
       # the package on GHCR the first time an image is published; a digest-only
       # push cannot create a not-yet-existing package. The merge job assembles
       # the final tagged multi-arch manifest list from these per-arch digests
-      # once both architectures have passed. Cache hit from the build above, so
-      # this re-exports rather than rebuilding.
+      # once both architectures have passed.
+      #
+      # This is a second build, and what it publishes must be the image the
+      # smoke tests and both gates above judged, not a lookalike. It is,
+      # because it is the same build again on the same builder:
+      #   - the same buildx builder instance (setup-buildx-action, once per
+      #     job), whose local cache still holds every step of the test build,
+      #     so each step is a cache hit and the push re-exports the layers the
+      #     test build produced instead of re-running anything -- above all
+      #     the `apt-get upgrade` and download steps, which would otherwise
+      #     yield different files;
+      #   - the same context, Dockerfile, platform and build args, character
+      #     for character (scripts/test-verify-published-layers.sh asserts
+      #     it), and in particular the same BASE_IMAGE: the per-arch digest
+      #     pinned by "Base image baseline" before either build, not a tag
+      #     each build would resolve for itself;
+      #   - nothing time-dependent in the build inputs: no build arg or LABEL
+      #     carries a date, and SOURCE_DATE_EPOCH is not set for either
+      #     build, so nothing differs that could change a cache key. The only
+      #     timestamps that do differ, the config's `created` and `history`,
+      #     are written at export and are not part of any layer.
+      # What differs is only the exporter (registry instead of daemon) and
+      # the attestations below, which buildx writes as a separate manifest
+      # beside the image (platform unknown/unknown), leaving the image
+      # manifest and config alone.
+      #
+      # "Should be the same" is then checked, not assumed: the next step
+      # compares the pushed image with the tested one, layer by layer, and
+      # fails the job on any difference -- a cache miss included -- before
+      # its digest is exported. Fail-closed by construction: the build that
+      # can differ is the one that is not published.
       - name: Push (${{ matrix.arch }})
         id: push
         if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
@@ -820,7 +900,7 @@ jobs:
           file: ./${{ inputs.image }}/${{ env.DOCKERFILE }}
           platforms: ${{ matrix.platform }}
           build-args: |
-            BASE_IMAGE=ghcr.io/${{ github.repository_owner }}/${{ inputs.mirror }}
+            BASE_IMAGE=${{ steps.upstream.outputs.ref || env.BUILD_BASE_IMAGE }}
           tags: ghcr.io/${{ github.repository_owner }}/${{ inputs.image }}:${{ inputs.version }}-${{ matrix.arch }}
           push: true
           # Attach the SBOM and provenance to the pushed artifact, not just to a
@@ -832,6 +912,28 @@ jobs:
           provenance: mode=max
           cache-from: type=gha,scope=${{ inputs.image }}-${{ matrix.arch }}-${{ steps.epoch.outputs.day }}
           cache-to: type=gha,mode=max,scope=${{ inputs.image }}-${{ matrix.arch }}-${{ steps.epoch.outputs.day }}
+
+      # The pushed image, compared with the tested `<image>:test` still in the
+      # daemon: rootfs.diff_ids (every layer, uncompressed, in order),
+      # platform, and the config's Env, Entrypoint, Cmd, User, WorkingDir and
+      # Labels. The push reports the digest of the index buildx wrote (image
+      # plus attestation manifest); the script reads the one image manifest
+      # in it and ignores the attestation. Any difference, or a registry that
+      # cannot be read after three tries, fails here, so "Export digest"
+      # never runs and the merge job -- which needs every architecture's
+      # digest -- assembles, signs and attests nothing. The per-arch tag the
+      # push wrote is left behind in that case; nothing consumes it (the
+      # vulnerability baseline reads the index, see scripts/vuln-baseline.sh),
+      # and the next good run overwrites it. Reads with the Docker CLI login
+      # from the "Login" step; scripts/verify-published-layers.sh has the
+      # details.
+      - name: Verify the pushed image is the tested one (${{ matrix.arch }})
+        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+        env:
+          IMAGE: ${{ inputs.image }}
+          REPO: ghcr.io/${{ github.repository_owner }}/${{ inputs.image }}
+          DIGEST: ${{ steps.push.outputs.digest }}
+        run: ./scripts/verify-published-layers.sh "$IMAGE:test" "$REPO@$DIGEST"
 
       - name: Export digest
         if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'

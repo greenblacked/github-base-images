@@ -140,20 +140,26 @@ RUN /opt/az/bin/python3 -m pip install --no-cache-dir --disable-pip-version-chec
 # including its test suite, and that suite ships two RSA private keys for its
 # dummy HTTPS server. They are published test fixtures rather than live
 # credentials -- but they are real private keys, and the secret gate blocks on
-# any finding at any severity. That gate is right to fire: one that has to be
-# told which private keys are acceptable stops being a gate. So the fixtures
-# are removed rather than added to a scanner exception list, which also means
-# these two keys are not in the published image at all. Nothing in a CI image
-# needs urllib3's test server.
+# any finding at any severity. That gate is right to fire. Where nothing in a
+# CI image could need a fixture, removing it beats excusing it: these two keys
+# are not in the published image at all, and nothing in a CI image needs
+# urllib3's test server.
 #
-# What the gate can vouch for is narrower than "no private key anywhere":
-# Trivy's built-in allow rules (listed above the Secret gate step in
-# .github/workflows/build-image.yml) skip any path with `test`, `example` or
-# `/vendor/` in it, and site-packages, among others. These fixtures were
-# caught only because .../urllib3/dummyserver/ happens to match none of
-# them. A future SDK that bundles more fixtures will be caught the same way
-# if their path is outside those rules -- and they get deleted here too --
-# but fixtures under, say, a `tests/` directory would pass the gate unseen.
+# The gate now reads every path: Trivy's built-in allow rules, which skip any
+# path with `test`, `example` or `/vendor/` in it, site-packages and more,
+# are switched off (.github/trivy-secret.yaml; the Secret gate step in
+# .github/workflows/build-image.yml has the list). These two keys were caught
+# before that only because .../urllib3/dummyserver/ matched none of those
+# rules. With them off, the gate also sees the rest of what gsutil vendors:
+# the test suites of google-auth-library-python and requests, and gsutil's
+# and its vendored boto's own -- keys and fake service accounts generated for
+# those projects' unit tests. Those are left in place and excused one by one
+# (rule ID and exact path) in .github/trivy-secret-ignore.yaml, because they
+# sit inside packages gsutil imports, where deleting test directories would
+# be an untested change to gsutil. The dummyserver keys stay deleted: an
+# unused test server is the clearer case, and a key that is not in the image
+# needs no exception. A future SDK that bundles new fixtures fails the gate
+# until each one is deleted here or reviewed into that file.
 ARG TARGETARCH
 ARG GCLOUD_VERSION=589.0.0
 ARG GCLOUD_SHA256_AMD64=f865da648f6fdae2015abb5b32eaa0eb10520e88f0ca735cfb33795868c8d26f

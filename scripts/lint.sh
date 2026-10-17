@@ -453,7 +453,120 @@ else
   cat "$CACHE/test-filter-scorecard-sarif.log"; fail=1
 fi
 
-# --- 16. zizmor, best-effort and non-gating -- the same posture as CI, where
+# --- 16. scripts/verify-published-layers.sh, tested offline with a fake
+# --- docker: the pushed image passes only when its layers and run config
+# --- equal the tested image's, attestations are not mistaken for the image,
+# --- and a registry that cannot be read is a failure, never a pass. The same
+# --- suite checks build-image.yml's wiring: the check sits between the push
+# --- and "Export digest", and both builds get the same inputs.
+note "verify-published-layers offline tests"
+if ./scripts/test-verify-published-layers.sh > "$CACHE/test-verify-published-layers.log" 2>&1; then
+  tail -1 "$CACHE/test-verify-published-layers.log"
+else
+  cat "$CACHE/test-verify-published-layers.log"; fail=1
+fi
+
+# --- 17. The secret scans' configuration. .github/trivy-secret.yaml turns
+# --- Trivy's built-in allow rules off for every secret scan, and Trivy reads
+# --- a missing or unreferenced config as "no config" -- every allow rule
+# --- back on -- without a word. So: the file disables exactly the built-in
+# --- allow-rule IDs of the Trivy release it names (copied from
+# --- pkg/fanal/secret/builtin-allow-rules.go at that tag; update this list,
+# --- the file and its `# trivy-version:` line together), every Trivy secret
+# --- scan in the workflows points TRIVY_SECRET_CONFIG at it, and the image
+# --- gate's fixture exceptions (.github/trivy-secret-ignore.yaml) stay in
+# --- the narrow form that file's header describes: one rule ID per entry,
+# --- exact image paths, `*` for a version segment only, a statement each.
+# --- Line-based, like the file format it checks: there is no YAML parser
+# --- here, and the files are written to be read this way.
+note "secret scan configuration"
+(
+  cfg=.github/trivy-secret.yaml
+  ign=.github/trivy-secret-ignore.yaml
+  builtin_allow_ids="anaconda-log dist-info examples golang locale-dir markdown node.js python rubygems tests usr-dirs vendor wordpress"
+  bad=0
+  err() { echo "error: $*"; bad=1; }
+  for f in "$cfg" "$ign"; do
+    [ -s "$f" ] || { echo "error: $f is missing or empty"; exit 1; }
+  done
+  ver=$(sed -nE 's/^# trivy-version: ([0-9]+\.[0-9]+\.[0-9]+)$/\1/p' "$cfg")
+  [ -n "$ver" ] || err "$cfg has no '# trivy-version: X.Y.Z' line"
+  # The disable-allow-rules list: from its key to the next top-level key.
+  ids=$(awk '/^disable-allow-rules:/ { on = 1; next }
+             on && /^[^[:space:]#]/ { on = 0 }
+             on && /^  - / { print $2 }' "$cfg" | sort)
+  dups=$(printf '%s\n' "$ids" | uniq -d)
+  [ -z "$dups" ] || err "$cfg disables an allow rule twice: $dups"
+  if [ "$(printf '%s\n' "$ids" | sort -u | paste -sd' ' -)" != "$builtin_allow_ids" ]; then
+    err "$cfg disable-allow-rules is not exactly Trivy $ver's built-in allow rules"
+    echo "  file:     $(printf '%s\n' "$ids" | sort -u | paste -sd' ' -)"
+    echo "  expected: $builtin_allow_ids"
+  fi
+  if grep -qE '^(enable-builtin-rules|disable-rules):' "$cfg"; then
+    err "$cfg turns built-in detection rules off; it is meant to change the allow rules only"
+  fi
+  # A custom allow rule may only match content: one with a path would skip
+  # whole files for every rule. File fixtures belong in $ign.
+  awk '/^allow-rules:/ { on = 1; next } on && /^[^[:space:]#]/ { on = 0 }
+       on && /^[[:space:]]+path:/ { print FILENAME ":" NR ": " $0 }' "$cfg" | while IFS= read -r line; do
+    echo "error: a path allow rule skips the whole file for every rule; excuse a file fixture in $ign instead: $line"
+    exit 1
+  done || bad=1
+  while IFS= read -r id; do
+    case " $builtin_allow_ids " in
+      *" $id "*) err "$cfg: custom allow rule '$id' reuses a built-in ID, so disable-allow-rules disables it too" ;;
+    esac
+  done < <(awk '/^allow-rules:/ { on = 1; next } on && /^[^[:space:]#]/ { on = 0 }
+                on && /^  - id:/ { print $3 }' "$cfg")
+
+  # Every Trivy secret scan in the workflows uses the config: within each
+  # step that says `scanners: secret`, a TRIVY_SECRET_CONFIG line naming it.
+  for wf in .github/workflows/*.yml; do
+    awk -v cfg="$cfg" -v wf="$wf" '
+      function done_step() {
+        if (secret && !conf) { printf "error: %s:%d: a Trivy secret scan without TRIVY_SECRET_CONFIG: %s\n", wf, start, cfg; bad = 1 }
+        secret = 0; conf = 0
+      }
+      /^      - name:/ { done_step(); start = NR }
+      /^[[:space:]]+scanners:.*secret/ { secret = 1 }
+      $0 ~ "^[[:space:]]+TRIVY_SECRET_CONFIG: " cfg "$" { conf = 1 }
+      END { done_step(); exit bad }' "$wf" || bad=1
+  done
+  grep -q "trivyignores: $ign\$" .github/workflows/build-image.yml \
+    || err "build-image.yml's Secret gate does not pass $ign as trivyignores"
+
+  # The exceptions file. Paths are what an image scan reports: absolute, no
+  # `**`, `?`, `[` or `{`; a `*` only as part of one segment.
+  entries=$(grep -c '^  - id: ' "$ign" || true)
+  statements=$(grep -c '^    statement: "' "$ign" || true)
+  [ "$entries" -gt 0 ] || err "$ign has no entries"
+  [ "$entries" = "$statements" ] || err "$ign: $entries entries but $statements statements; every entry needs one"
+  if grep -nE '^[^ #]' "$ign" | grep -vqE '^[0-9]+:secrets:$'; then
+    err "$ign: only a top-level 'secrets:' list is allowed (vulnerabilities belong in .github/vuln-exceptions.json)"
+  fi
+  awk '/^  - id: / { id = $3; paths = 0; next }
+       /^    paths:/ { inpaths = 1; next }
+       inpaths && /^      - / { paths++; next }
+       { inpaths = 0 }
+       /^    statement:/ { if (!paths) { print "error: entry " id " has no paths"; bad = 1 } }
+       END { exit bad }' "$ign" || bad=1
+  while IFS= read -r p; do
+    case "$p" in
+      /*) ;;
+      *) err "$ign: path \"$p\" must be absolute, as an image scan reports it" ;;
+    esac
+    case "$p" in
+      *'**'*|*'?'*|*'['*|*'{'*) err "$ign: path \"$p\" may use only '*', within one segment" ;;
+    esac
+  done < <(sed -nE 's/^      - "(.*)"$/\1/p' "$ign")
+  if grep -nE '^      - ' "$ign" | grep -vqE '^[0-9]+:      - "[^"]+"$'; then
+    err "$ign: every path must be one double-quoted string"
+  fi
+  [ "$bad" -eq 0 ] || exit 1
+  echo "Trivy $ver: $(printf '%s\n' "$ids" | grep -c .) built-in allow rules disabled; $entries fixture exception(s), $(sed -nE 's/^      - "(.*)"$/\1/p' "$ign" | grep -c .) path(s)"
+) || fail=1
+
+# --- 18. zizmor, best-effort and non-gating -- the same posture as CI, where
 # --- its findings surface through code scanning rather than a red job.
 # --- The version, and the hash of each linux wheel, are the ones CI installs:
 # --- .github/zizmor-requirements.txt, which the pin-bump bot moves. On Linux it

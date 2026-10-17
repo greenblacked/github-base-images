@@ -17,10 +17,12 @@ are not runtime images and are not intended to be exposed to untrusted network i
 In scope:
 
 - A credential, token, or private key baked into a published image. The secret scan gates on this
-  at any severity, but only over the files Trivy reads: its built-in allow rules skip test and
-  example paths, vendored directories, `site-packages` and system library directories
-  ([docs/security.md](docs/security.md#tests-and-security-scanning) lists them). A live
-  credential in a published image is in scope wherever it sits, skipped path or not.
+  at any severity, in every file Trivy reads — test, example, vendored and library paths included,
+  since its built-in allow rules are switched off. It does not read what Trivy skips in code
+  (`node_modules`, lock files, archives, binaries), and it excuses a short list of reviewed,
+  published upstream test fixtures ([docs/security.md](docs/security.md#tests-and-security-scanning)
+  lists both). A live credential in a published image is in scope wherever it sits, skipped path,
+  excused fixture or not.
 - A fixable HIGH/CRITICAL vulnerability that a build added and the gate should have caught — in an
   OS package, or in a library or binary in the image (a pinned tool, or a package the runtime's
   upstream image bundles). The gate covers both. A released fix that still has not reached the
