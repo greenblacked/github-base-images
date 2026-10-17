@@ -24,8 +24,8 @@ The image list lives in one place: [.github/images.json](../.github/images.json)
 per-image pipeline in [build-image.yml](../.github/workflows/build-image.yml) once per entry
 ([ADR 0002](adr/0002-images-json-reusable-workflow.md)). For each image a run builds: mirror the
 base (on `main`), build and smoke-test each architecture on a native runner, scan and gate, push
-the per-arch digests, merge them into one multi-arch index, sign and attest it, and verify the
-result. Adding an image is covered in
+each architecture and check that what was pushed is layer for layer the image that was tested,
+merge the per-arch digests into one multi-arch index, sign and attest it, and verify the result. Adding an image is covered in
 [CONTRIBUTING.md](../CONTRIBUTING.md#adding-another-image).
 
 ## Mirrored upstream base

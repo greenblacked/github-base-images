@@ -84,29 +84,46 @@ for it (a step summary is capped at 1 MiB):
   - All three scans and the decision are kept as the `vuln-gate-<image>-<arch>` artifact.
 - **Secret scan** — **gates at any severity**. A baked-in credential in a public CI image is
   always fixable from this repo, with no upstream to wait on, so there is no excuse for shipping
-  one. It is Trivy's secret scanner with its defaults, and that is **not the whole image**:
-  Trivy's [built-in allow rules](https://github.com/aquasecurity/trivy/blob/main/pkg/fanal/secret/builtin-allow-rules.go)
-  skip every file whose path matches one, without reading it. At the Trivy release the pinned
-  action installs, that is:
-  - any path containing `test` (`test…` at the start, or `/test`, `-test`, `_test`, `.test`) or
-    `example`;
-  - any `vendor/`, `locale/` or `locales/` directory, `*.md` files, and Python `.dist-info/`
-    metadata;
-  - by prefix: `usr/share/`, `usr/include/`, `usr/lib/` (which includes Debian's
-    `dist-packages` and `usr/lib/gems`), `usr/local/lib/pythonX.Y/` (every pip-installed
-    `site-packages`), `usr/local/go/`, `opt/yarn-v*/`, `usr/src/wordpress/` and
-    `var/log/anaconda/`;
-  - binary files (Python `.pyc` aside) and files under 10 bytes.
+  one. It is Trivy's secret scanner with its built-in detection rules and **without its built-in
+  allow rules**: [.github/trivy-secret.yaml](../.github/trivy-secret.yaml) disables every one of
+  them by ID (`disable-allow-rules`). Those rules
+  ([builtin-allow-rules.go](https://github.com/aquasecurity/trivy/blob/v0.70.0/pkg/fanal/secret/builtin-allow-rules.go))
+  used to skip, unread, every file whose path contained `test` or `example`; every `vendor/`,
+  `locale/` and `locales/` directory; `*.md` and Python `.dist-info/` metadata; and everything under
+  `usr/share/`, `usr/include/`, `usr/lib/`, `usr/local/lib/pythonX.Y/` (every pip
+  `site-packages`), `usr/local/go/`, `opt/yarn-v*/`, `usr/src/wordpress/` and `var/log/anaconda/`.
+  The gate now reads all of those.
+  - **What it still does not read.** Trivy skips some files in code rather than by an allow rule,
+    and no configuration reaches that: anything under a `node_modules` or `.git` directory; the
+    lock files `go.mod`, `go.sum`, `package-lock.json`, `yarn.lock`, `pnpm-lock.yaml`,
+    `Pipfile.lock` and `Gemfile.lock`; the extensions `.jpg .png .gif .doc .pdf .bin .svg .socket
+    .deb .rpm .zip .gz .gzip .tar`; binary files other than Python `.pyc`; and files under 10
+    bytes. So the gate means *no secret Trivy can detect in any file it reads*, and those are the
+    files it does not.
+  - **What it excuses.** Upstream software ships published test and documentation fixtures —
+    test-server keys, fake service-account files, sample tokens — and with the allow rules off the
+    gate sees them. Each one is reviewed and excused explicitly, never by a path pattern:
+    - [.github/trivy-secret-ignore.yaml](../.github/trivy-secret-ignore.yaml) excuses a file
+      fixture for **one Trivy rule ID at one exact path** (a `*` only for a version-numbered path
+      segment), with a statement of what it is. Another rule firing on the same file, or the same
+      rule on another file, still fails. Today: the Go standard library's test keys (`ci-go`), the
+      test suites gsutil vendors in the Google Cloud CLI and PyJWT's README token in the Azure CLI
+      (`ci-cloud`), and the AWS CLI's sample key-pair output (`ci-tools`).
+    - One content allow rule in `.github/trivy-secret.yaml` excuses AWS's documentation
+      placeholder key IDs (`AKIAIOSFODNN7EXAMPLE` and five more, each named in full), which the AWS
+      CLI's help examples use about fifty times.
 
-  Everything else is read — the tools in `/usr/local/bin`, the SDKs under `/opt`, configuration
-  in `/etc` and home directories, which is where this repository's own builds put things. So the
-  gate means *no secret Trivy can see in the files it reads*; it does not vouch for upstream
-  test fixtures or for anything installed into a system Python's `site-packages`. The allow rules
-  are left on deliberately: turning them off would fail builds on the private keys and sample
-  tokens that upstream packages ship in their test suites, which nobody here can judge or remove
-  without a growing list of unreviewed exceptions. When a fixture *is* outside the rules, the gate
-  catches it and it is deleted in the Dockerfile — `ci-cloud` removes the two test-server keys in
-  gsutil's vendored urllib3 (`…/urllib3/dummyserver/`) this way.
+    The secret *report* uses the configuration but not the exceptions, so every excused match is
+    still listed in the `security-report-<image>-<arch>` artifact. Where nothing in a CI image
+    could need a fixture, removing it in the Dockerfile is preferred to excusing it: `ci-cloud`
+    deletes the two test-server keys in gsutil's vendored urllib3 (`…/urllib3/dummyserver/`).
+  - **Tied to the Trivy release.** The allow-rule IDs are those of the Trivy version the pinned
+    trivy-action installs (0.70.0), recorded in the file's `# trivy-version:` line. A new release can
+    add an allow rule, which would quietly stop the gate reading its paths, so the gate fails when
+    the Trivy it runs is any other version, until the list is re-checked; it also fails if the
+    file is missing, which Trivy would otherwise read as "no configuration" without a word.
+    `scripts/lint.sh` checks that the list is exactly the release's IDs, that every Trivy secret
+    scan in the workflows uses the file, and that every exception has the form above.
 - **Misconfiguration scan** — lints the Dockerfile's build instructions (missing `USER`, `ADD` vs
   `COPY`, …). Best-practice guidance rather than exploitable findings, so it is **reported, not
   gating** — the gates stay reserved for real, fixable security problems.
@@ -347,6 +364,28 @@ docker buildx imagetools inspect ghcr.io/greenblacked/ci-ruby34:bookworm-v1
 docker exporter via `load:`, which cannot carry attestations. `imagetools create` preserves them
 into the final multi-arch index.
 
+### The published image is the tested image
+
+That makes the push a second build. It publishes the image the smoke tests and both gates judged,
+not a rebuild of it, and that is checked rather than assumed:
+
+- **Same inputs.** Both builds run on the job's one buildx builder with the same context,
+  Dockerfile, platform and build args — including the same `BASE_IMAGE`, which is the base's
+  per-arch digest, resolved once before either build (the *Base image baseline* step), not a tag
+  each build resolves for itself. No build arg or label carries a date, and `SOURCE_DATE_EPOCH`
+  is not set. So every step of the push is a cache hit on the builder's own cache, and the push
+  re-exports the test build's layers. The attestations are a separate manifest beside the image
+  (`unknown/unknown`) and leave the image's manifest and config alone.
+- **Checked.** [scripts/verify-published-layers.sh](../scripts/verify-published-layers.sh) runs
+  between the push and *Export digest*. It reads the pushed index, takes its one image manifest
+  (ignoring the attestation manifest), and compares that image's config with the tested
+  `<image>:test` in the daemon: `rootfs.diff_ids` (every layer, uncompressed, in order), platform,
+  and `Env`, `Entrypoint`, `Cmd`, `User`, `WorkingDir` and `Labels`. Any difference — a cache miss
+  that re-ran a step, a moved base — or a registry it cannot read fails the job, so that
+  architecture's digest is never exported and the merge job assembles, signs and attests
+  nothing. Only the per-arch `<version>-<arch>` tag the push wrote is left behind; nothing
+  consumes it.
+
 The GitHub attestation above is a third, separate record: SLSA build provenance for the index
 digest, signed through Sigstore with the workflow's OIDC identity, stored with GitHub's attestation
 API and also pushed to GHCR next to the image. It adds to the buildx attestations and the cosign
@@ -371,11 +410,11 @@ daily, on every push and pull request, and on a dispatch.
 
 - **Repository secret scan** — Trivy over the working tree, covering workflows, scripts, and the
   Makefile, none of which the image scan can see (nothing is `COPY`ed in). **Gates**, on the same
-  reasoning as the image secret gate — and with the same built-in allow rules (see *Secret scan*
-  above), so it does not read Markdown (`*.md`, which is most of the docs) or any path containing
-  `test` or `example` (the `scripts/test-*.sh` suites among them). The git history scan below
-  uses gitleaks's own default allowlist instead, which does not skip Markdown or test paths, so
-  those files are still read there — reported in its log, not gated.
+  reasoning as the image secret gate — and with the same `.github/trivy-secret.yaml` (see *Secret
+  scan* above), so it reads Markdown (`*.md`, most of the docs) and every path containing `test`
+  or `example` (the `scripts/test-*.sh` suites among them) too. It takes none of the image gate's
+  fixture exceptions, which name paths inside the images: this tree has nothing to excuse, so any
+  finding fails. The git history scan below uses gitleaks's own default allowlist.
 - **Workflow security audit** — `zizmor` checks whether the workflows are *safe*: template
   injection through `${{ }}` into `run:` blocks, over-broad permissions, unpinned actions, cache
   poisoning. `actionlint` already checks they are *valid*; this is the other half. **Reported,
@@ -591,9 +630,10 @@ alerts, and this repository adds no personal access token or app credential to r
 report says so in its own section and links to *Security → Secret scanning* for a manual look.
 Secrets are covered in CI by the Trivy secret gate on every image, the Trivy secret scan of the
 working tree (which gates), and the gitleaks scan of the git history (reported, in its job log).
-Both Trivy scans skip the paths Trivy's built-in allow rules cover (test and example paths,
-vendored directories, Markdown, system library directories; listed under
-[Tests and security scanning](#tests-and-security-scanning) (*Secret scan*)).
+Both Trivy scans run with Trivy's built-in allow rules disabled, so they read test, example,
+vendored and system-library paths too; what Trivy still skips in code (`node_modules`, `.git`,
+lock files, archives, binaries) is listed under
+[Tests and security scanning](#tests-and-security-scanning) (*Secret scan*).
 
 The Dependabot fetch needs the `vulnerability-alerts: read` token permission, which is separate
 from `security-events`. The pinned actionlint predates that permission, so

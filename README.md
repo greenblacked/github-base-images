@@ -151,7 +151,7 @@ reserved for problems this repository can fix; the rest is reported so you can s
 |---|---|---|
 | Smoke test (`test.sh`) | gate | Every promised tool is present, TLS verification works, nothing project-specific is baked in |
 | Vulnerability gate | gate | The build adds no **fixable** HIGH/CRITICAL finding, in OS packages *or* libraries and binaries, that the image published before it did not already have |
-| Secret gate | gate | No credential baked into the image, at any severity, in the files Trivy reads (its built-in allow rules skip test, vendored and library paths; see [docs/security.md](docs/security.md#tests-and-security-scanning)) |
+| Secret gate | gate | No credential baked into the image, at any severity, in any file Trivy reads — test, vendored and library paths included (its built-in allow rules are off; reviewed fixture exceptions and what Trivy still skips: [docs/security.md](docs/security.md#tests-and-security-scanning)) |
 | Mirror integrity | gate | The base was copied by digest from upstream and verified before anything was built on it |
 | Both platforms | gate | The published index contains `linux/amd64` and `linux/arm64` |
 | Post-sign verification | gate | The cosign signature, SBOM and provenance attestations, and GitHub attestation all verify, under the identity below, in the run that published them |

@@ -35,11 +35,21 @@ jobs:
   # Secrets committed to the repository itself, which the image scan cannot see:
   # it only inspects what was COPYed in, and nothing here is. Scans the working
   # tree rather than an image, so it also covers workflows, scripts and the
-  # Makefile. Not every file, though: Trivy's built-in allow rules apply here
-  # as in the image gate (see the Secret gate step in build-image.yml), so
-  # Markdown (most of docs/) and any path containing `test` or `example`
-  # (scripts/test-*.sh) are never read. The git-history-secrets job below,
-  # gitleaks with its own allowlist, does read them.
+  # Makefile -- and, with the same .github/trivy-secret.yaml as the image
+  # gate (TRIVY_SECRET_CONFIG; see the Secret gate step in build-image.yml),
+  # Markdown (most of docs/) and every path containing `test` or `example`
+  # (scripts/test-*.sh) too: Trivy's built-in allow rules, which used to skip
+  # those unread, are disabled here as there. Only the .git directory stays
+  # unread (Trivy skips it in code); the git-history-secrets job below covers
+  # history.
+  #
+  # One configuration for both scans, so "what a secret scan reads" means the
+  # same thing everywhere. The image gate's fixture exceptions
+  # (.github/trivy-secret-ignore.yaml) are not used here: they name paths
+  # inside the images, and this tree has nothing to excuse (with the allow
+  # rules off, Trivy 0.70.0 finds nothing in it), so any finding here fails.
+  # If a test ever needs a committed fixture, it gets a reviewed exception of
+  # its own here, not a share of the images'.
   repo-secrets:
     name: Repository secret scan
     runs-on: ubuntu-latest
@@ -58,6 +68,8 @@ jobs:
 
       - name: Trivy filesystem secret scan (SARIF)
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        env:
+          TRIVY_SECRET_CONFIG: .github/trivy-secret.yaml
         with:
           scan-type: fs
           scan-ref: .
@@ -78,6 +90,8 @@ jobs:
       # always fixable from this repo, so there is no reason to ship one.
       - name: Secret gate
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        env:
+          TRIVY_SECRET_CONFIG: .github/trivy-secret.yaml
         with:
           scan-type: fs
           scan-ref: .
