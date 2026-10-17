@@ -78,8 +78,28 @@ on:
 
 # One run at a time, never cancelled half-way: two runs could otherwise both
 # decide to merge, or both refresh the same branch. A newer trigger waits.
+#
+# GitHub keeps at most one run pending per group, and a newer one replaces
+# it. That is harmless between two runs that do the same work, but a run the
+# job's `if:` skips (a workflow_run Dependabot started, a dispatch on another
+# branch) would replace a real pending one -- a dispatch from a bot PR's CI,
+# say -- and then do nothing, leaving the merge to the next hourly run. So
+# such a run gets a group of its own (its run id) and never queues behind,
+# or displaces, a real one. The condition is the job's `if:`, negated and
+# repeated, because `concurrency` cannot refer to a job's result.
+#
+# A workflow_run from a fork's pull request is NOT set apart, and not
+# skipped either (published-audit.yml does skip them). Nothing here depends
+# on which run triggered it -- every run reads the same open pull requests
+# through the API and merges only bot branches whose own checks passed --
+# so such a run does exactly the work a scheduled one would, and replacing
+# a pending run with it loses nothing.
 concurrency:
-  group: ${{ github.workflow }}
+  group: >-
+    ${{ github.workflow }}${{
+    (github.ref != 'refs/heads/main' ||
+    (github.event_name == 'workflow_run' && github.event.workflow_run.actor.login == 'dependabot[bot]'))
+    && format('-skipped-{0}', github.run_id) || '' }}
   cancel-in-progress: false
 
 permissions: {}

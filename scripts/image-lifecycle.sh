@@ -103,20 +103,44 @@ dry=${DRY_RUN:-}
 stub=${LIFECYCLE_GH_STUB:-}
 repo=${GITHUB_REPOSITORY:-}
 
-log()  { printf '%s\n' "$*" >&2; }
+# Every message is made one line that the runner cannot read as a workflow
+# command, whatever text it carries. Much of it comes from outside --
+# endoflife.date's names and codenames, registry answers, the tail of a
+# command's stderr -- and in the job log a line break followed by
+# "::stop-commands::..." or "::add-mask::..." would be obeyed, not printed.
+# So control characters (CR and LF among them) become spaces, a "::" at the
+# start of the line (after any blanks: the runner trims them) is broken up,
+# and so is "##[" anywhere, because the runner still honours the legacy
+# "##[command]" form in the middle of a line (the same rule as
+# scripts/alerts-report.sh). This is defence in depth: the values that reach
+# the log are validated where they are parsed (newest_distro, plan, probe),
+# and this catches whatever a future message forgets to.
+one_line() {
+  local s=$1
+  s=${s//[[:cntrl:]]/ }
+  s=${s//'##['/'## ['}
+  if [[ $s =~ ^([[:space:]]*)::(.*)$ ]]; then s="${BASH_REMATCH[1]}: :${BASH_REMATCH[2]}"; fi
+  printf '%s' "$s"
+}
+log()  { printf '%s\n' "$(one_line "$*")" >&2; }
 die()  { log "error: $*"; exit 2; }
 warn_count=0
+# WARNINGS and NOTICES are printed by prs() with a ::warning:: or ::notice::
+# prefix, one command per line, so what goes into them is one_line'd too.
 warn() {
   warn_count=$((warn_count + 1))
   log "warning: $*"
-  [ -z "${WARNINGS:-}" ] || printf '%s\n' "$*" >> "$WARNINGS"
+  [ -z "${WARNINGS:-}" ] || printf '%s\n' "$(one_line "$*")" >> "$WARNINGS"
 }
 # Not a problem, but not silent either: a GA line waiting for its upstream
 # tag. Listed in the run summary and as a ::notice:: each day it waits.
 notice() {
   log "notice: $*"
-  [ -z "${NOTICES:-}" ] || printf '%s\n' "$*" >> "$NOTICES"
+  [ -z "${NOTICES:-}" ] || printf '%s\n' "$(one_line "$*")" >> "$NOTICES"
 }
+# For the log: a value from outside, quoted so that it reads as one token
+# whatever it holds ($'trixie\n::x' rather than a line break), cut short.
+shown() { printf '%q' "${1:0:60}"; }
 
 # --- small helpers -------------------------------------------------------------
 trim() { printf '%s' "$1" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//'; }
@@ -288,18 +312,44 @@ eol_releases() { # PRODUCT
 }
 
 # The newest released Debian stable / Ubuntu LTS, as "<cycle> <codename>".
+#
+# Both come from endoflife.date and end up in an image tag, a directory's
+# files, a pull request and the job log, so they are checked here, where
+# they are parsed: the cycle digits and dots, the codename lower-case
+# letters only (what Debian's and Ubuntu's codenames are, and what every
+# upstream tag template expects). Anything else -- a line break, a "::",
+# shell or Markdown punctuation -- is not a codename this script can use,
+# and is reported, quoted, as a warning; the caller then adds nothing on
+# that distribution today. It is not skipped in favour of an older release:
+# choosing a distribution on a guess is exactly what the add rule forbids.
 newest_distro() { # debian|ubuntu
-  local product=$1 sel
+  local product=$1 sel rel name cname
   [ "$1" = debian ] && sel='true' || sel='.isLts == true'
   eol_releases "$product" || return 1
-  jq -r --arg today "$today" "[.[] | select($sel and .releaseDate <= \$today and (.codename | type == \"string\"))]
+  rel=$(jq -c --arg today "$today" "[.[] | select($sel and .releaseDate <= \$today and (.codename | type == \"string\"))]
     | sort_by(.name | split(\".\") | map(tonumber? // 0)) | last // empty
-    | \"\(.name) \(.codename | split(\" \")[0] | ascii_downcase)\"" "$tmp/eol-$product.json"
+    | [.name, (.codename | split(\" \")[0] | ascii_downcase)]" "$tmp/eol-$product.json") || return 1
+  [ -n "$rel" ] || return 0
+  name=$(jq -r '.[0]' <<<"$rel"); cname=$(jq -r '.[1]' <<<"$rel")
+  if ! [[ $name =~ ^[0-9][0-9.]*$ && $cname =~ ^[a-z]+$ ]]; then
+    warn "endoflife.date ($product): the newest release's name $(shown "$name") or codename $(shown "$cname") is not one this script can use (digits and dots; lower-case letters)"
+    return 1
+  fi
+  printf '%s %s\n' "$name" "$cname"
 }
 
 # Does the exact tag exist upstream, for both architectures? 0 yes, 4 no, 1 unknown.
+#
+# The reference is built from a template and the validated cycle and
+# codename, so it should always be plain; it is checked again here, before
+# it becomes part of a URL, because it is also what the log, the pull
+# request and the Dockerfile will carry.
 probe() { # UPSTREAM
   local ref="$1" name tag out="$tmp/probe.json" rc=0
+  if ! [[ $ref =~ ^[a-z0-9][a-z0-9./_-]*:[A-Za-z0-9][A-Za-z0-9._-]*$ ]]; then
+    warn "$(shown "$ref") is not an image reference this script probes"
+    return 1
+  fi
   name=${ref%:*}; tag=${ref##*:}
   case "$name" in
     mcr.microsoft.com/*)
@@ -353,6 +403,15 @@ plan() {
     # --- add: every GA cycle newer than the newest image.
     while IFS=$'\t' read -r cyc lts_ok; do
       [ -n "$cyc" ] || continue
+      # The cycle is endoflife.date's release name. The jq filter below has
+      # already matched it against the family's pattern, but jq's regex
+      # anchors are not guaranteed to stop at a line break, so it is checked
+      # again here, in bash, where ^ and $ are the ends of the string: it
+      # becomes an image name, a tag, a directory and a log line.
+      if ! [[ $cyc =~ ^[0-9][0-9.]*$ && $cyc =~ ^$vre$ ]]; then
+        warn "$fam: endoflife.date ($product) lists a release named $(shown "$cyc"), which is not a $fam version; ignored"
+        continue
+      fi
       if [ "$lts_ok" != true ]; then
         log "$fam $cyc: not added: $( [ "$fam" = node ] && echo "odd major, or its LTS date has not come yet" || echo "not an LTS release")"
         continue
@@ -1290,7 +1349,9 @@ prs() {
   if [ -n "${GITHUB_ACTIONS:-}" ]; then
     sed 's/^/::notice::/' "$NOTICES"
     sed 's/^/::warning::/' "$WARNINGS"
-    jq -r 'select(.status == "error") | "::error::\(.action) \(.image): \(.note)"' "$RESULTS"
+    # The note can hold a command's stderr: one line, no "##[" (see one_line).
+    jq -r 'def one: tostring | gsub("[[:cntrl:]]+"; " ") | gsub("##\\["; "## [");
+      select(.status == "error") | "::error::\(.action | one) \(.image | one): \(.note | one)"' "$RESULTS"
   fi
   local errors; errors=$(jq -s '[.[] | select(.status == "error")] | length' "$RESULTS")
   if [ "$errors" -gt 0 ]; then log "error: $errors action(s) failed; see the summary"; exit 1; fi
