@@ -154,7 +154,7 @@ one_unit() {
   local unit="$1" to="$2" old="$3"
   local branch="pin-bump/$unit" wt="$work/wt-$unit"
   local remote_sha pr_all open_json pr_num="" pr_url="" prev_to="" prev_class="" closed_same marker
-  local prev_seen="" prev_fp="" seen="" fp=""
+  local prev_seen="" prev_fp="" seen="" fp="" heal_if_same=""
   local action="" class="" new="" note="" errors=""
 
   row() { # STATUS ACTION -- one result line for the summary
@@ -241,8 +241,17 @@ one_unit() {
       # gets a marker merge-bot-prs.sh can read. Its clock starts today.
       note="${note}rebuilt to record its first-seen date. "
     elif [ -n "$remote_sha" ] && git merge-base --is-ancestor "origin/$base" "$remote_sha"; then
-      heal "$remote_sha"
-      return $?
+      if [ "$prev_class" = auto ]; then
+        heal "$remote_sha"
+        return $?
+      fi
+      # A review PR is still inside (or near) its first-seen cooldown, and for
+      # trust-on-first-use units the sums ARE the evidence: an artifact the
+      # vendor replaced under the same version must restart the clock, not
+      # ride the old one to a merge. So the bump runs again below, and the
+      # branch is only healed, unchanged, if every value it writes is the
+      # same as the marker's fingerprint.
+      heal_if_same=1
     else
       # Same version, but the branch is behind the base. With "require
       # branches to be up to date" on, it could never merge, and doing
@@ -291,6 +300,10 @@ one_unit() {
   # value written are the same as the open PR's, restarted otherwise.
   local source eligible
   fp=$(jq -r '(.pins // [])[]' <<<"$result" | sha256_text | cut -c1-16)
+  if [ -n "$heal_if_same" ] && [ "$new" = "$prev_to" ] && [ "$fp" = "$prev_fp" ]; then
+    heal "$remote_sha"
+    return $?
+  fi
   if [ -n "$open_json" ] && [ "$prev_to" = "$new" ] && [ -n "$prev_seen" ] && [ "$prev_fp" = "$fp" ]; then
     seen=$prev_seen
   else

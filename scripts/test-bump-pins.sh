@@ -894,6 +894,24 @@ expect_row docker status ok
 check "a sum that changed under the same version restarts the clock" \
   bash -c "grep -qF 'class=review seen=2026-09-28 fp=$fp_docker -->' '$log.body'"
 check "  and says so" bash -c "jq -r 'select(.unit == \"docker\") | .note' '$res' | grep -q 'first-seen clock restarted'"
+# The same, with the branch up to date with main (the heal path): a review
+# PR is re-verified, not healed on trust, so a replaced artifact still
+# restarts the clock...
+scenario k4
+seed docker "$BOT" "$BOT" > /dev/null
+pr docker 20 OPEN 29.9.0 review 2026-09-25 ffffffffffffffff
+run_prs <<< 'docker 29.9.0'
+expect_row docker status ok
+check "an up-to-date review PR whose sums changed is rebuilt with a new clock" \
+  bash -c "grep -qF 'class=review seen=2026-09-28 fp=$fp_docker -->' '$log.body'"
+# ...and one whose values are unchanged is healed, branch untouched.
+scenario k5
+sha=$(seed docker "$BOT" "$BOT")
+pr docker 20 OPEN 29.9.0 review 2026-09-25 "$fp_docker"
+printf '%s' "$CHECKS_ALL" > "$stub/checks-docker.json"
+run_prs <<< 'docker 29.9.0'
+check "an up-to-date review PR with the same values is healed, not rebuilt" [ "$(head_of pin-bump/docker)" = "$sha" ]
+expect_row docker status unchanged
 # A PR from before the clock existed: rebuilt, so its marker gets a date.
 scenario k3
 seed docker "$BOT" "$BOT" > /dev/null
