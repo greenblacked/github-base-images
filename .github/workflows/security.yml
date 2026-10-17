@@ -34,8 +34,12 @@ permissions:
 jobs:
   # Secrets committed to the repository itself, which the image scan cannot see:
   # it only inspects what was COPYed in, and nothing here is. Scans the working
-  # tree rather than an image, so it also covers workflows, docs, and the
-  # Makefile.
+  # tree rather than an image, so it also covers workflows, scripts and the
+  # Makefile. Not every file, though: Trivy's built-in allow rules apply here
+  # as in the image gate (see the Secret gate step in build-image.yml), so
+  # Markdown (most of docs/) and any path containing `test` or `example`
+  # (scripts/test-*.sh) are never read. The git-history-secrets job below,
+  # gitleaks with its own allowlist, does read them.
   repo-secrets:
     name: Repository secret scan
     runs-on: ubuntu-latest
