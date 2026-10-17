@@ -38,6 +38,50 @@ gh_release() { # REPO TAG DATE
   serve "https://api.github.com/repos/$1/releases/tags/$2" "$f"
 }
 G=https://github.com
+
+# A fake cosign, first on PATH for every case (pin-bump-prs.sh's included), so
+# no test depends on a real one, or on Sigstore being reachable. It does what
+# the real `cosign verify-blob --bundle` decides on: the bundle must be over
+# this file's exact bytes and name exactly the identity and issuer asked for.
+# Its "bundles" are written by sign_sigstore below. Every call is logged.
+mkdir -p "$work/cosign-bin"
+cat > "$work/cosign-bin/cosign" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >> "$FAKE_COSIGN_LOG"
+[ "$1" = verify-blob ] || { echo "cosign (fake): only verify-blob" >&2; exit 2; }
+shift
+bundle="" id="" iss="" file=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --bundle) bundle="$2"; shift 2 ;;
+    --certificate-identity) id="$2"; shift 2 ;;
+    --certificate-oidc-issuer) iss="$2"; shift 2 ;;
+    -*) echo "cosign (fake): unexpected flag $1" >&2; exit 2 ;;
+    *) file="$1"; shift ;;
+  esac
+done
+if [ -z "$bundle" ] || [ -z "$id" ] || [ -z "$iss" ] || [ ! -f "$file" ]; then
+  echo "Error: incomplete verify-blob call" >&2; exit 1
+fi
+jq -e --arg h "$(sha256sum "$file" | cut -d' ' -f1)" '.fake == "sigstore" and .sha256 == $h' "$bundle" >/dev/null 2>&1 \
+  || { echo "Error: failed to verify signature" >&2; exit 1; }
+jq -e --arg i "$id" --arg o "$iss" '.identity == $i and .issuer == $o' "$bundle" >/dev/null \
+  || { echo "Error: no matching CertificateIdentity found" >&2; exit 1; }
+echo "Verified OK" >&2
+EOF
+chmod +x "$work/cosign-bin/cosign"
+export PATH="$work/cosign-bin:$PATH" FAKE_COSIGN_LOG="$work/cosign.log"
+: > "$FAKE_COSIGN_LOG"
+# sign_sigstore URL FILE IDENTITY [ISSUER] -- serve URL.sigstore.json, a fake
+# bundle over fixture FILE's bytes as IDENTITY.
+sign_sigstore() {
+  jq -n --arg h "$(sha256sum "$fx/$2" | cut -d' ' -f1)" --arg i "$3" --arg o "${4:-https://token.actions.githubusercontent.com}" \
+    '{fake: "sigstore", sha256: $h, identity: $i, issuer: $o}' > "$fx/$2.sigstore.json"
+  serve "$1.sigstore.json" "$2.sigstore.json"
+}
+TRIVY_ID="$G/aquasecurity/trivy/.github/workflows/reusable-release.yaml@refs/tags/v"   # + the version
+SYFT_ID="$G/anchore/syft/.github/workflows/release.yaml@refs/heads/main"
+
 OLD='2026-09-01T12:00:00Z'      # 27 days before NOW: past the cooldown
 FRESH='2026-09-26T09:30:00.123Z' # 2 days before NOW: inside it
 NOW=1790553600                  # 2026-09-28T00:00:00Z
@@ -50,6 +94,7 @@ $(fake trivy-arm)  trivy_0.75.0_Linux-ARM.tar.gz
 $(fake trivy-arm64)  trivy_0.75.0_Linux-ARM64.tar.gz
 EOF
 serve "$G/aquasecurity/trivy/releases/download/v0.75.0/trivy_0.75.0_checksums.txt" trivy.txt
+sign_sigstore "$G/aquasecurity/trivy/releases/download/v0.75.0/trivy_0.75.0_checksums.txt" trivy.txt "${TRIVY_ID}0.75.0"
 gh_release aquasecurity/trivy v0.75.0 "$OLD"
 
 # kubectl 1.38.0: one bare-hash file per artifact, pinned in two images.
@@ -65,6 +110,7 @@ $(fake syft-amd64)  syft_2.0.0_linux_amd64.tar.gz
 $(fake syft-arm64)  syft_2.0.0_linux_arm64.tar.gz
 EOF
 serve "$G/anchore/syft/releases/download/v2.0.0/syft_2.0.0_checksums.txt" syft.txt
+sign_sigstore "$G/anchore/syft/releases/download/v2.0.0/syft_2.0.0_checksums.txt" syft.txt "$SYFT_ID"
 gh_release anchore/syft v2.0.0 "$OLD"
 
 # docker 29.9.0: no vendor checksum -> review, and the artifacts must exist.
@@ -264,6 +310,12 @@ expect_field "$work/r1.json" trivy class auto
 expect_pin "$t" ci-security/Dockerfile.ci TRIVY_VERSION 0.75.0
 expect_pin "$t" ci-security/Dockerfile.ci TRIVY_SHA256_AMD64 "$(fake trivy-amd64)"
 expect_pin "$t" ci-security/Dockerfile.ci TRIVY_SHA256_ARM64 "$(fake trivy-arm64)"
+check "  its checksums file's Sigstore bundle is listed as an integrity source" \
+  bash -c "jq -e '.[] | select(.unit == \"trivy\") | .integrity_urls | index(\"$G/aquasecurity/trivy/releases/download/v0.75.0/trivy_0.75.0_checksums.txt.sigstore.json\")' '$work/r1.json' >/dev/null"
+check "  cosign was asked for trivy's own release identity at that tag, and GitHub's issuer" \
+  grep -qF -- "--certificate-identity ${TRIVY_ID}0.75.0 --certificate-oidc-issuer https://token.actions.githubusercontent.com" "$FAKE_COSIGN_LOG"
+check "  and the reason says the signature verified" \
+  bash -c "jq -r '.[] | select(.unit == \"trivy\") | .reason' '$work/r1.json' | grep -q 'Sigstore signature verified'"
 
 echo " paired bump (kubectl in ci-tools and ci-cloud)"
 expect_field "$work/r1.json" kubectl class auto
@@ -403,6 +455,7 @@ $(fake trivy-arm64)  trivy_0.75.1_Linux-ARM64.tar.gz
 $(fake trivy-dup-b)  trivy_0.75.1_Linux-64bit.tar.gz
 EOF
 serve "$G/aquasecurity/trivy/releases/download/v0.75.1/trivy_0.75.1_checksums.txt" trivy-dup.txt
+sign_sigstore "$G/aquasecurity/trivy/releases/download/v0.75.1/trivy_0.75.1_checksums.txt" trivy-dup.txt "${TRIVY_ID}0.75.1"
 gh_release aquasecurity/trivy v0.75.1 "$OLD"
 rc=0; "$bump" --root "$t" --unit trivy --to 0.75.1 --quiet --format json > "$work/r5a.json" 2> "$work/r5a.err" || rc=$?
 check "an asset listed twice is an error (exit 1), not the first match" [ "$rc:$(field "$work/r5a.json" trivy status)" = "1:error" ]
@@ -415,6 +468,7 @@ $(fake trivy-arm64)  trivy_0.75.2_Linux-ARM64.tar.gz
 $(fake trivy-3f-b)  trivy_0.75.2_Linux-64bit.tar.gz
 EOF
 serve "$G/aquasecurity/trivy/releases/download/v0.75.2/trivy_0.75.2_checksums.txt" trivy-3f.txt
+sign_sigstore "$G/aquasecurity/trivy/releases/download/v0.75.2/trivy_0.75.2_checksums.txt" trivy-3f.txt "${TRIVY_ID}0.75.2"
 gh_release aquasecurity/trivy v0.75.2 "$OLD"
 rc=0; "$bump" --root "$t" --unit trivy --to 0.75.2 --quiet --format json > "$work/r5b.json" 2> "$work/r5b.err" || rc=$?
 check "a line with three fields is an error (exit 1)" [ "$rc:$(field "$work/r5b.json" trivy status)" = "1:error" ]
@@ -513,6 +567,7 @@ check "  and the planted text is not in the reason" bash -c "! jq -r '.[0].reaso
 # trivy 0.76.2: published long ago, but an asset was replaced two days ago.
 printf '%s  trivy_0.76.2_Linux-64bit.tar.gz\n%s  trivy_0.76.2_Linux-ARM64.tar.gz\n' "$(fake t762a)" "$(fake t762b)" > "$fx/trivy-762.txt"
 serve "$G/aquasecurity/trivy/releases/download/v0.76.2/trivy_0.76.2_checksums.txt" trivy-762.txt
+sign_sigstore "$G/aquasecurity/trivy/releases/download/v0.76.2/trivy_0.76.2_checksums.txt" trivy-762.txt "${TRIVY_ID}0.76.2"
 jq -n --arg old "$OLD" --arg fresh "$FRESH" '{tag_name: "v0.76.2", published_at: $old,
   assets: [{name: "trivy_0.76.2_checksums.txt", updated_at: $old}, {name: "trivy_0.76.2_Linux-64bit.tar.gz", updated_at: $fresh}]}' \
   > "$fx/rel-trivy-762.json"
@@ -595,15 +650,103 @@ if command -v gpg >/dev/null && command -v gpgv >/dev/null; then
   expect_pin "$t" ci-tools/Dockerfile.ci AWSCLI_SHA256_ARM64 "$(sha256sum "$fx/aws-aarch64-2.38.2.zip" | cut -d' ' -f1)"
   check "  the signatures are listed as the integrity source" \
     [ "$(jq -r '.[0].integrity_urls | map(select(endswith(".sig"))) | length' "$work/r5q.json")" -eq 2 ]
+
+  echo "case 5g2: terraform's SHA256SUMS is read only after HashiCorp's signature verifies"
+  t=$(new_tree fiveg2); force "$t/ci-tools/Dockerfile.ci" TERRAFORM_VERSION 1.16.5; cp -a "$t" "$work/fiveg2.snap"
+  gpg --batch --armor --export t@example.com > "$work/keys/hashicorp.asc" 2>/dev/null
+  hc=https://releases.hashicorp.com/terraform
+  for v in 1.16.7 1.16.8 1.16.9; do
+    printf '%s  terraform_%s_linux_amd64.zip\n%s  terraform_%s_linux_arm64.zip\n' \
+      "$(fake "tf-$v-amd64")" "$v" "$(fake "tf-$v-arm64")" "$v" > "$fx/tf-$v.txt"
+    serve "$hc/$v/terraform_${v}_SHA256SUMS" "tf-$v.txt"
+    printf '{"timestamp_created":"%s"}\n' "$OLD" > "$fx/tf-$v.json"
+    serve "https://api.releases.hashicorp.com/v1/releases/terraform/$v" "tf-$v.json"
+  done
+  # 1.16.7 signed by the pinned key; 1.16.8 by another; 1.16.9 not at all.
+  gpg --batch --quiet --yes --local-user t@example.com --detach-sign -o "$fx/tf-1.16.7.sig" "$fx/tf-1.16.7.txt" 2>/dev/null
+  gpg --batch --quiet --yes --local-user x@example.com --detach-sign -o "$fx/tf-1.16.8.sig" "$fx/tf-1.16.8.txt" 2>/dev/null
+  serve "$hc/1.16.7/terraform_1.16.7_SHA256SUMS.sig" tf-1.16.7.sig
+  serve "$hc/1.16.8/terraform_1.16.8_SHA256SUMS.sig" tf-1.16.8.sig
+  serve "$hc/1.16.9/terraform_1.16.9_SHA256SUMS.sig" @404
+  rc=0; BUMP_PINS_KEYS="$work/keys" BUMP_PINS_KEY_FPR="$fpr" \
+    "$bump" --root "$t" --unit terraform --to 1.16.8 --quiet --format json > "$work/r5r.json" 2>/dev/null || rc=$?
+  check "SHA256SUMS signed by another key: exit 1, error" [ "$rc:$(field "$work/r5r.json" terraform status)" = "1:error" ]
+  rc=0; BUMP_PINS_KEYS="$work/keys" BUMP_PINS_KEY_FPR="$fpr" \
+    "$bump" --root "$t" --unit terraform --to 1.16.9 --quiet --format json > "$work/r5s.json" 2>/dev/null || rc=$?
+  check "SHA256SUMS with no signature: exit 1, error" [ "$rc:$(field "$work/r5s.json" terraform status)" = "1:error" ]
+  check "  neither edited anything" [ -z "$(changed_files "$t" "$work/fiveg2.snap")" ]
+  rc=0; BUMP_PINS_KEYS="$work/keys" BUMP_PINS_KEY_FPR="$fpr" \
+    "$bump" --root "$t" --unit terraform --to 1.16.7 --quiet --format json > "$work/r5t.json" 2>/dev/null || rc=$?
+  check "a good signature: exit 0, bumped, auto" [ "$rc:$(field "$work/r5t.json" terraform status):$(field "$work/r5t.json" terraform class)" = "0:bumped:auto" ]
+  expect_pin "$t" ci-tools/Dockerfile.ci TERRAFORM_SHA256_AMD64 "$(fake tf-1.16.7-amd64)"
+  expect_pin "$t" ci-tools/Dockerfile.ci TERRAFORM_SHA256_ARM64 "$(fake tf-1.16.7-arm64)"
+  check "  the signature is listed once, beside the SHA256SUMS" \
+    [ "$(jq -r '.[0].integrity_urls | join(" ")' "$work/r5t.json")" = "$hc/1.16.7/terraform_1.16.7_SHA256SUMS $hc/1.16.7/terraform_1.16.7_SHA256SUMS.sig" ]
   unset GNUPGHOME
 else
   ok "gpg/gpgv not installed; signature cases skipped"
 fi
 
+echo "case 5i: a checksums file is read only after its Sigstore bundle verifies as the vendor"
+t=$(new_tree fivei); cp -a "$t" "$work/fivei.snap"
+tr_url() { printf '%s' "$G/aquasecurity/trivy/releases/download/v$1/trivy_$1_checksums.txt"; }
+for v in 0.77.0 0.77.1 0.77.2 0.77.3 0.77.4; do
+  printf '%s  trivy_%s_Linux-64bit.tar.gz\n%s  trivy_%s_Linux-ARM64.tar.gz\n' "$(fake "t-$v-a")" "$v" "$(fake "t-$v-b")" "$v" > "$fx/trivy-$v.txt"
+  serve "$(tr_url "$v")" "trivy-$v.txt"
+  gh_release aquasecurity/trivy "v$v" "$OLD"
+done
+# 0.77.0: no bundle published.
+serve "$(tr_url 0.77.0).sigstore.json" @404
+# 0.77.1: a bundle over different bytes -- the checksums file was swapped after signing.
+printf 'something else\n' > "$fx/trivy-other.txt"
+sign_sigstore "$(tr_url 0.77.1)" trivy-other.txt "${TRIVY_ID}0.77.1"
+cp "$fx/trivy-other.txt.sigstore.json" "$fx/trivy-0.77.1.txt.sigstore.json"
+# 0.77.2: a genuine-looking bundle, but from a fork's copy of the release workflow.
+sign_sigstore "$(tr_url 0.77.2)" trivy-0.77.2.txt "$G/attacker/trivy/.github/workflows/reusable-release.yaml@refs/tags/v0.77.2"
+# 0.77.3: trivy's own workflow, but the run for another tag.
+sign_sigstore "$(tr_url 0.77.3)" trivy-0.77.3.txt "${TRIVY_ID}0.77.2"
+# 0.77.4: trivy's workflow at its own tag, but a token from another issuer.
+sign_sigstore "$(tr_url 0.77.4)" trivy-0.77.4.txt "${TRIVY_ID}0.77.4" https://accounts.google.com
+for c in "0.77.0:no bundle" "0.77.1:a bundle over other bytes" "0.77.2:another repository's identity" \
+         "0.77.3:the release run for another tag" "0.77.4:another OIDC issuer"; do
+  rc=0; "$bump" --root "$t" --unit trivy --to "${c%%:*}" --quiet --format json > "$work/r5i.json" 2> "$work/r5i.err" || rc=$?
+  check "${c#*:}: exit 1, error" [ "$rc:$(field "$work/r5i.json" trivy status)" = "1:error" ]
+  check "  blamed on the signature" bash -c "jq -r '.[0].error' '$work/r5i.json' | grep -q 'vendor signature on .* does not verify'"
+done
+check "  none of them edited anything" [ -z "$(changed_files "$t" "$work/fivei.snap")" ]
+# And the good one, so the failures above are the signature and nothing else.
+sign_sigstore "$(tr_url 0.77.3)" trivy-0.77.3.txt "${TRIVY_ID}0.77.3"
+rc=0; "$bump" --root "$t" --unit trivy --to 0.77.3 --quiet --format json > "$work/r5i.json" 2>/dev/null || rc=$?
+check "the right identity at the right tag: exit 0, bumped, auto" [ "$rc:$(field "$work/r5i.json" trivy status):$(field "$work/r5i.json" trivy class)" = "0:bumped:auto" ]
+expect_pin "$t" ci-security/Dockerfile.ci TRIVY_SHA256_AMD64 "$(fake t-0.77.3-a)"
+# The table carries the same check for every signed unit: syft's bundle is
+# checked against anchore's identity, not trivy's.
+printf '%s  syft_2.0.1_linux_amd64.tar.gz\n%s  syft_2.0.1_linux_arm64.tar.gz\n' "$(fake s201a)" "$(fake s201b)" > "$fx/syft-201.txt"
+serve "$G/anchore/syft/releases/download/v2.0.1/syft_2.0.1_checksums.txt" syft-201.txt
+sign_sigstore "$G/anchore/syft/releases/download/v2.0.1/syft_2.0.1_checksums.txt" syft-201.txt "${TRIVY_ID}2.0.1"
+gh_release anchore/syft v2.0.1 "$OLD"
+rc=0; "$bump" --root "$t" --unit syft --to 2.0.1 --quiet --format json > "$work/r5u.json" 2>/dev/null || rc=$?
+check "syft signed as trivy: exit 1, error" [ "$rc:$(field "$work/r5u.json" syft status)" = "1:error" ]
+
+echo "case 5j: --check -- a signed unit must have a signature row for every file it reads"
+t=$(new_tree fivej); mkdir -p "$t/scripts/keys"; cp -p "$here"/keys/*.asc "$t/scripts/keys/"
+cp -p "$bump" "$t/scripts/bp.sh"
+check "  (the unmodified tables pass in this tree)" "$t/scripts/bp.sh" --root "$t" --check --quiet
+grep -v '^awscli .*aarch64-{v}\.zip\.sig' "$bump" > "$t/scripts/bp.sh"
+check "  (one awscli row was removed)" [ "$(grep -c '^awscli .*\.sig ' "$t/scripts/bp.sh")" -eq 1 ]
+rc=0; "$t/scripts/bp.sh" --root "$t" --check > /dev/null 2> "$work/c5j.err" || rc=$?
+check "an unsigned file beside a signed one fails --check" [ "$rc" -eq 1 ]
+check "  and names it" grep -q 'awscli is signed, but https://awscli.amazonaws.com/awscli-exe-linux-aarch64-{v}.zip has no SIGS row' "$work/c5j.err"
+sed 's|reusable-release.yaml@refs/tags/v{v} |reusable-release.yaml@.* |' "$bump" > "$t/scripts/bp.sh"
+rc=0; "$t/scripts/bp.sh" --root "$t" --check > /dev/null 2> "$work/c5j.err" || rc=$?
+check "an identity that is a pattern, not exact, fails --check" [ "$rc" -eq 1 ]
+
 echo "case 5h: --check over the real tree"
 check "every pin, checksum, tofu and signature row names exactly one line" "$bump" --check --quiet
 check "the AWS key file is exactly the pinned key" \
   bash -c "GNUPGHOME=\$(mktemp -d) gpg --batch --show-keys --with-colons '$here/keys/aws-cli.asc' 2>/dev/null | awk -F: '\$1 == \"fpr\" { print \$10 }' | grep -qx FB5DB77FD5C118B80511ADA8A6310ACC4672475C"
+check "the HashiCorp key file's primary key is exactly the pinned key" \
+  bash -c "GNUPGHOME=\$(mktemp -d) gpg --batch --show-keys --with-colons '$here/keys/hashicorp.asc' 2>/dev/null | awk -F: '\$1 == \"pub\" { p = 1; next } p && \$1 == \"fpr\" { print \$10; p = 0 }' | grep -qx C874011F0AB405110D02105534365D9472D7468F"
 
 # --- scripts/pin-bump-prs.sh ---------------------------------------------------
 # Real git against a local bare repository as origin, so pushes, leases and

@@ -155,6 +155,26 @@ curl -s https://releases.hashicorp.com/terraform/<VERSION>/terraform_<VERSION>_S
 for a in amd64 arm64; do curl -s "https://dl.k8s.io/release/v<VERSION>/bin/linux/$a/kubectl.sha256"; echo; done
 ```
 
+Prefer the script to those commands: where the vendor signs its checksums file, it verifies the
+signature before it reads a checksum, and a bump whose signature is missing, bad or by any other
+identity fails rather than being written. terraform's `SHA256SUMS.sig` must verify under
+HashiCorp's key in [`scripts/keys/hashicorp.asc`](scripts/keys/hashicorp.asc), primary
+fingerprint `C874011F0AB405110D02105534365D9472D7468F`; the Sigstore bundles on trivy's, syft's,
+grype's and cosign's checksums files must verify with `cosign verify-blob` as exactly that
+vendor's release workflow (trivy's at the release's own tag) or, for cosign, its
+`keyless@projectsigstore.iam.gserviceaccount.com` release identity. The `SIGS` table in
+`scripts/bump-pins.sh` pins each identity and key; [docs/security.md](docs/security.md#supply-chain-pins)
+lists them, and the tools whose vendors sign nothing the bump could check. Running it locally needs
+`cosign` and `gpg`/`gpgv` on `PATH`. By hand, the same checks are:
+
+```bash
+gpgv --keyring <(gpg --dearmor < scripts/keys/hashicorp.asc) \
+  terraform_<VERSION>_SHA256SUMS.sig terraform_<VERSION>_SHA256SUMS
+cosign verify-blob --bundle trivy_<VERSION>_checksums.txt.sigstore.json \
+  --certificate-identity https://github.com/aquasecurity/trivy/.github/workflows/reusable-release.yaml@refs/tags/v<VERSION> \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com trivy_<VERSION>_checksums.txt
+```
+
 Composer is the exception. Its GitHub release carries no `.sha256` asset, so the `ARG` here
 records a hash computed from the release artifact itself — trust-on-first-use rather than vendor
 attestation. It detects a later substitution, not an originally bad artifact.

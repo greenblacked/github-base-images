@@ -91,6 +91,15 @@ jobs:
           esac
           jq . drift.json
 
+      # bump-pins.sh verifies the Sigstore bundle on each vendor checksums
+      # file that has one (trivy, syft, grype, cosign) before reading a
+      # checksum from it, and fails the unit without cosign. The same action,
+      # at the same SHA and default cosign release, that build-image.yml signs
+      # with -- the installer checks that cosign against its own pinned
+      # digests. It is never the cosign release a bump is moving to.
+      - name: Install cosign
+        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+
       - name: Open or refresh pull requests
         env:
           GH_TOKEN: ${{ github.token }}
@@ -143,6 +152,10 @@ jobs:
             *) echo "::error::check-pins.sh failed with exit $rc"; exit "$rc" ;;
           esac
           jq . drift.json
+
+      # As in the bump job: the signature checks need cosign.
+      - name: Install cosign
+        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
 
       - name: Preview pull requests
         env:
