@@ -101,8 +101,20 @@ jobs:
           # .git/config is pure exposure (zizmor: artipacked).
           persist-credentials: false
 
+      # Pinned and hash-checked like every other tool here: an exact version
+      # and the sha256 of each linux wheel, from .github/zizmor-requirements.txt,
+      # which scripts/check-pins.sh tracks and the pin-bump bot moves, no
+      # sooner than seven days after a release. It used to be `uvx zizmor`,
+      # whatever PyPI called latest that morning, run in a job that can write
+      # to the Security tab. pip refuses a wheel whose hash is not listed, and
+      # --only-binary means nothing is built from source. The runner's own
+      # python3 into a throwaway venv, so no setup action is needed either.
       - name: Install zizmor
-        uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        run: |
+          python3 -m venv "$RUNNER_TEMP/zizmor"
+          "$RUNNER_TEMP/zizmor/bin/python" -m pip install --disable-pip-version-check --no-cache-dir \
+            --require-hashes --no-deps --only-binary :all: -r .github/zizmor-requirements.txt
+          echo "$RUNNER_TEMP/zizmor/bin" >> "$GITHUB_PATH"
 
       # Reported, not gating. The findings still reach the Security tab via the
       # SARIF upload below, and the `zizmor` check run there reflects them --
@@ -115,8 +127,9 @@ jobs:
       - name: Run zizmor
         continue-on-error: true
         run: |
-          uvx zizmor --format sarif . > zizmor.sarif || true
-          uvx zizmor --format plain . || true
+          zizmor --version
+          zizmor --format sarif . > zizmor.sarif || true
+          zizmor --format plain . || true
 
       - name: Upload SARIF to code scanning
         if: always()

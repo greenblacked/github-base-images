@@ -116,6 +116,11 @@ trap 'rm -rf "$tmp"' EXIT INT TERM
 # gitleaks is the exception, listed twice: the copy security.yml runs over the
 # git history is a separate pin that nothing forces to agree with the image's,
 # so it is checked in its own right rather than assumed to follow.
+#
+# A `.txt` file is a pip requirements file, and its key the project name as
+# written there (`cryptography==50.0.2`): the libraries ci-cloud swaps into
+# the Azure CLI's bundled Python, and the zizmor security.yml installs. All
+# are hash-pinned, and scripts/bump-pins.sh rewrites the hashes from PyPI.
 readonly PINS='
 terraform  | ci-tools/Dockerfile.ci               | TERRAFORM_VERSION  | hashicorp | terraform
 kubectl    | ci-tools/Dockerfile.ci               | KUBECTL_VERSION    | k8s       | -
@@ -138,6 +143,11 @@ json       | *?/Dockerfile.ci                     | JSON_VERSION       | rubygem
 hadolint   | scripts/lint.sh                      | HADOLINT_VERSION   | github    | hadolint/hadolint
 actionlint | scripts/lint.sh                      | ACTIONLINT_VERSION | github    | rhysd/actionlint
 gitleaks-workflow | .github/workflows/security.yml | GITLEAKS_VERSION  | github    | gitleaks/gitleaks
+az-pyjwt   | ci-cloud/az-overrides.txt            | pyjwt              | pypi      | PyJWT
+az-cryptography | ci-cloud/az-overrides.txt       | cryptography       | pypi      | cryptography
+az-pyopenssl | ci-cloud/az-overrides.txt          | pyopenssl          | pypi      | pyOpenSSL
+az-urllib3 | ci-cloud/az-overrides.txt            | urllib3            | pypi      | urllib3
+zizmor     | .github/zizmor-requirements.txt      | zizmor             | pypi      | zizmor
 '
 
 fetch() {
@@ -214,6 +224,15 @@ resolve_rubygems() {
     | grep -E '^[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -1
 }
 
+# The newest stable release with at least one file not yanked: prereleases
+# (1.30.0rc1) and dev builds are excluded, as every resolver here reads a
+# "latest stable" channel.
+resolve_pypi() {
+  fetch "https://pypi.org/pypi/$1/json" \
+    | jq -r '.releases // {} | to_entries[] | select(any(.value[]; .yanked | not)) | .key' \
+    | grep -E '^[0-9]+(\.[0-9]+)*$' | sort -V | tail -1
+}
+
 resolve_gcs() {
   fetch 'https://storage.googleapis.com/cloud-sdk-release?prefix=google-cloud-cli-&max-keys=8000' \
     | grep -oE '<Key>google-cloud-cli-[0-9]+\.[0-9]+\.[0-9]+-linux-x86_64\.tar\.gz</Key>' \
@@ -224,8 +243,15 @@ resolve_gcs() {
 # workflow step's `env:` entry, `    KEY: v` (osv-scanner, pinned where it
 # runs in build-image.yml). The YAML form must be indented, which keeps a
 # `${KEY}` reference or a comment mentioning the key from matching first.
+#
+# And a fourth, for a pip requirements file (`.txt`): `KEY==v`.
 current_pin() {
   local file="$1" key="$2" value
+  case "$file" in
+    *.txt)
+      grep -m1 -E "^${key}==" "$file" 2>/dev/null | sed -E "s/^${key}==//;s/[[:space:]].*$//" || true
+      return 0 ;;
+  esac
   value=$(grep -m1 -E "^(ARG )?${key}=|^[[:space:]]+${key}:[[:space:]]" "$file" 2>/dev/null \
     | sed -E "s/^ARG //;s/^${key}=//;s/^[[:space:]]+${key}:[[:space:]]*//;s/^[\"']//;s/[\"'][[:space:]]*$//;s/[[:space:]]+$//" || true)
   printf '%s' "$value"
@@ -285,6 +311,7 @@ while IFS='|' read -r name file key resolver arg; do
     npm)          latest=$(resolve_npm "$arg" || true) ;;
     rubygems)     latest=$(resolve_rubygems "$arg" || true) ;;
     gcs)          latest=$(resolve_gcs || true) ;;
+    pypi)         latest=$(resolve_pypi "$arg" || true) ;;
     *) log error "$name: unknown resolver '$resolver'"; failed=$((failed + 1)); continue ;;
   esac
 

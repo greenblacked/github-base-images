@@ -135,12 +135,14 @@ in the catalog.
   and the same pinned `kubectl`. Split by cloud rather than bundled into one image because most
   repositories deploy to exactly one, and these SDKs are large enough that carrying two unused
   ones is a real cost on every job. The Azure CLI comes from Microsoft's GPG-signed apt
-  repository; `gcloud` is a pinned tarball that Google publishes no checksum for, which is
-  labelled as such in [ci-cloud/Dockerfile.ci](../ci-cloud/Dockerfile.ci).
+  repository, whose signing key the build checks against Microsoft's published fingerprint; the
+  libraries swapped into its bundled Python are exact, hash-pinned versions; `gcloud` is a pinned
+  tarball that Google publishes no checksum for, so its sums are trust-on-first-use, as labelled
+  in [ci-cloud/Dockerfile.ci](../ci-cloud/Dockerfile.ci).
 - **`ci-security`** — the supply-chain toolbox this repository's own pipeline uses: `trivy`,
   `syft`, `grype`, `cosign`, and `gitleaks`, so a consumer can reproduce the scans that gate here.
-  Every binary is pinned *and* checksum-verified — all five projects publish sums, so unlike
-  `ci-tools` there is no unverified download in it. No vulnerability database is baked in: `trivy`
+  Every binary is pinned *and* checksum-verified against its vendor's sums — all five projects
+  publish them, so unlike `ci-tools` there is no trust-on-first-use sum in it. No vulnerability database is baked in: `trivy`
   and `grype` fetch and cache their own, and a baked snapshot would be stale on publish in a way
   nobody downstream could see.
 - **`ci-db`** — database clients and migration tooling for integration jobs: `psql`, `mysql`,

@@ -65,6 +65,12 @@ check "workdir is /workspace"      '[ "$PWD" = /workspace ]'
 # cannot verify azure-cli updates, and the signed-by pin silently stops
 # meaning anything.
 check "microsoft keyring present"  'test -s /usr/share/keyrings/microsoft.gpg'
+# And it must hold exactly Microsoft's release-signing key, the fingerprint
+# the Dockerfile pins: a keyring with another key in it, or a second key
+# beside Microsoft's, would let apt accept azure-cli packages signed by that
+# key. The build refuses such a key; this checks what actually shipped.
+check "microsoft keyring is exactly the pinned key" \
+  'GNUPGHOME="$(mktemp -d)" gpg --batch --show-keys --with-colons /usr/share/keyrings/microsoft.gpg 2>/dev/null | awk -F: '"'"'$1 == "fpr" { print $10 }'"'"' | { read -r a && [ "$a" = BC528686B50D79E339D3721CEB3E94ADBE1229CF ] && ! read -r _; }'
 
 # The image is shared across projects and public: cloud credentials, cluster
 # access and account state must never be baked in.

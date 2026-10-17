@@ -46,6 +46,13 @@
 #      refusal for want of the `workflows` permission (a PR that changes
 #      .github/workflows/*) is a warning on a skipped PR, not an error: see
 #      the merge step.
+#   4a. A pin-bump/* PR also waits out its first-seen cooldown: unless its
+#      body's marker says `class=auto` (the vendor's release date was already
+#      the cooldown old when it was bumped), the marker's `seen=` date, the
+#      day scripts/pin-bump-prs.sh first proposed that exact version, must be
+#      BUMP_COOLDOWN_DAYS (7) behind today. Until then it is waiting; a
+#      marker that is missing or carries no valid date is not merged at all.
+#      See pin_bump_cooled.
 #   5. Red, Dependabot, mergeable, and the branch is behind main: the red
 #      result may be main's old fault rather than the update's (a gate since
 #      fixed on main, say), and Dependabot rebases only on a conflict, so
@@ -102,7 +109,10 @@
 #   MERGE_BOT_RESULTS  also write the per-PR results, one JSON object per
 #                      line, to this file (the offline tests read it)
 #   MERGE_BOT_TODAY    YYYY-MM-DD, default today (UTC): when a lifecycle
-#                      retirement's end of support has passed
+#                      retirement's end of support has passed, and when a
+#                      pin bump's first-seen cooldown is over
+#   BUMP_COOLDOWN_DAYS default 7: that cooldown, the same knob bump-pins.sh
+#                      and pin-bump-prs.sh read
 #   MERGE_BOT_MERGEABLE_DELAYS
 #                      the waits, in seconds, between re-reads of a green PR
 #                      whose mergeability GitHub has not computed yet (default
@@ -386,6 +396,11 @@ one_pr() {
   if [ "$kind" = lifecycle ] && [[ "$ref" == lifecycle/retire-* ]]; then
     retire_still_due || return 0
   fi
+  # A pin bump with no trustworthy vendor date merges only once its own
+  # first-seen clock has run (step 4a of the header).
+  if [ "$kind" = pin-bump ]; then
+    pin_bump_cooled || return 0
+  fi
 
   recheck || return 0
   note="all four checks passed on ${sha:0:12}"
@@ -448,6 +463,52 @@ retire_still_due() {
   if ! jq -e --arg i "$img" --arg e "$eol" 'any(.[]; .image == $i and .state == "deprecated" and .eol == $e)' <<<"$state" >/dev/null; then
     note="$base's .github/lifecycle.json does not record $img as deprecated with end of support $eol (now: $(jq -c --arg i "$img" '[.[] | select(.image == $i) | {state, eol}]' <<<"$state")); the lifecycle workflow closes this PR if it is no longer due"
     row waiting "not merged: retirement no longer matches main"
+    return 1
+  fi
+}
+
+# For a pin-bump/<unit> PR: the marker scripts/pin-bump-prs.sh writes at the
+# end of its body (`<!-- pin-bump: unit=U to=V class=C seen=YYYY-MM-DD fp=F
+# -->`) must be there, name this branch's unit, and -- for anything but an
+# `auto` bump -- record a first-seen date at least the cooldown
+# (BUMP_COOLDOWN_DAYS, default 7) before today. An `auto` bump was already the
+# cooldown old by its vendor's release date before bump-pins.sh moved it. A
+# `review` one -- the AWS CLI, the Docker client and gcloud, which publish no
+# checksum and no release date this can trust, and major versions -- has only
+# this clock, which pin-bump-prs.sh keeps across rebuilds of the same version
+# and restarts when the version or any value it wrote changes. A marker that
+# is missing, unreadable, for another unit or with no valid date is not
+# merged: the clock fails closed, like the release-date cooldown it stands in
+# for. Nothing here needs a human: once the date is reached, the next run
+# merges it. Writes a row and returns 1 when the merge must not happen.
+# Shares one_pr's locals.
+pin_bump_cooled() {
+  local unit=${ref#pin-bump/} marker class seen today cooldown eligible
+  today=${MERGE_BOT_TODAY:-$(date -u +%Y-%m-%d)}
+  cooldown=${BUMP_COOLDOWN_DAYS:-7}
+  marker=$(jq -r '.body // ""' <<<"$detail" \
+    | grep -oE '<!-- pin-bump: unit=[^ ]+ to=[^ ]+( [a-z]+=[^ ]+)* -->' | head -1 || true)
+  field_of() { tr ' ' '\n' <<<"$marker" | sed -n "s/^$1=//p" | head -1; }
+  if [ -z "$marker" ] || [ "$(field_of unit)" != "$unit" ]; then
+    note="no pin-bump marker for $unit in the body, so its cooldown cannot be confirmed; the daily pin-bump run rewrites it"
+    row unreadable "not merged"
+    return 1
+  fi
+  class=$(field_of class)
+  [ "$class" = auto ] && return 0
+  seen=$(field_of seen)
+  case "$cooldown" in ''|*[!0-9]*) cooldown=7 ;; esac
+  eligible=$(jq -rn --arg d "$seen" --argjson n "$cooldown" '
+    try (if ($d | test("^[0-9]{4}-[0-9]{2}-[0-9]{2}$")) and (($d + "T00:00:00Z" | fromdateiso8601 | strftime("%Y-%m-%d")) == $d)
+         then ($d + "T00:00:00Z" | fromdateiso8601) + $n * 86400 | strftime("%Y-%m-%d") else "" end) catch ""')
+  if [ -z "$eligible" ]; then
+    note="a ${class:-unclassified} pin bump whose marker records no valid first-seen date ('$seen'), so its cooldown cannot be confirmed; the daily pin-bump run rewrites it"
+    row unreadable "not merged"
+    return 1
+  fi
+  if [[ "$today" < "$eligible" ]]; then
+    note="a $class pin bump first seen $seen: its ${cooldown}-day cooldown ends $eligible (today is $today)"
+    row waiting "not merged: first-seen cooldown"
     return 1
   fi
 }

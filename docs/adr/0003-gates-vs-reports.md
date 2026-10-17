@@ -218,7 +218,8 @@ goes; the gate is untouched.
   on those two lines. Scorecard's SARIF is filtered before upload by
   `scripts/filter-scorecard-sarif.sh` against `.github/scorecard-accepted.json`: every entry has
   a reason, and a pinned-dependency entry covers only a source line that still matches it (the
-  `FROM ${BASE_IMAGE}` lines, the version-pinned npm install, azure-cli's documented pip floors),
+  `FROM ${BASE_IMAGE}` lines and the version-pinned npm install; azure-cli's pip floors were one
+  until 2026-10-17, when they became hash-pinned and Scorecard stopped flagging them),
   plus Code-Review, Fuzzing and CII-Best-Practices rule-wide. Branch-Protection was accepted on
   2026-10-16, once the `main` ruleset blocked deletion and force pushes and required pull requests
   and the four checks, and only while it does (the upload job re-reads main's rules each run). Maintained (clears once the

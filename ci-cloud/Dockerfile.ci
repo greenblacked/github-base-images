@@ -28,8 +28,9 @@ ENV DEBIAN_FRONTEND=noninteractive \
 # Kept, it carried its own cryptography 46.0.7 (CVE-2026-69247, CVE-2026-69249,
 # GHSA-537c-gmf6-5ccf) into the image for the vulnerability gate to fail on,
 # for no benefit. The arm64 tarball has no bundled Python at all, so both
-# architectures now run gcloud the same way. gnupg is needed to convert
-# Microsoft's ASCII-armoured signing key into a keyring.
+# architectures now run gcloud the same way. gnupg is needed to check the
+# fingerprint of Microsoft's ASCII-armoured signing key and convert it into a
+# keyring.
 #
 # DL3008: apt pins would go stale and break the weekly rebuild, which is the
 # actual update mechanism here.
@@ -62,44 +63,76 @@ RUN apt-get update \
 # is why no version ARG appears here: the repository is the update mechanism,
 # exactly as apt is for every other package in these images.
 #
+# That guarantee is only as good as the key, and the key arrives over the same
+# HTTPS connection as everything else. So it is pinned too: the file must hold
+# exactly one key, Microsoft's "Microsoft (Release signing)" key, whose
+# fingerprint Microsoft documents for packages.microsoft.com
+# (learn.microsoft.com, "Linux Software Repository for Microsoft Products").
+# Any other key -- a swapped file, a second key appended to it -- fails the
+# build instead of becoming a key apt trusts for azure-cli. ci-cloud/test.sh
+# checks the installed keyring the same way. gpg runs in a throwaway
+# GNUPGHOME, so the image keeps no gpg state.
+#
 # DL3008: see above. Version pinning azure-cli would freeze it against a
 # repository that only carries recent versions, breaking the weekly rebuild.
+ARG MICROSOFT_KEY_FINGERPRINT=BC528686B50D79E339D3721CEB3E94ADBE1229CF
 # hadolint ignore=DL3008
-RUN curl -fsSL --retry 3 --retry-all-errors --max-time 120 \
+RUN GNUPGHOME="$(mktemp -d)" \
+    && export GNUPGHOME \
+    && curl -fsSL --retry 3 --retry-all-errors --max-time 120 \
         -o /tmp/microsoft.asc https://packages.microsoft.com/keys/microsoft.asc \
-    && gpg --dearmor -o /usr/share/keyrings/microsoft.gpg /tmp/microsoft.asc \
-    && rm /tmp/microsoft.asc \
+    && gpg --batch --show-keys --with-colons /tmp/microsoft.asc > /tmp/microsoft.keys \
+    && fprs="$(awk -F: '$1 == "fpr" { print $10 }' /tmp/microsoft.keys)" \
+    && if [ "${fprs}" != "${MICROSOFT_KEY_FINGERPRINT}" ]; then \
+        echo "packages.microsoft.com served key(s) '${fprs}', expected exactly ${MICROSOFT_KEY_FINGERPRINT}" >&2; exit 1; \
+    fi \
+    && gpg --batch --dearmor -o /usr/share/keyrings/microsoft.gpg /tmp/microsoft.asc \
+    && rm -rf /tmp/microsoft.asc /tmp/microsoft.keys "${GNUPGHOME}" \
     && echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/microsoft.gpg] https://packages.microsoft.com/repos/azure-cli/ bookworm main" \
         > /etc/apt/sources.list.d/azure-cli.list \
     && apt-get update \
     && apt-get install --yes --no-install-recommends azure-cli \
     && rm -rf /var/lib/apt/lists/*
 
-# azure-cli bundles its own Python under /opt/az, and its releases lag the
-# libraries inside it: 2.90.0 and 2.91.0 both ship PyJWT 2.13.0 (a CRITICAL
-# signature-validation bypass among six), cryptography 48.0.1 and urllib3
-# 2.7.0, all fixed upstream. azure-cli-core leaves PyJWT and cryptography
-# unpinned and msal allows cryptography<51, so upgrading them in place is
-# within what azure-cli declares it supports; pyOpenSSL moves with
-# cryptography because older pyOpenSSL caps it. Floors rather than pins, for
-# the same reason azure-cli itself is unpinned: each daily rebuild takes the
-# newest fixed release, so the next advisory against one of these is fixed
-# by the rebuild with no change here. `pip check` fails the build if the
-# upgrade ever conflicts with what azure-cli requires, and `az version`
-# proves the CLI still starts. pip's own vendored copies (pip/_vendor) are
-# not touched -- only a pip release can change those.
+# azure-cli bundles its own Python under /opt/az (3.14 as of 2.91.0), and its
+# releases lag the libraries inside it: 2.90.0 and 2.91.0 both ship PyJWT
+# 2.13.0 (a CRITICAL signature-validation bypass among six), cryptography
+# 48.0.1 and urllib3 2.7.0, all fixed upstream. azure-cli-core leaves PyJWT
+# and cryptography unpinned and msal allows cryptography<51, so upgrading them
+# in place is within what azure-cli declares it supports; pyOpenSSL moves
+# with cryptography because older pyOpenSSL caps it.
+#
+# Exact versions with every wheel's sha256, from az-overrides.txt
+# (--require-hashes: pip installs nothing whose hash is not listed there;
+# --only-binary: nothing is built from source). They used to be `>=` floors
+# fetched fresh from PyPI on every daily rebuild, which put a release into
+# the image the day it was published, unhashed -- exactly the window the
+# seven-day cooldown exists to avoid. Each is now a pin that
+# scripts/check-pins.sh tracks and the pin-bump bot moves once the release is
+# seven days old, so a fix still arrives with no hand edit, a week later.
+# --no-deps: these replace packages azure-cli already ships, and their own
+# dependencies (cffi for cryptography) are in that bundle too. `pip check`
+# fails the build if the result ever conflicts with what azure-cli requires,
+# and `az version` proves the CLI still starts. pip's own vendored copies
+# (pip/_vendor) are not touched -- only a pip release can change those.
+COPY az-overrides.txt /tmp/az-overrides.txt
 RUN /opt/az/bin/python3 -m pip install --no-cache-dir --disable-pip-version-check \
         --root-user-action=ignore --upgrade \
-        'PyJWT>=2.14.0' 'cryptography>=50.0.0' 'pyOpenSSL>=26.4.0' 'urllib3>=2.8.0' \
+        --require-hashes --no-deps --only-binary :all: -r /tmp/az-overrides.txt \
+    && rm /tmp/az-overrides.txt \
     && /opt/az/bin/python3 -m pip check \
     && az version > /dev/null
 
 # The Google Cloud CLI is a versioned tarball. Google publishes no per-file
 # SHA-256 alongside it -- the release bucket carries no .sha256 companions --
-# so this download is NOT checksum-verified, exactly like the Docker static
-# tarball and the AWS CLI installer in ci-tools. Recording a hash computed from
-# one of our own downloads would attest only to what we happened to fetch, so
-# it is left out and labelled rather than faked. CONTRIBUTING.md records this.
+# so its sums below are trust-on-first-use, like the Docker static tarball and
+# the AWS CLI installer in ci-tools: scripts/bump-pins.sh downloads each
+# tarball when it moves the version and records the sha256 of what it got.
+# That cannot prove the first download was genuine, but it pins it: a tarball
+# substituted later fails every build, the daily rebuilds included, instead
+# of being installed. The bump PR then waits seven days from the day it first
+# carried that version before it may merge (docs/adr/0008, amendment of
+# 2026-10-17). CONTRIBUTING.md records which sums are which.
 #
 # Google spells arm64 "arm" in its filenames, unlike every other vendor here.
 #
@@ -115,13 +148,18 @@ RUN /opt/az/bin/python3 -m pip install --no-cache-dir --disable-pip-version-chec
 # will say so, and they get deleted here too.
 ARG TARGETARCH
 ARG GCLOUD_VERSION=589.0.0
+ARG GCLOUD_SHA256_AMD64=f865da648f6fdae2015abb5b32eaa0eb10520e88f0ca735cfb33795868c8d26f
+ARG GCLOUD_SHA256_ARM64=3febb61a57ea76612973e40a2ff7bd79939161451d11130659d5c981201dca97
 RUN case "${TARGETARCH}" in \
-        amd64) gcarch=x86_64 ;; \
-        arm64) gcarch=arm ;; \
+        amd64) gcarch=x86_64 sum="${GCLOUD_SHA256_AMD64}" ;; \
+        arm64) gcarch=arm sum="${GCLOUD_SHA256_ARM64}" ;; \
         *) echo "unsupported TARGETARCH: ${TARGETARCH}" >&2; exit 1 ;; \
     esac \
     && curl -fsSL --retry 3 --retry-all-errors --max-time 300 -o /tmp/gcloud.tgz \
         "https://storage.googleapis.com/cloud-sdk-release/google-cloud-cli-${GCLOUD_VERSION}-linux-${gcarch}.tar.gz" \
+    && echo "${sum}  /tmp/gcloud.tgz" > /tmp/gcloud.sum \
+    && sha256sum --check --strict /tmp/gcloud.sum \
+    && rm /tmp/gcloud.sum \
     && tar -xzf /tmp/gcloud.tgz -C /opt \
     && rm /tmp/gcloud.tgz \
     && /opt/google-cloud-sdk/install.sh \

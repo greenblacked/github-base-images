@@ -43,7 +43,7 @@ version: 2
 
 updates:
   # Keeps the action pins in .github/workflows current (docker/*, actions/*,
-  # aquasecurity/trivy-action, astral-sh/setup-uv, scorecard, and
+  # aquasecurity/trivy-action, scorecard, and
   # dependabot/fetch-metadata in dependabot-auto-merge.yml). hadolint and
   # actionlint are no longer actions here: scripts/lint.sh pins both, and
   # scripts/check-pins.sh and bump-pins.sh keep them current.

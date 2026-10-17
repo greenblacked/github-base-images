@@ -17,8 +17,10 @@
 # checksum-verified release binaries -- the same pattern as the ci-tools
 # binaries, Composer, and gitleaks in security.yml.
 #
-# zizmor runs best-effort at the end when available (pip install zizmor, or
-# uv). Its findings are reported, not gating -- the same posture as CI.
+# zizmor runs best-effort at the end, at the version and hashes
+# .github/zizmor-requirements.txt pins for CI (installed hash-checked on
+# Linux, or a zizmor of that version on PATH elsewhere). Its findings are
+# reported, not gating -- the same posture as CI.
 set -euo pipefail
 
 # These two are now the only place either engine's version is set: CI runs this
@@ -440,13 +442,46 @@ fi
 
 # --- 16. zizmor, best-effort and non-gating -- the same posture as CI, where
 # --- its findings surface through code scanning rather than a red job.
-note "zizmor (best-effort, reported not gating)"
-if command -v zizmor >/dev/null; then
-  zizmor --no-progress --offline . || true
-elif command -v uvx >/dev/null; then
-  uvx zizmor --no-progress --offline . || true
-else
-  echo "zizmor not found -- skipped (pip install zizmor to run the workflow audit locally)"
+# --- The version, and the hash of each linux wheel, are the ones CI installs:
+# --- .github/zizmor-requirements.txt, which the pin-bump bot moves. On Linux it
+# --- is installed the way CI installs it, into a venv cached per version, by
+# --- pip with --require-hashes, so nothing unverified runs. `uvx zizmor`
+# --- would take whatever PyPI calls latest, unhashed. Elsewhere (macOS: the
+# --- file lists linux wheels only) a zizmor already on PATH is used, but only
+# --- when it is that version.
+zizmor_version=$(sed -nE 's/^zizmor==([^[:space:]]+).*/\1/p' .github/zizmor-requirements.txt)
+note "zizmor $zizmor_version (best-effort, reported not gating)"
+zizmor_bin=""
+if [ -z "$zizmor_version" ]; then
+  echo "error: no zizmor== pin in .github/zizmor-requirements.txt"; fail=1
+elif [ -n "${GITHUB_ACTIONS:-}" ]; then
+  # The CI lint job: security.yml installs this same zizmor and runs it as
+  # its own job, with SARIF. Installing it here as well would only add a
+  # PyPI download to every lint run.
+  echo "skipped in CI: security.yml runs zizmor $zizmor_version as its own job"
+  zizmor_version=""
+elif [ "$os" = Linux ] && command -v python3 >/dev/null; then
+  zizmor_venv="$CACHE/zizmor-$zizmor_version"
+  if [ ! -x "$zizmor_venv/bin/zizmor" ]; then
+    rm -rf "$zizmor_venv"
+    if python3 -m venv "$zizmor_venv" >/dev/null 2>&1 \
+       && "$zizmor_venv/bin/python" -m pip install --quiet --disable-pip-version-check --no-cache-dir \
+            --require-hashes --no-deps --only-binary :all: -r .github/zizmor-requirements.txt; then
+      :
+    else
+      rm -rf "$zizmor_venv"
+    fi
+  fi
+  if [ -x "$zizmor_venv/bin/zizmor" ]; then zizmor_bin="$zizmor_venv/bin/zizmor"; fi
+fi
+if [ -z "$zizmor_bin" ] && [ -n "$zizmor_version" ] && command -v zizmor >/dev/null \
+   && [ "$(zizmor --version 2>/dev/null | awk '{ print $2 }')" = "$zizmor_version" ]; then
+  zizmor_bin=$(command -v zizmor)
+fi
+if [ -n "$zizmor_bin" ]; then
+  "$zizmor_bin" --no-progress --offline . || true
+elif [ -n "$zizmor_version" ]; then
+  echo "zizmor $zizmor_version not available -- skipped (Linux: python3 with venv and pip; elsewhere: zizmor $zizmor_version on PATH)"
 fi
 
 echo

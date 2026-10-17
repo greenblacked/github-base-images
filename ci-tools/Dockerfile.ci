@@ -47,13 +47,18 @@ RUN apt-get update \
 # published. Checksums are per-architecture, so a version bump is a three-line
 # change (version plus both sums) that CI revalidates.
 #
-# The Docker static tarball and the AWS CLI installer are deliberately NOT
-# checksummed: neither vendor publishes a usable per-file digest.
-# download.docker.com returns 404 for `<tarball>.sha256`, and AWS ships only a
-# detached GPG signature, which would mean adding gnupg and a pinned AWS public
-# key to this build. Recording a hash computed from one of our own downloads
-# would attest only to what we happened to fetch, so it is left out rather than
-# faked. CONTRIBUTING.md records this and the GPG follow-up.
+# The Docker static tarball and the AWS CLI installer have no vendor checksum
+# to verify against: download.docker.com returns 404 for `<tarball>.sha256`,
+# and AWS ships only a detached GPG signature. Their sums below are therefore
+# trust-on-first-use: scripts/bump-pins.sh downloads each artifact when it
+# moves the version and records the sha256 of what it got -- for the AWS CLI
+# only after AWS's signature verified against AWS's key, pinned by
+# fingerprint in that script, so that first use is checked too. A TOFU sum
+# cannot prove the first download was genuine; what it does is pin it, so a
+# file substituted later fails every build, the daily rebuilds included,
+# instead of being installed. The bump PR then waits seven days from the day
+# it first carried that version before it may merge (docs/adr/0008,
+# amendment of 2026-10-17). CONTRIBUTING.md records which sums are which.
 #
 # TARGETARCH is set by buildx (amd64 / arm64); each vendor spells the
 # architecture differently, hence the per-tool mapping. Every mapping now fails
@@ -72,7 +77,11 @@ ARG KUBECTL_VERSION=1.37.1
 ARG KUBECTL_SHA256_AMD64=65691ff77eb6fa44c908b77a1082c9f092c3b9733b5cefabec0d1104890e21a8
 ARG KUBECTL_SHA256_ARM64=ff749f4b78d9c4f1ec87307df9b50119ed819e2094aa9810cb9acffc3286c8c7
 ARG AWSCLI_VERSION=2.38.1
+ARG AWSCLI_SHA256_AMD64=b11ed416d91f4251da363a17706938eeaf0e520745754c104c0c1890dd8363c7
+ARG AWSCLI_SHA256_ARM64=91360c0adb2ae508334ff657dce4787b598b443a11cf3dc58e08b74f12e16009
 ARG DOCKER_VERSION=29.9.0
+ARG DOCKER_SHA256_AMD64=33e1ab8b63d14bca449f7a3d30d7f6aa669daa544e60a86b17fec87f61afe2b4
+ARG DOCKER_SHA256_ARM64=811f6eee271678fc98dbe5c4d896c00fc5fe2daa4f7a37069c17abc036eab85b
 
 RUN case "${TARGETARCH}" in \
         amd64) sum="${TERRAFORM_SHA256_AMD64}" ;; \
@@ -102,13 +111,16 @@ RUN case "${TARGETARCH}" in \
     && chmod +x /usr/local/bin/kubectl
 
 RUN case "${TARGETARCH}" in \
-        amd64) awsarch=x86_64 ;; \
-        arm64) awsarch=aarch64 ;; \
+        amd64) awsarch=x86_64 sum="${AWSCLI_SHA256_AMD64}" ;; \
+        arm64) awsarch=aarch64 sum="${AWSCLI_SHA256_ARM64}" ;; \
         *) echo "unsupported TARGETARCH: ${TARGETARCH}" >&2; exit 1 ;; \
     esac \
     && curl -fsSL --retry 3 --retry-all-errors --max-time 300 \
         -o /tmp/awscli.zip \
         "https://awscli.amazonaws.com/awscli-exe-linux-${awsarch}-${AWSCLI_VERSION}.zip" \
+    && echo "${sum}  /tmp/awscli.zip" > /tmp/awscli.sum \
+    && sha256sum --check --strict /tmp/awscli.sum \
+    && rm /tmp/awscli.sum \
     && unzip -q /tmp/awscli.zip -d /tmp \
     && /tmp/aws/install \
     && rm -rf /tmp/awscli.zip /tmp/aws
@@ -116,13 +128,16 @@ RUN case "${TARGETARCH}" in \
 # Docker *client* only, no daemon. In Actions it talks to the host daemon via
 # the mounted socket, or to a docker:dind service container.
 RUN case "${TARGETARCH}" in \
-        amd64) dockerarch=x86_64 ;; \
-        arm64) dockerarch=aarch64 ;; \
+        amd64) dockerarch=x86_64 sum="${DOCKER_SHA256_AMD64}" ;; \
+        arm64) dockerarch=aarch64 sum="${DOCKER_SHA256_ARM64}" ;; \
         *) echo "unsupported TARGETARCH: ${TARGETARCH}" >&2; exit 1 ;; \
     esac \
     && curl -fsSL --retry 3 --retry-all-errors --max-time 180 \
         -o /tmp/docker.tgz \
         "https://download.docker.com/linux/static/stable/${dockerarch}/docker-${DOCKER_VERSION}.tgz" \
+    && echo "${sum}  /tmp/docker.tgz" > /tmp/docker.sum \
+    && sha256sum --check --strict /tmp/docker.sum \
+    && rm /tmp/docker.sum \
     && tar -xzf /tmp/docker.tgz -C /tmp docker/docker \
     && mv /tmp/docker/docker /usr/local/bin/docker \
     && rm -rf /tmp/docker.tgz /tmp/docker

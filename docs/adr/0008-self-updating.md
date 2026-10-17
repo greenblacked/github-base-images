@@ -4,7 +4,9 @@
 [0006](0006-gate-on-fixable-library-vulnerabilities.md), and the auto-merge, review and
 publishing parts of [0007](0007-automatic-updates.md); how the merge bot is started is corrected by
 [0009](0009-image-lifecycle.md#merge-bot-trigger); the gate gains the base image as a second
-baseline in the [2026-10-14 amendment](#amendment-2026-10-14-the-base-image-is-a-second-baseline)
+baseline in the [2026-10-14 amendment](#amendment-2026-10-14-the-base-image-is-a-second-baseline);
+`review` pin bumps wait a first-seen cooldown before they merge, and the cooldown fails closed, in
+the [2026-10-17 amendment](#amendment-2026-10-17-the-cooldown-fails-closed-and-has-a-clock-of-its-own)
 
 **Date:** 2026-10-06
 
@@ -97,8 +99,9 @@ it as a backstop.) It merges every open `dependabot/*` PR by Dependabot and ever
 - it has no `hold` label.
 
 The merge is `gh pr merge --squash --match-head-commit <sha>`. This includes majors and the bumps
-labelled `needs-review` (AWS CLI, Docker client, gcloud, and any major). The full build, smoke
-tests and gate are the safety net, and the label is information only. After a merge it dispatches
+labelled `needs-review` (AWS CLI, Docker client, gcloud, and any major) — those once their
+first-seen cooldown is over ([2026-10-17 amendment](#amendment-2026-10-17-the-cooldown-fails-closed-and-has-a-clock-of-its-own)).
+The full build, smoke tests and gate are the safety net, and the label is information only. After a merge it dispatches
 Build and Push and Security on `main`, which publishes the update the same hour.
 
 `hold` and the head SHA are read from the PR itself, and read again right before the merge.
@@ -253,3 +256,67 @@ the public upstream is read anonymously, and the job token is never offered to a
 
 **Revisit if** a base image's inherited list grows and stays for weeks with fixed releases
 available upstream: then the base is not being refreshed, which is a pipeline bug.
+
+## Amendment (2026-10-17): the cooldown fails closed, and has a clock of its own
+
+**Context.** The seven-day cooldown on pin bumps was only as good as the release date it measured
+from, and two gaps let a version through on the day it shipped:
+
+- When the date lookup failed — a 404, an API that did not answer, a date that did not parse —
+  `bump-pins.sh` logged it and went on, classing the bump `review`. The merge bot does not read
+  the class, so a green `review` PR merged the same day. The cooldown failed open.
+- The AWS CLI, the Docker static client and gcloud have no release date to measure from at all,
+  so they never had a cooldown. They were also the three downloads with no checksum.
+
+A vendor date is also the vendor's to set: whoever controls the download channel controls it, and
+a GitHub release whose asset is replaced after publication keeps its old `published_at`.
+
+**Decision.**
+
+- **Unknown is deferred.** A release whose date cannot be established is `deferred` ("release
+  date unknown"), every day until it can be read, with a warning annotation on the pin-bump run
+  so a broken lookup does not freeze a pin unnoticed.
+- **A GitHub release is as old as its newest asset**: the date is the later of `published_at` and
+  every asset's `updated_at`, so a re-upload restarts the cooldown. A PyPI release is as old as
+  its newest file.
+- **A first-seen clock for what has no date.** The pin-bump PR body ends in a marker,
+  `<!-- pin-bump: unit=… to=… class=… seen=YYYY-MM-DD fp=… -->`. `seen` is the day pin bump first
+  proposed that exact version; `fp` is a digest of every value the bump wrote, the version and
+  every sum. The daily rebuild of the branch keeps `seen` while the version and `fp` are
+  unchanged, and restarts it when either changes — so an artifact replaced under the same version
+  (a different trust-on-first-use hash) starts the week again. While the clock runs the PR keeps
+  its version even when the vendor ships a newer one (the AWS CLI releases almost daily; chasing
+  each would restart the clock forever), unless the newer one is lower or the base already has
+  it. [scripts/merge-bot-prs.sh](../../scripts/merge-bot-prs.sh) will not merge a pin-bump PR
+  whose marker is missing or unreadable, and will not merge one not marked `class=auto` before
+  `seen` plus seven days. After that it merges on its next run. No step needs a human. Majors wait
+  this clock too, on top of their vendor date.
+- **Trust on first use for the three with no checksum.** `bump-pins.sh` downloads each
+  architecture's artifact when it moves the version and records its sha256 as an `ARG` beside it;
+  every build checks the download with `sha256sum --check --strict`. For the AWS CLI it first
+  checks AWS's detached signature against the "AWS CLI Team" key in `scripts/keys/aws-cli.asc`,
+  which must be exactly the key with AWS's documented fingerprint
+  `FB5DB77FD5C118B80511ADA8A6310ACC4672475C`; an expired key is accepted (AWS lets its expiry lapse
+  between renewals), a revoked one or any other key is not.
+- **The other unhashed installs are hash-pinned too.** The libraries `ci-cloud` swaps into the
+  Azure CLI's bundled Python were `>=` floors fetched fresh on every rebuild; they are now exact
+  versions with every linux wheel's sha256 in `ci-cloud/az-overrides.txt`, installed with
+  `--require-hashes --no-deps --only-binary :all:`, each a pin with PyPI's upload time as its
+  release date. zizmor, which ran as `uvx zizmor` in a job that writes to the Security tab, is
+  pinned the same way in `.github/zizmor-requirements.txt`.
+
+**Consequences.**
+
+- A tool with no vendor date reaches the images a week after this repository first saw it,
+  instead of the same day. A major waits up to two weeks: seven days by its vendor date before it
+  is proposed, then seven on its PR.
+- A trust-on-first-use sum cannot prove the first download was genuine (except for the AWS CLI,
+  whose signature is checked). What it does is pin it: a file substituted after the bump fails
+  every build instead of being installed, and a rebuild of the PR's branch inside the cooldown
+  that hashes a different file restarts its clock, where the PR shows it.
+- An AWS CLI signed by a new key fails its bump, for a person to check the new key and pin it.
+- A security fix in one of the Azure CLI's libraries now arrives a week after its release, through
+  a pin-bump PR, rather than with the next daily rebuild.
+
+**Revisit if** a vendor starts publishing a checksum or a trustworthy release date for one of the
+three: move it to `sums` and its vendor date, and drop the trust-on-first-use row.
