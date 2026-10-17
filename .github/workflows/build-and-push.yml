@@ -250,8 +250,8 @@ jobs:
       #
       # shellcheck comes from the runner image. If that ever stops being true
       # the script exits 2 with a message naming it, rather than skipping.
-      # zizmor is best-effort inside the script and will skip here for want of
-      # uv -- security.yml runs it properly, with SARIF, as its own job.
+      # zizmor is best-effort inside the script and skips itself here --
+      # security.yml runs it properly, with SARIF, as its own job.
       - name: Lint
         run: ./scripts/lint.sh
 

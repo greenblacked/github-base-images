@@ -452,7 +452,6 @@ before uploading it, driven by
 |---|---|---|
 | `PinnedDependenciesID` | the `FROM ${BASE_IMAGE}` line of every `ci-*/Dockerfile.ci` | the base is a tag by design — the verified mirror on `main`, upstream on pull requests, rebuilt daily ([0001](adr/0001-mirror-upstream-bases.md), [0007](adr/0007-automatic-updates.md), [0008](adr/0008-self-updating.md)) |
 | `PinnedDependenciesID` | the `npm install --global "npm@${NPM_VERSION}"` line of every `ci-node*` | pinned by exact version, moved by the pin-bump bot; npm cannot take a hash |
-| `PinnedDependenciesID` | the azure-cli `pip install` line in `ci-cloud` | deliberate `>=` floors on its bundled PyJWT, cryptography, pyOpenSSL and urllib3, documented above it |
 | `CodeReviewID` | rule-wide | one maintainer; automated PRs merge after the required checks ([0008](adr/0008-self-updating.md)) |
 | `FuzzingID` | rule-wide | Dockerfiles and shell: nothing to fuzz |
 | `CIIBestPracticesID` | rule-wide | the OpenSSF Best Practices badge is optional |
@@ -603,10 +602,17 @@ from `security-events`. The pinned actionlint predates that permission, so
 ## Supply-chain pins
 
 Every action is pinned by commit SHA ([ADR 0004](adr/0004-sha-pinned-actions.md)), and every
-downloaded binary — the tools in the images and each lint engine — is checksum-verified wherever
-the vendor publishes a checksum; the few that are not are labelled, and listed in
-[CONTRIBUTING.md](../CONTRIBUTING.md#what-does-not-belong-in-an-image). The upstream base itself is
-copied into GHCR by digest and verified
+downloaded binary — the tools in the images and each lint engine — is checksum-verified. Wherever
+the vendor publishes a checksum, that is the one. The three that publish none (the AWS CLI, the
+Docker static client, gcloud) carry a trust-on-first-use sha256 that `scripts/bump-pins.sh`
+records from its own download, after verifying AWS's signature for the AWS CLI; they are labelled
+as such, and listed in [CONTRIBUTING.md](../CONTRIBUTING.md#what-does-not-belong-in-an-image). The
+Python packages installed outside an image's base — the Azure CLI's swapped-in libraries
+(`ci-cloud/az-overrides.txt`) and zizmor (`.github/zizmor-requirements.txt`) — are exact versions
+installed with `pip --require-hashes`, every hash from PyPI. The one third-party apt repository,
+Microsoft's for the Azure CLI, is trusted only through a key whose fingerprint the build checks
+(`BC528686B50D79E339D3721CEB3E94ADBE1229CF`, as Microsoft documents it) and `ci-cloud/test.sh`
+checks again in the image. The upstream base itself is copied into GHCR by digest and verified
 ([Mirrored upstream base](pipeline.md#mirrored-upstream-base)).
 
 Dependabot keeps action pins and base images current with a seven-day `cooldown` on every
@@ -615,6 +621,12 @@ is exactly when a same-day bump would pull in a compromised release. The pinned 
 Dependabot cannot see are compared against their vendors daily by the pin-drift job, which opens
 a tracking issue rather than failing a build. Both are described in full under
 [Pin drift](pipeline.md#pin-drift). The pin-bump job then turns that drift into pull requests, with
-checksums taken only from the vendor's published files and the same seven-day cooldown. Its pull
-requests and Dependabot's merge themselves once every required check passes, and publish straight
-away ([Automatic updates](pipeline.md#automatic-updates)).
+checksums taken from the vendor's published files where there are any, and the same seven-day
+cooldown. The cooldown fails closed: a release whose date cannot be established is not bumped,
+and a GitHub release is as old as its most recently uploaded asset. The three tools with no
+vendor date wait seven days from the day their PR first carried the version, a date recorded in
+the PR and enforced by the merge bot, which no one controlling the vendor's channel can backdate
+([Automatic updates](pipeline.md#automatic-updates),
+[ADR 0008](adr/0008-self-updating.md#amendment-2026-10-17-the-cooldown-fails-closed-and-has-a-clock-of-its-own)).
+Its pull requests and Dependabot's merge themselves once every required check passes, and publish
+straight away.

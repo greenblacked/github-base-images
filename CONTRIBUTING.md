@@ -123,9 +123,11 @@ distinguishable from a broken check.
 **Bumps make themselves.** The daily [pin bump](.github/workflows/pin-bump.yml) job opens one PR
 per drifted tool whose release is at least seven days old, with the version and its checksums
 rewritten from the vendor's own published files, and dispatches CI on it. Every one merges itself
-once all four required checks are green and is published straight away. One with no vendor
-checksum or a major version is labelled `needs-review` for information; label a PR `hold` to stop
-it merging. The same script works locally, and the commands below remain the way to check a
+once all four required checks are green and is published straight away. A release whose date
+cannot be read is not bumped at all until it can be. One with no vendor checksum or a major
+version is labelled `needs-review` for information, and merges only once its PR has carried that
+version for seven days (its first-seen date, recorded in the PR body and kept across the daily
+rebuilds of the branch); label a PR `hold` to stop it merging. The same script works locally, and the commands below remain the way to check a
 checksum by hand ([ADR 0007](docs/adr/0007-automatic-updates.md),
 [ADR 0008](docs/adr/0008-self-updating.md)):
 
@@ -167,21 +169,36 @@ download. So the next Composer bump, automated or by hand with the script, upgra
 trust-on-first-use to vendor-attested, and the caveat above can go with it. The build's
 `sha256sum --check` confirms the getcomposer.org digest matches the GitHub release asset.
 
-Three downloads are **not** checksummed, deliberately: the Docker static tarball (no `.sha256` is
-published — the URL 404s), the AWS CLI installer (detached GPG signature only, which would mean
-adding `gnupg` and a pinned AWS public key to the build), and the gcloud CLI in `ci-cloud` (the
-release bucket carries no `.sha256` companions). These stay unverified and labelled rather than
-given a checksum that looks vendor-attested and is not, and their automated bumps are always
-labelled `needs-review`. They still merge themselves when green: the full build, smoke tests and
-vulnerability gate are the check on the version, and `hold` stops one.
+Three vendors publish **no** checksum: the Docker static tarball (no `.sha256` is published —
+the URL 404s), the AWS CLI installer (a detached GPG signature only), and the gcloud CLI in
+`ci-cloud` (the release bucket carries no `.sha256` companions). Their sums
+(`DOCKER_SHA256_*`, `AWSCLI_SHA256_*`, `GCLOUD_SHA256_*`) are **trust-on-first-use**:
+`scripts/bump-pins.sh` downloads each architecture's artifact when it moves the version and
+records the sha256 of what it got, and the build checks every download against it with
+`sha256sum --check --strict`. That detects a later substitution, not an originally bad artifact,
+and the comments above each `ARG` say so, so the shape of the line does not suggest a vendor
+attestation that is not there. The AWS CLI is the exception within the exception: before its hash
+is recorded, its `.sig` must verify against AWS's "AWS CLI Team" key in
+[`scripts/keys/aws-cli.asc`](scripts/keys/aws-cli.asc), which must be exactly the key with AWS's
+documented fingerprint `FB5DB77FD5C118B80511ADA8A6310ACC4672475C`. A bump signed by any other
+key fails, for a person to check and pin the new key. To set one of these sums by hand, let the
+script do it (`./scripts/bump-pins.sh --unit docker --to <VERSION>`) rather than hashing a
+download yourself.
 
-That is admittedly inconsistent with Composer, which does carry a computed hash until its next
-bump — the difference is historical rather than principled, and worth resolving in one direction
-or the other. The
-argument for extending trust-on-first-use to all four is that it detects a later substitution,
-which is better than nothing; the argument against is that a computed hash in the same `ARG` shape
-as a vendor-published one invites the reader to assume a guarantee that is not there. Adding GPG
-verification for the AWS CLI would remove it from this list properly, and is the better fix.
+These three bumps are always labelled `needs-review`, and with no vendor release date to wait on
+they merge only once their PR has carried the version for seven days (the first-seen clock,
+[ADR 0008](docs/adr/0008-self-updating.md#amendment-2026-10-17-the-cooldown-fails-closed-and-has-a-clock-of-its-own)).
+After that they merge themselves when green: the full build, smoke tests and vulnerability gate
+are the check on the version, and `hold` stops one.
+
+Python packages are hash-pinned the same way, with the hashes from PyPI: the libraries `ci-cloud`
+swaps into the Azure CLI's bundled Python, in
+[`ci-cloud/az-overrides.txt`](ci-cloud/az-overrides.txt), and zizmor, in
+[`.github/zizmor-requirements.txt`](.github/zizmor-requirements.txt). Each requirement is an exact
+version with the sha256 of every linux x86_64 and aarch64 wheel PyPI lists for it, installed with
+`pip --require-hashes --only-binary :all:`. Do not edit them by hand:
+`./scripts/bump-pins.sh --unit az-cryptography --to <VERSION>` (or `az-pyjwt`, `az-pyopenssl`,
+`az-urllib3`, `zizmor`) rewrites the version and its hashes together.
 
 ## Commit and PR conventions
 

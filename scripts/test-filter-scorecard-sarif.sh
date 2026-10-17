@@ -301,9 +301,13 @@ for img in $(jq -r '.[].image' "$repo/.github/images.json"); do
     real+=("$(res PinnedDependenciesID "$f" "$n" 'npmCommand not pinned by hash')")
   done < <(grep -n '^RUN npm install --global "npm@' "$repo/$f" || true)
 done
-n=$(grep -n '^RUN /opt/az/bin/python3 -m pip install ' "$repo/ci-cloud/Dockerfile.ci" | cut -d: -f1 || true)
-check "ci-cloud/Dockerfile.ci still has the azure-cli pip floors" [ -n "$n" ]
-real+=("$(res PinnedDependenciesID ci-cloud/Dockerfile.ci "${n:-0}" 'pipCommand not pinned by hash')")
+# The azure-cli library overrides used to be `>=` floors, accepted here. They
+# are now exact, hash-pinned (az-overrides.txt), and Scorecard counts a pip
+# install with --require-hashes as pinned, so there is no finding to accept:
+# the entry is gone, and must not come back while the install keeps the flag.
+check "ci-cloud/Dockerfile.ci installs the azure-cli overrides with --require-hashes" \
+  bash -c "awk '/^RUN \/opt\/az\/bin\/python3 -m pip install / { p = 1 } p { print } p && !/\\\\\$/ { exit }' '$repo/ci-cloud/Dockerfile.ci' | grep -q -- '--require-hashes .*-r /tmp/az-overrides.txt'"
+check "  and no accepted entry covers it" quiet jq -e 'all(.[]; ((.match // "") | test("opt/az")) | not)' "$repo/.github/scorecard-accepted.json"
 for r in CodeReviewID FuzzingID CIIBestPracticesID BranchProtectionID MaintainedID; do
   real+=("$(res "$r" "$nofile" 1)")
 done

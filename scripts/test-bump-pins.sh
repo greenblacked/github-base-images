@@ -162,7 +162,7 @@ fi
 files=(
   ci-tools/Dockerfile.ci ci-cloud/Dockerfile.ci ci-security/Dockerfile.ci ci-db/Dockerfile.ci
   $NODE_FILES $PHP_FILES $JSON_FILES .github/workflows/security.yml .github/workflows/build-image.yml
-  scripts/lint.sh .github/images.json
+  scripts/lint.sh .github/images.json ci-cloud/az-overrides.txt .github/zizmor-requirements.txt
 )
 force() { # FILE KEY VALUE -- set a baseline, whichever spelling the pin uses
   # Not `sed -i`, whose syntax differs between GNU and BSD sed; cat keeps the mode.
@@ -189,6 +189,10 @@ new_tree() {
   force "$t/.github/workflows/build-image.yml" OSV_SCANNER_VERSION 2.6.0
   for f in $JSON_FILES; do force "$t/$f" JSON_VERSION 2.19.9; done
   for f in $UNDICI_FILES; do force "$t/$f" NPM_UNDICI_VERSION 6.29.0; done
+  force "$t/ci-tools/Dockerfile.ci" AWSCLI_VERSION 2.38.1
+  # A requirements pin: `name==version`, the hash lines after it untouched.
+  sed -E 's/^urllib3==[^ ]+/urllib3==2.8.0/; s/^cryptography==[^ ]+/cryptography==50.0.2/' \
+    "$t/ci-cloud/az-overrides.txt" > "$t/x" && cat "$t/x" > "$t/ci-cloud/az-overrides.txt" && rm "$t/x"
   printf '%s' "$t"
 }
 pin() { # FILE KEY
@@ -218,10 +222,10 @@ changed_files() { # TREE SNAPSHOT
   (cd "$1" && find . -type f | sort | while read -r f; do cmp -s "$f" "$2/$f" || printf '%s\n' "${f#./}"; done)
 }
 
-drift() { # rows as "tool latest" -> a check-pins JSON report on stdout
-  local rows="" tool latest
-  while read -r tool latest; do
-    rows="$rows$(jq -nc --arg t "$tool" --arg l "$latest" '{tool:$t, pinned:"x", latest:$l, file:"x", key:"x", state:"behind"}')"
+drift() { # rows as "tool latest [pinned]" -> a check-pins JSON report on stdout
+  local rows="" tool latest pinned
+  while read -r tool latest pinned; do
+    rows="$rows$(jq -nc --arg t "$tool" --arg l "$latest" --arg p "${pinned:-x}" '{tool:$t, pinned:$p, latest:$l, file:"x", key:"x", state:"behind"}')"
   done
   printf '%s' "$rows" | jq -s '{drift: length, failed: 0, tools: .}'
 }
@@ -485,6 +489,122 @@ else
   ok "no image swaps undici into npm any more; skipped"
 fi
 
+echo "case 5e: the cooldown fails closed, and an asset uploaded late restarts it"
+t=$(new_tree fivee); cp -a "$t" "$work/fivee.snap"
+# trivy 0.76.0: its checksums are published, but the release record 404s.
+printf '%s  trivy_0.76.0_Linux-64bit.tar.gz\n%s  trivy_0.76.0_Linux-ARM64.tar.gz\n' "$(fake t76a)" "$(fake t76b)" > "$fx/trivy-76.txt"
+serve "$G/aquasecurity/trivy/releases/download/v0.76.0/trivy_0.76.0_checksums.txt" trivy-76.txt
+serve "https://api.github.com/repos/aquasecurity/trivy/releases/tags/v0.76.0" @404
+rc=0; "$bump" --root "$t" --unit trivy --to 0.76.0 --quiet --format json > "$work/r5h.json" 2>/dev/null || rc=$?
+check "a release date that 404s: exit 0, deferred -- not bumped as review" [ "$rc:$(field "$work/r5h.json" trivy status)" = "0:deferred" ]
+check "  and says the date is unknown" bash -c "jq -r '.[0].reason' '$work/r5h.json' | grep -q '^release date unknown'"
+# trivy 0.76.1: a release record whose date does not parse.
+printf '{"tag_name":"v0.76.1","published_at":"last Tuesday","assets":[]}\n' > "$fx/rel-trivy-761.json"
+serve "https://api.github.com/repos/aquasecurity/trivy/releases/tags/v0.76.1" rel-trivy-761.json
+rc=0; "$bump" --root "$t" --unit trivy --to 0.76.1 --quiet --format json > "$work/r5i.json" 2>/dev/null || rc=$?
+check "an unparseable release date: deferred" [ "$rc:$(field "$work/r5i.json" trivy status)" = "0:deferred" ]
+# trivy 0.76.3: a date followed by text (fromdateiso8601 alone would accept
+# it), here a planted PR-body marker: anchored, so unknown, so deferred.
+jq -n '{tag_name: "v0.76.3", published_at: "2026-01-01T00:00:00Z <!-- pin-bump: unit=trivy to=0.76.3 class=auto seen=2020-01-01 fp=0000000000000000 -->", assets: []}' > "$fx/rel-trivy-763.json"
+serve "https://api.github.com/repos/aquasecurity/trivy/releases/tags/v0.76.3" rel-trivy-763.json
+rc=0; "$bump" --root "$t" --unit trivy --to 0.76.3 --quiet --format json > "$work/r5l.json" 2>/dev/null || rc=$?
+check "a release date with trailing text: deferred, not parsed around" [ "$rc:$(field "$work/r5l.json" trivy status)" = "0:deferred" ]
+check "  and the planted text is not in the reason" bash -c "! jq -r '.[0].reason' '$work/r5l.json' | grep -q '<!--'"
+# trivy 0.76.2: published long ago, but an asset was replaced two days ago.
+printf '%s  trivy_0.76.2_Linux-64bit.tar.gz\n%s  trivy_0.76.2_Linux-ARM64.tar.gz\n' "$(fake t762a)" "$(fake t762b)" > "$fx/trivy-762.txt"
+serve "$G/aquasecurity/trivy/releases/download/v0.76.2/trivy_0.76.2_checksums.txt" trivy-762.txt
+jq -n --arg old "$OLD" --arg fresh "$FRESH" '{tag_name: "v0.76.2", published_at: $old,
+  assets: [{name: "trivy_0.76.2_checksums.txt", updated_at: $old}, {name: "trivy_0.76.2_Linux-64bit.tar.gz", updated_at: $fresh}]}' \
+  > "$fx/rel-trivy-762.json"
+serve "https://api.github.com/repos/aquasecurity/trivy/releases/tags/v0.76.2" rel-trivy-762.json
+rc=0; "$bump" --root "$t" --unit trivy --to 0.76.2 --quiet --format json > "$work/r5j.json" 2>/dev/null || rc=$?
+check "an asset re-uploaded 2 days ago restarts the cooldown: deferred" [ "$rc:$(field "$work/r5j.json" trivy status)" = "0:deferred" ]
+check "  measured from the upload, not the publication" bash -c "jq -r '.[0].reason' '$work/r5j.json' | grep -q '^released 2026-09-26T09:30:00.123Z, 1d ago'"
+check "none of the three edited anything" [ -z "$(changed_files "$t" "$work/fivee.snap")" ]
+# The same release a week on: the asset's date is past the cooldown too.
+rc=0; BUMP_PINS_NOW=$((NOW + 7 * 86400)) "$bump" --root "$t" --unit trivy --to 0.76.2 --quiet --format json > "$work/r5k.json" 2>/dev/null || rc=$?
+check "  and a week later it is bumped" [ "$rc:$(field "$work/r5k.json" trivy status)" = "0:bumped" ]
+
+echo "case 5f: requirements-file pins take every linux wheel's hash from PyPI"
+t=$(new_tree fivef); cp -a "$t" "$work/fivef.snap"
+pypi_file() { # FILENAME SHA256-LABEL UPLOADED [YANKED]
+  jq -nc --arg f "$1" --arg h "$(fake "$2")" --arg u "$3" --argjson y "${4:-false}" \
+    '{filename: $f, packagetype: (if ($f | endswith(".whl")) then "bdist_wheel" else "sdist" end),
+      digests: {sha256: $h}, upload_time_iso_8601: $u, yanked: $y}'
+}
+{ pypi_file urllib3-2.8.1-py3-none-any.whl u281-whl "$OLD"; pypi_file urllib3-2.8.1.tar.gz u281-sdist "$OLD"; } \
+  | jq -s '{info: {version: "2.8.1"}, urls: .}' > "$fx/pypi-urllib3.json"
+serve "https://pypi.org/pypi/urllib3/2.8.1/json" pypi-urllib3.json
+rc=0; "$bump" --root "$t" --unit az-urllib3 --to 2.8.1 --quiet --format json > "$work/r5l.json" 2>/dev/null || rc=$?
+check "a pure-Python wheel: exit 0, auto" [ "$rc:$(field "$work/r5l.json" az-urllib3 status):$(field "$work/r5l.json" az-urllib3 class)" = "0:bumped:auto" ]
+check "  version and the one wheel's hash written together, the sdist left out" \
+  bash -c "awk '/^urllib3==/ { p = 1 } p { print } p && !/\\\\\$/ { exit }' '$t/ci-cloud/az-overrides.txt' | tr -d ' \\\\' | paste -sd' ' - | grep -qx 'urllib3==2.8.1 --hash=sha256:$(fake u281-whl)'"
+check "  the other requirements untouched" \
+  [ "$(grep -v -A1 '^urllib3==' "$t/ci-cloud/az-overrides.txt" | grep -c 'hash=')" -eq "$(grep -v -A1 '^urllib3==' "$work/fivef.snap/ci-cloud/az-overrides.txt" | grep -c 'hash=')" ]
+check "  and the result still passes --check" "$bump" --root "$t" --check --quiet
+# cryptography 50.0.3: x86_64 wheels only -- an arm64 build would fail.
+{ pypi_file cryptography-50.0.3-cp311-abi3-manylinux_2_34_x86_64.whl c503-x "$OLD"
+  pypi_file cryptography-50.0.3-cp311-abi3-musllinux_1_2_aarch64.whl c503-m "$OLD"; } \
+  | jq -s '{urls: .}' > "$fx/pypi-crypto.json"
+serve "https://pypi.org/pypi/cryptography/50.0.3/json" pypi-crypto.json
+rc=0; "$bump" --root "$t" --unit az-cryptography --to 50.0.3 --quiet --format json > "$work/r5m.json" 2>/dev/null || rc=$?
+check "no glibc aarch64 wheel: exit 1, error" [ "$rc:$(field "$work/r5m.json" az-cryptography status)" = "1:error" ]
+# cryptography 50.0.4: both, but one is yanked.
+{ pypi_file cryptography-50.0.4-cp311-abi3-manylinux_2_34_x86_64.whl c504-x "$OLD"
+  pypi_file cryptography-50.0.4-cp311-abi3-manylinux_2_34_aarch64.whl c504-a "$OLD" true; } \
+  | jq -s '{urls: .}' > "$fx/pypi-crypto4.json"
+serve "https://pypi.org/pypi/cryptography/50.0.4/json" pypi-crypto4.json
+rc=0; "$bump" --root "$t" --unit az-cryptography --to 50.0.4 --quiet --format json > "$work/r5n.json" 2>/dev/null || rc=$?
+check "a yanked wheel: exit 1, error" [ "$rc:$(field "$work/r5n.json" az-cryptography status)" = "1:error" ]
+check "  cryptography untouched" [ "$(grep -A12 '^cryptography==' "$t/ci-cloud/az-overrides.txt")" = "$(grep -A12 '^cryptography==' "$work/fivef.snap/ci-cloud/az-overrides.txt")" ]
+
+echo "case 5g: the AWS CLI is hashed only after AWS's signature verifies"
+if command -v gpg >/dev/null && command -v gpgv >/dev/null; then
+  t=$(new_tree fiveg); cp -a "$t" "$work/fiveg.snap"
+  export GNUPGHOME="$work/gnupg"; mkdir -p "$GNUPGHOME"; chmod 700 "$GNUPGHOME"
+  gpg --batch --quiet --passphrase '' --quick-gen-key 'Test AWS CLI <t@example.com>' rsa2048 sign never 2>/dev/null
+  gpg --batch --quiet --passphrase '' --quick-gen-key 'Someone else <x@example.com>' rsa2048 sign never 2>/dev/null
+  fpr=$(gpg --batch --with-colons --list-keys t@example.com 2>/dev/null | awk -F: '$1 == "fpr" { print $10; exit }')
+  mkdir -p "$work/keys"; gpg --batch --armor --export t@example.com > "$work/keys/aws-cli.asc" 2>/dev/null
+  for a in x86_64 aarch64; do
+    for v in 2.38.2 2.38.3; do
+      printf 'zip %s %s\n' "$a" "$v" > "$fx/aws-$a-$v.zip"
+      serve "https://awscli.amazonaws.com/awscli-exe-linux-$a-$v.zip" "aws-$a-$v.zip"
+    done
+    gpg --batch --quiet --yes --local-user t@example.com --detach-sign -o "$fx/aws-$a-2.38.2.zip.sig" "$fx/aws-$a-2.38.2.zip" 2>/dev/null
+    serve "https://awscli.amazonaws.com/awscli-exe-linux-$a-2.38.2.zip.sig" "aws-$a-2.38.2.zip.sig"
+  done
+  # 2.38.3: the aarch64 signature is by another key.
+  gpg --batch --quiet --yes --local-user t@example.com --detach-sign -o "$fx/aws-x86_64-2.38.3.zip.sig" "$fx/aws-x86_64-2.38.3.zip" 2>/dev/null
+  gpg --batch --quiet --yes --local-user x@example.com --detach-sign -o "$fx/aws-aarch64-2.38.3.zip.sig" "$fx/aws-aarch64-2.38.3.zip" 2>/dev/null
+  serve "https://awscli.amazonaws.com/awscli-exe-linux-x86_64-2.38.3.zip.sig" aws-x86_64-2.38.3.zip.sig
+  serve "https://awscli.amazonaws.com/awscli-exe-linux-aarch64-2.38.3.zip.sig" aws-aarch64-2.38.3.zip.sig
+  rc=0; BUMP_PINS_KEYS="$work/keys" BUMP_PINS_KEY_FPR="$fpr" \
+    "$bump" --root "$t" --unit awscli --to 2.38.3 --quiet --format json > "$work/r5o.json" 2>/dev/null || rc=$?
+  check "a signature by another key: exit 1, error" [ "$rc:$(field "$work/r5o.json" awscli status)" = "1:error" ]
+  check "  nothing edited" [ -z "$(changed_files "$t" "$work/fiveg.snap")" ]
+  rc=0; BUMP_PINS_KEYS="$work/keys" BUMP_PINS_KEY_FPR=FB5DB77FD5C118B80511ADA8A6310ACC4672475C \
+    "$bump" --root "$t" --unit awscli --to 2.38.2 --quiet --format json > "$work/r5p.json" 2>/dev/null || rc=$?
+  check "a key file that is not the pinned fingerprint: exit 1, error" [ "$rc:$(field "$work/r5p.json" awscli status)" = "1:error" ]
+  rc=0; BUMP_PINS_KEYS="$work/keys" BUMP_PINS_KEY_FPR="$fpr" \
+    "$bump" --root "$t" --unit awscli --to 2.38.2 --quiet --format json > "$work/r5q.json" 2>/dev/null || rc=$?
+  check "a good signature: exit 0, bumped, review" [ "$rc:$(field "$work/r5q.json" awscli status):$(field "$work/r5q.json" awscli class)" = "0:bumped:review" ]
+  check "  first-seen cooldown" [ "$(field "$work/r5q.json" awscli cooldown)" = first-seen ]
+  expect_pin "$t" ci-tools/Dockerfile.ci AWSCLI_VERSION 2.38.2
+  expect_pin "$t" ci-tools/Dockerfile.ci AWSCLI_SHA256_AMD64 "$(sha256sum "$fx/aws-x86_64-2.38.2.zip" | cut -d' ' -f1)"
+  expect_pin "$t" ci-tools/Dockerfile.ci AWSCLI_SHA256_ARM64 "$(sha256sum "$fx/aws-aarch64-2.38.2.zip" | cut -d' ' -f1)"
+  check "  the signatures are listed as the integrity source" \
+    [ "$(jq -r '.[0].integrity_urls | map(select(endswith(".sig"))) | length' "$work/r5q.json")" -eq 2 ]
+  unset GNUPGHOME
+else
+  ok "gpg/gpgv not installed; signature cases skipped"
+fi
+
+echo "case 5h: --check over the real tree"
+check "every pin, checksum, tofu and signature row names exactly one line" "$bump" --check --quiet
+check "the AWS key file is exactly the pinned key" \
+  bash -c "GNUPGHOME=\$(mktemp -d) gpg --batch --show-keys --with-colons '$here/keys/aws-cli.asc' 2>/dev/null | awk -F: '\$1 == \"fpr\" { print \$10 }' | grep -qx FB5DB77FD5C118B80511ADA8A6310ACC4672475C"
+
 # --- scripts/pin-bump-prs.sh ---------------------------------------------------
 # Real git against a local bare repository as origin, so pushes, leases and
 # the foreign-commit check run for real. The read-only gh queries are answered
@@ -546,11 +666,16 @@ seed() {
   git -C "$s" push -q origin "HEAD:refs/heads/pin-bump/$1"
   git -C "$s" rev-parse HEAD
 }
-# pr UNIT NUMBER STATE TO [CLASS] -- the stubbed `gh pr list` answer for UNIT.
+# pr UNIT NUMBER STATE TO [CLASS [SEEN [FP]]] -- the stubbed `gh pr list`
+# answer for UNIT. With a CLASS, the marker also carries the first-seen date
+# and values digest (default 2026-09-20 and a fixed digest); SEEN "-" leaves
+# both out, as a PR opened before the first-seen clock existed has them.
 pr() {
-  jq -n --arg u "$1" --argjson n "$2" --arg s "$3" --arg to "$4" --arg c "${5:-}" \
+  local extra=""
+  if [ -n "${5:-}" ] && [ "${6:-}" != - ]; then extra=" seen=${6:-2026-09-20} fp=${7:-0123456789abcdef}"; fi
+  jq -n --arg u "$1" --argjson n "$2" --arg s "$3" --arg to "$4" --arg c "${5:-}" --arg x "$extra" \
     '[{number:$n, state:$s, url:("https://github.com/o/r/pull/" + ($n|tostring)),
-       body:("text\n<!-- pin-bump: unit=" + $u + " to=" + $to + (if $c == "" then "" else " class=" + $c end) + " -->"),
+       body:("text\n<!-- pin-bump: unit=" + $u + " to=" + $to + (if $c == "" then "" else " class=" + $c end) + $x + " -->"),
        headRefName:("pin-bump/" + $u), isCrossRepository:false, labels:[]}]' > "$stub/pr-$1.json"
 }
 # run_prs -- drift rows ("tool latest") on stdin; sets rc, out, res.
@@ -558,7 +683,7 @@ run_prs() {
   drift > "$d/drift.json"
   out="$d/out"; res="$d/results.jsonl"; rc=0
   (cd "$d/clone" && PATH="$work/bin:$PATH" DRIFT_FILE="$d/drift.json" GITHUB_REPOSITORY=o/r \
-     PIN_BUMP_GH_STUB="$stub" PIN_BUMP_RESULTS="$res" FAKE_GH_LOG="$log" "$prs") > "$out" 2>&1 || rc=$?
+     PIN_BUMP_GH_STUB="$stub" PIN_BUMP_RESULTS="$res" FAKE_GH_LOG="$log" PIN_BUMP_TODAY=2026-09-28 "$prs") > "$out" 2>&1 || rc=$?
 }
 rfield() { jq -r --arg u "$1" --arg f "$2" 'select(.unit == $u) | .[$f]' "$res"; }
 expect_row() { # UNIT FIELD VALUE
@@ -592,7 +717,9 @@ check "the review unit is labelled" logged "pr edit 102 --repo o/r --add-label n
 check "nothing is merged or given auto-merge here: merge-bot-prs.sh merges" not_logged '^pr merge'
 check "the body says it merges itself, and how to stop it" grep -q "Add the \`hold\` label to stop it" "$log.body"
 check "the review body says the label is information" grep -q "Labelled \`needs-review\` for information" "$log.body"
-check "the body records version and class for the next run" grep -qxF '<!-- pin-bump: unit=syft to=2.0.0 class=review -->' "$log.body"
+check "the body records version, class and first-seen date for the next run" \
+  grep -qxE '<!-- pin-bump: unit=syft to=2\.0\.0 class=review seen=2026-09-28 fp=[0-9a-f]{16} -->' "$log.body"
+check "  and says when the cooldown lets it merge" grep -qF '| First seen | 2026-09-28: merges no earlier than **2026-10-05** |' "$log.body"
 check "the body warns against Update branch" grep -q 'do not use \*Update branch\*' "$log.body"
 
 echo "case 6b: an open PR at an older version is rebuilt, and the push is leased"
@@ -722,6 +849,111 @@ check "a refused label: exit 0" [ "$rc" -eq 0 ]
 expect_row syft status ok
 check "  the note says so" grep -q 'could not set the needs-review label' "$res"
 check "  CI was still dispatched" logged "workflow run build-and-push.yml --repo o/r --ref pin-bump/syft"
+
+echo "case 6j: a review bump with no vendor date records its first-seen date"
+printf 'docker 29.9.1 amd64\n' > "$fx/docker-2991-amd64"; printf 'docker 29.9.1 arm64\n' > "$fx/docker-2991-arm64"
+serve "https://download.docker.com/linux/static/stable/x86_64/docker-29.9.1.tgz" docker-2991-amd64
+serve "https://download.docker.com/linux/static/stable/aarch64/docker-29.9.1.tgz" docker-2991-arm64
+# advance_main -- one commit on origin's main, so a pin-bump branch is behind it.
+advance_main() {
+  local s="$d/advance"
+  rm -rf "$s"; git clone -q "$origin" "$s"
+  echo moved > "$s/MOVED"; git -C "$s" add -A
+  git -C "$s" -c user.name=b -c user.email=b@example.com commit -qm moved
+  git -C "$s" push -q origin HEAD:refs/heads/main
+}
+marker_of() { grep -oE '<!-- pin-bump: [^>]* -->' "$log.body" | tail -1; }
+scenario j
+run_prs <<< 'docker 29.9.0'
+check "exit 0" [ "$rc" -eq 0 ]
+expect_row docker class review
+check "the marker records today as first seen" bash -c "grep -oE '<!-- pin-bump: [^>]* -->' '$log.body' | grep -qE '^<!-- pin-bump: unit=docker to=29\.9\.0 class=review seen=2026-09-28 fp=[0-9a-f]{16} -->$'"
+check "  the body says it merges itself, no earlier than seven days on" grep -qF 'merges no earlier than **2026-10-05**' "$log.body"
+check "  and so does the summary" bash -c "jq -r 'select(.unit == \"docker\") | .action' '$res' | grep -qF 'first seen 2026-09-28 (merges from 2026-10-05)'"
+fp_docker=$(marker_of | sed -E 's/.* fp=([0-9a-f]+) -->/\1/')
+
+echo "case 6k: the first-seen date survives a rebuild of the same version, and only that"
+scenario k
+seed docker "$BOT" "$BOT" > /dev/null
+advance_main
+pr docker 20 OPEN 29.9.0 review 2026-09-25 "$fp_docker"
+run_prs <<< 'docker 29.9.0'
+check "exit 0" [ "$rc" -eq 0 ]
+expect_row docker status ok
+check "  rebuilt, because the branch was behind main" bash -c "jq -r 'select(.unit == \"docker\") | .note' '$res' | grep -q 'rebuilt because the branch was behind main'"
+check "  onto the new main" [ "$(git -C "$origin" rev-parse pin-bump/docker^)" = "$(main_sha)" ]
+check "  the first-seen date is kept: the daily rebuild does not restart the clock" \
+  bash -c "grep -qF 'class=review seen=2026-09-25 fp=$fp_docker -->' '$log.body'"
+# Same version, but the artifact behind it changed: a new clock.
+scenario k2
+seed docker "$BOT" "$BOT" > /dev/null
+advance_main
+pr docker 20 OPEN 29.9.0 review 2026-09-25 ffffffffffffffff
+run_prs <<< 'docker 29.9.0'
+expect_row docker status ok
+check "a sum that changed under the same version restarts the clock" \
+  bash -c "grep -qF 'class=review seen=2026-09-28 fp=$fp_docker -->' '$log.body'"
+check "  and says so" bash -c "jq -r 'select(.unit == \"docker\") | .note' '$res' | grep -q 'first-seen clock restarted'"
+# The same, with the branch up to date with main (the heal path): a review
+# PR is re-verified, not healed on trust, so a replaced artifact still
+# restarts the clock...
+scenario k4
+seed docker "$BOT" "$BOT" > /dev/null
+pr docker 20 OPEN 29.9.0 review 2026-09-25 ffffffffffffffff
+run_prs <<< 'docker 29.9.0'
+expect_row docker status ok
+check "an up-to-date review PR whose sums changed is rebuilt with a new clock" \
+  bash -c "grep -qF 'class=review seen=2026-09-28 fp=$fp_docker -->' '$log.body'"
+# ...and one whose values are unchanged is healed, branch untouched.
+scenario k5
+sha=$(seed docker "$BOT" "$BOT")
+pr docker 20 OPEN 29.9.0 review 2026-09-25 "$fp_docker"
+printf '%s' "$CHECKS_ALL" > "$stub/checks-docker.json"
+run_prs <<< 'docker 29.9.0'
+check "an up-to-date review PR with the same values is healed, not rebuilt" [ "$(head_of pin-bump/docker)" = "$sha" ]
+expect_row docker status unchanged
+# A PR from before the clock existed: rebuilt, so its marker gets a date.
+scenario k3
+seed docker "$BOT" "$BOT" > /dev/null
+pr docker 20 OPEN 29.9.0 review -
+run_prs <<< 'docker 29.9.0'
+expect_row docker status ok
+check "a marker with no first-seen date is rebuilt to record one" \
+  bash -c "grep -qF 'class=review seen=2026-09-28 fp=$fp_docker -->' '$log.body'"
+
+echo "case 6l: inside its cooldown a review PR keeps its version; after it, it moves on"
+scenario l
+sha=$(seed docker "$BOT" "$BOT")
+pr docker 21 OPEN 29.9.0 review 2026-09-25 "$fp_docker"
+printf '%s' "$CHECKS_ALL" > "$stub/checks-docker.json"
+run_prs <<< 'docker 29.9.1 29.8.1'
+check "exit 0" [ "$rc" -eq 0 ]
+expect_row docker status unchanged
+expect_row docker new 29.9.0
+check "  the note says why" bash -c "jq -r 'select(.unit == \"docker\") | .note' '$res' | grep -q 'kept at 29.9.0, first seen 2026-09-25, until its cooldown ends on 2026-10-02'"
+check "  the branch is not rebuilt, so the clock keeps running" [ "$(head_of pin-bump/docker)" = "$sha" ]
+# Past its cooldown but inside the grace window: still held, so a day the
+# merge bot missed does not restart the clock on a newer version.
+scenario l3
+sha=$(seed docker "$BOT" "$BOT")
+pr docker 21 OPEN 29.9.0 review 2026-09-18 "$fp_docker"
+printf '%s' "$CHECKS_ALL" > "$stub/checks-docker.json"
+run_prs <<< 'docker 29.9.1 29.8.1'
+expect_row docker status unchanged
+expect_row docker new 29.9.0
+check "  past its cooldown, inside the grace window: still held" \
+  bash -c "jq -r 'select(.unit == \"docker\") | .note' '$res' | grep -q 'mergeable since 2026-09-25, until 2026-10-02 so the merge bot can take it'"
+check "  the branch is not rebuilt" [ "$(head_of pin-bump/docker)" = "$sha" ]
+scenario l2
+seed docker "$BOT" "$BOT" > /dev/null
+pr docker 21 OPEN 29.9.0 review 2026-09-01 "$fp_docker"
+run_prs <<< 'docker 29.9.1 29.8.1'
+expect_row docker status ok
+expect_row docker new 29.9.1
+check "after its cooldown and grace window, the newer version is proposed, with a fresh clock" \
+  bash -c "grep -qE 'unit=docker to=29\.9\.1 class=review seen=2026-09-28 fp=' '$log.body'"
+check "  hashed from its own download" \
+  bash -c "git -C '$origin' show pin-bump/docker:ci-tools/Dockerfile.ci | grep -qx 'ARG DOCKER_SHA256_ARM64=$(sha256sum "$fx/docker-2991-arm64" | cut -d' ' -f1)'"
 
 echo "case 6h: a failed dispatch errors its unit, after every unit was processed"
 scenario h

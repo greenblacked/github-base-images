@@ -302,15 +302,38 @@ the version and its checksums rewritten by `scripts/bump-pins.sh`. Pins kept in 
 place move together: kubectl in `ci-tools` and `ci-cloud`, Composer in every PHP image, gitleaks
 in `ci-security` and `security.yml`, npm and Playwright in every Node image. Which images carry a
 pin is read from the Dockerfiles of the images in `images.json`, so an image the lifecycle adds or
-retires needs no change to the pin tooling. Every checksum is
-read from the vendor's own checksums file or registry record for that version. None is computed
-from a download. Both wait the same seven-day cooldown after a release.
+retires needs no change to the pin tooling. Wherever the vendor publishes one, every checksum is
+read from the vendor's own checksums file or registry record for that version (for the Python
+libraries in `ci-cloud/az-overrides.txt` and the zizmor in `.github/zizmor-requirements.txt`,
+PyPI's sha256 for every linux wheel, installed with `pip --require-hashes`). The three vendors that
+publish none — the AWS CLI, the Docker static client and gcloud — get a **trust-on-first-use**
+sha256 instead: `bump-pins.sh` downloads each architecture's artifact and records the hash of what
+it got, after checking AWS's detached signature against AWS's key, pinned by fingerprint in
+`scripts/keys/`, for the AWS CLI. Every build, the daily rebuilds included, then checks the
+download against that sum with `sha256sum --check --strict`, so a file substituted later fails the
+build instead of being installed.
+
+Nothing is adopted the day it ships. A release with a vendor date (a GitHub release, HashiCorp,
+npm, RubyGems, PyPI) is not bumped until it is seven days old; for a GitHub release that date is
+the later of its publication and the newest upload of any of its assets, so an asset replaced
+after publication restarts the wait. A release date that cannot be established — a 404, an API
+that does not answer, a date that does not parse — defers the bump too: the cooldown fails closed.
+The tools with no vendor date to measure from use the PR's own **first-seen clock**: the marker
+at the end of the PR body records `seen=YYYY-MM-DD`, the day pin-bump first proposed that exact
+version, and a digest of every value the bump wrote. The daily rebuild of the branch keeps the
+date while the version and those values are unchanged, and restarts it when either changes (a new
+version, or an artifact re-uploaded under the same version, whose hash then differs). While its
+clock runs, the PR stays on its version even if the vendor ships a newer one, so a vendor that
+releases daily cannot keep resetting it; the newer version follows once it has merged. The merge
+bot will not merge a `review` PR before `seen` plus seven days, and merges it on its first run
+after that with no human step. Someone who controls the vendor's download channel can set any
+release date they like, but not the day this repository first saw the release.
 
 | Pin-bump class | When | Outcome |
 |---|---|---|
 | `auto` | vendor checksum or registry integrity, not a major version, released 7+ days ago | merges itself once green |
-| `review` | no vendor checksum (AWS CLI, Docker client, gcloud), a major version, or an unknown release date | labelled `needs-review` as information; merges itself once green |
-| deferred | released less than 7 days ago | no PR until it is 7 days old |
+| `review` | no vendor checksum (AWS CLI, Docker client, gcloud: trust-on-first-use), or a major version | labelled `needs-review` as information; merges itself once green **and** 7 days after its PR first carried that version |
+| deferred | released less than 7 days ago, or its release date could not be established | no PR until it is 7 days old by a date that can be read |
 
 A push made with the workflow token starts no workflow, so pin-bump dispatches *Build and Push to
 GHCR* and *Security* on the branch. Their check runs land on the PR's head commit. The dispatched
@@ -347,6 +370,10 @@ Dependabot, and every `pin-bump/*` and `lifecycle/*` PR by `github-actions[bot]`
   yet". So a green PR whose answer is not computed yet is read again after 2, 4, 8 and 16
   seconds, about 30 seconds in all, so that one run merges every green PR rather than one an
   hour. Still not computed after that, it waits for the next run; it is never taken as a yes;
+- for a `pin-bump/*` PR, its body's marker is there and names the branch's tool, and unless it
+  says `class=auto` its first-seen date (`seen=`) is at least seven days old. A `review` PR inside
+  that window is waiting; one with no readable marker or date is not merged at all. Pin bump
+  rewrites the marker on its next daily run;
 - the PR is not labelled `hold`, read from the PR itself, and again together with the head commit
   right before the merge.
 

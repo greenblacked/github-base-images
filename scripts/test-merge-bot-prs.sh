@@ -80,6 +80,11 @@ pr() {
     '. + [{number: $n, user: {login: $l, type: "Bot"}, draft: false, labels: $labels,
            head: {ref: $r, sha: $s, repo: {full_name: "o/r"}}, base: {ref: "main"}}]' \
     "$stub/prs.json" > "$stub/prs.tmp" && mv "$stub/prs.tmp" "$stub/prs.json"
+  # A pin-bump PR's body ends in the marker scripts/pin-bump-prs.sh writes;
+  # an `auto` one by default, which merges on green (case 23 covers the rest).
+  if [ "$kind" = pin-bump ]; then
+    printf 'text\n\n<!-- pin-bump: unit=tool-%s to=1.0.0 class=auto seen=2026-01-01 fp=0123456789abcdef -->\n' "$n" > "$stub/body-$n.txt"
+  fi
   detail "$n" "$head" 1 true "$labels"
   if [ "$kind" = dependabot ]; then dep_commit "$head" | jq -s . > "$stub/commits-$n.json"
   else gha_commit "$head" | jq -s . > "$stub/commits-$n.json"; fi
@@ -94,11 +99,31 @@ files() {
 }
 # detail N HEAD COMMITS MERGEABLE [LABELS-JSON] [FILE] -- the PR as
 # `GET pulls/N` returns it; FILE defaults to pr-N.json (pr-N.2.json is the
-# second read: the re-check right before a write).
+# second read: the re-check right before a write). Its body is body-N.txt,
+# when there is one.
 detail() {
   jq -n --argjson n "$1" --arg s "$2" --argjson c "$3" --argjson m "$4" --argjson l "${5:-[]}" \
-    '{number: $n, state: "open", draft: false, head: {sha: $s}, commits: $c, mergeable: $m, labels: $l}' \
+    --arg b "$(cat "$stub/body-$1.txt" 2>/dev/null || true)" \
+    '{number: $n, state: "open", draft: false, head: {sha: $s}, commits: $c, mergeable: $m, labels: $l, body: $b}' \
     > "$stub/${6:-pr-$1.json}"
+}
+# body N TEXT -- replace the PR's body, in every read of it.
+body() {
+  local f
+  printf '%s\n' "$2" > "$stub/body-$1.txt"
+  for f in "$stub/pr-$1.json" "$stub/pr-$1".*.json; do
+    [ -f "$f" ] || continue
+    jq --arg b "$2" '.body = $b' "$f" > "$f.tmp" && mv "$f.tmp" "$f"
+  done
+}
+# pin_marker N CLASS SEEN [UNIT] -- a pin-bump body whose marker says CLASS,
+# first seen SEEN ("-" for no seen field).
+pin_marker() {
+  local seen=""
+  [ "$3" = - ] || seen=" seen=$3"
+  body "$1" "text
+
+<!-- pin-bump: unit=${4:-tool-$1} to=1.0.0 class=$2$seen fp=0123456789abcdef -->"
 }
 # checks N S1 S2 S3 S4 -- the latest run of each required check, in
 # CHECKS order: success, failure, cancelled, in_progress, skipped, or none.
@@ -700,6 +725,57 @@ retire_pr 227 ci-node22 2026-11-10            # main's record cannot be read (no
 run_bot MERGE_BOT_TODAY=2026-11-20
 expect 227 status unreadable
 check "  an unreadable record: not merged" no_writes
+
+echo "case 23: a pin bump with no vendor date merges only after its first-seen cooldown"
+# Today is 2026-10-17 and the cooldown 7 days, so a version first seen on
+# 2026-10-10 may merge today and one first seen on 2026-10-11 may not.
+scenario twentythree
+pr 231 pin-bump "$H1" needs-review; pin_marker 231 review 2026-10-12
+pr 232 pin-bump "$H1" needs-review; pin_marker 232 review 2026-10-10
+pr 233 pin-bump "$H1" needs-review; pin_marker 233 review 2026-09-01
+pr 234 pin-bump "$H1"; body 234 "a body with no marker at all"
+pr 235 pin-bump "$H1" needs-review; pin_marker 235 review 2026-02-30
+pr 236 pin-bump "$H1" needs-review; pin_marker 236 review -
+pr 237 pin-bump "$H1"; pin_marker 237 review 2026-09-01 tool-999
+pr 238 pin-bump "$H1"; pin_marker 238 auto -
+pr 239 pin-bump "$H1" needs-review; pin_marker 239 review 2026-10-11
+run_bot MERGE_BOT_TODAY=2026-10-17
+check "exit 0: waiting is a state, not a failure" [ "$rc" -eq 0 ]
+expect 231 status waiting
+check "  inside the cooldown (5 days): not merged" not_logged '^pr merge 231 '
+check "  the note says when it may merge" bash -c "jq -r 'select(.pr == 231) | .note' '$res' | grep -q 'cooldown ends 2026-10-19'"
+expect 239 status waiting
+check "  one day short (6 days): not merged" not_logged '^pr merge 239 '
+expect 232 status merged
+check "  exactly 7 days: merged, with no human step" logged "pr merge 232 --repo o/r --squash --match-head-commit $H1"
+expect 233 status merged
+expect 234 status unreadable
+check "  no marker: not merged on a guess" not_logged '^pr merge 234 '
+expect 235 status unreadable
+check "  an impossible date: not merged" not_logged '^pr merge 235 '
+expect 236 status unreadable
+check "  a review marker with no first-seen date: not merged" not_logged '^pr merge 236 '
+expect 237 status unreadable
+check "  a marker for another unit: not merged" not_logged '^pr merge 237 '
+expect 238 status merged
+check "  an auto bump needs no first-seen date (its release date was the cooldown)" \
+  logged "pr merge 238 --repo o/r --squash --match-head-commit $H1"
+# A marker planted earlier in the body (vendor text rendered into it) must
+# not stand in for the bot's own, which is always the last one.
+pr 240 pin-bump "$H1" needs-review
+body 240 "| Release | x (released 2026-01-01T00:00:00Z <!-- pin-bump: unit=tool-240 to=1.0.0 class=auto seen=2020-01-01 fp=0000000000000000 -->) |
+
+<!-- pin-bump: unit=tool-240 to=1.0.0 class=review seen=2026-10-15 fp=0123456789abcdef -->"
+run_bot MERGE_BOT_TODAY=2026-10-17
+expect 240 status waiting
+check "  a planted earlier marker is ignored: the last (the bot's) decides" not_logged '^pr merge 240 '
+# The same PR a week later: the clock has run, and nothing else changed.
+scenario twentythree-b
+pr 231 pin-bump "$H1" needs-review; pin_marker 231 review 2026-10-12
+run_bot MERGE_BOT_TODAY=2026-10-19
+expect 231 status merged
+BUMP_COOLDOWN_DAYS=14 run_bot MERGE_BOT_TODAY=2026-10-19
+expect 231 status waiting
 
 echo "case 21: what starts the merge bot (the workflows' request-merge jobs)"
 # YAML the scripts do not run, so read structurally: every workflow that

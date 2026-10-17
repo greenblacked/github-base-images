@@ -10,11 +10,31 @@
 #   4. CI dispatched on the branch -- pushes made with the workflow token do not
 #      trigger workflows, but a workflow_dispatch does, and its check runs land
 #      on the branch head, which is what the required checks look at;
-#   5. a `review` bump (no vendor checksum, a major version, an unknown
-#      release date) gets the `needs-review` label, as information.
+#   5. a `review` bump (no vendor checksum, or a major version) gets the
+#      `needs-review` label, as information.
 # Merging is not done here. .github/workflows/merge-bot-prs.yml merges every
 # bump PR, `auto` and `review` alike, once its required checks are green on
-# its head commit; this script only makes sure those checks run.
+# its head commit -- a `review` one only once its first-seen cooldown is over
+# (below); this script only makes sure those checks run.
+#
+# The first-seen clock. An `auto` bump is at least BUMP_COOLDOWN_DAYS (7) old
+# by its vendor's release date before bump-pins.sh moves it at all. A
+# `review` bump has no such date to trust -- the AWS CLI, the Docker client
+# and gcloud publish none, and a vendor date is the vendor's to set anyway --
+# so its PR carries its own: the marker at the end of the body records
+# `seen=YYYY-MM-DD`, the day this workflow first proposed that exact version,
+# and `fp=`, a digest of every value the bump wrote (versions and sums).
+# merge-bot-prs.sh will not merge a `review` PR before seen + the cooldown. An
+# attacker who controls the vendor's channel can set a release date, but not
+# the day this repository first saw the release. The date is kept for as long
+# as the PR targets that version and its values are the same, across every
+# daily rebuild of the branch; a new version, or a sum that changed under the
+# same version (an artifact replaced upstream), starts it again. And while a
+# `review` PR is inside its cooldown it keeps its version even when the
+# vendor ships a newer one -- the AWS CLI releases almost daily, and chasing
+# each would restart the clock forever -- unless the newer one is lower (the
+# version was withdrawn) or the base already has it. Once it merges, the next
+# run proposes the newest version, with a fresh clock. No step needs a human.
 #
 # Idempotent. A branch carrying a commit this workflow did not make -- by
 # author or by committer -- is never touched: a human is working on it. An
@@ -46,6 +66,11 @@
 #                     is the query's exit status
 #   PIN_BUMP_RESULTS  also write the per-unit results, one JSON object per
 #                     line, to this file (the offline tests read it)
+#   PIN_BUMP_TODAY    YYYY-MM-DD, default today (UTC): the first-seen date a
+#                     new PR records, and what "inside the cooldown" is
+#                     measured against
+#   BUMP_COOLDOWN_DAYS  default 7; the same knob bump-pins.sh and
+#                     merge-bot-prs.sh read
 set -euo pipefail
 
 readonly BOT_NAME='github-actions[bot]'
@@ -62,9 +87,28 @@ base=${BASE_BRANCH:-main}
 dry=${DRY_RUN:-}
 stub=${PIN_BUMP_GH_STUB:-}
 repo=${GITHUB_REPOSITORY:-}
+today=${PIN_BUMP_TODAY:-$(date -u +%Y-%m-%d)}
+cooldown_days=${BUMP_COOLDOWN_DAYS:-7}
 
 log() { printf '%s\n' "$*" >&2; }
 die() { log "error: $*"; exit 2; }
+
+# A real calendar date in YYYY-MM-DD, not just the shape of one.
+valid_date() {
+  printf '%s' "$1" | grep -qxE '[0-9]{4}-[0-9]{2}-[0-9]{2}' \
+    && [ "$(jq -rn --arg d "$1" 'try ($d + "T00:00:00Z" | fromdateiso8601 | strftime("%Y-%m-%d")) catch ""')" = "$1" ]
+}
+# The first day a version first seen on DATE may merge: DATE + the cooldown.
+eligible_from() {
+  jq -rn --arg d "$1" --argjson n "$cooldown_days" '($d + "T00:00:00Z" | fromdateiso8601) + $n * 86400 | strftime("%Y-%m-%d")'
+}
+# 0 when $1 sorts strictly after $2, as bump-pins.sh compares versions.
+ver_gt() { [ "$1" != "$2" ] && [ "$(printf '%s\n%s\n' "$1" "$2" | sort -V | tail -1)" = "$1" ]; }
+sha256_text() {
+  if command -v sha256sum >/dev/null; then sha256sum | cut -d' ' -f1; else shasum -a 256 | cut -d' ' -f1; fi
+}
+# One `key=value` field of a pin-bump marker, or nothing.
+marker_field() { tr ' ' '\n' <<<"$1" | sed -n "s/^$2=//p" | head -1; }
 
 # Mutations: pushes, GitHub writes, dispatches. Printed, not run, in a dry run.
 run() {
@@ -110,6 +154,7 @@ one_unit() {
   local unit="$1" to="$2" old="$3"
   local branch="pin-bump/$unit" wt="$work/wt-$unit"
   local remote_sha pr_all open_json pr_num="" pr_url="" prev_to="" prev_class="" closed_same marker
+  local prev_seen="" prev_fp="" seen="" fp="" heal_if_same=""
   local action="" class="" new="" note="" errors=""
 
   row() { # STATUS ACTION -- one result line for the summary
@@ -128,9 +173,34 @@ one_unit() {
   if [ -n "$open_json" ]; then
     pr_num=$(jq -r .number <<<"$open_json"); pr_url=$(jq -r .url <<<"$open_json")
     marker=$(jq -r '.body // ""' <<<"$open_json" \
-      | grep -oE '<!-- pin-bump: unit=[^ ]+ to=[^ ]+( class=[^ ]+)? -->' | head -1 || true)
-    prev_to=$(sed -nE 's/.* to=([^ ]+)( class=[^ ]+)? -->/\1/p' <<<"$marker")
-    prev_class=$(sed -nE 's/.* class=([^ ]+) -->/\1/p' <<<"$marker")
+      | grep -oE '<!-- pin-bump: unit=[^ ]+ to=[^ ]+( [a-z]+=[^ ]+)* -->' | tail -1 || true)
+    prev_to=$(marker_field "$marker" to)
+    prev_class=$(marker_field "$marker" class)
+    prev_seen=$(marker_field "$marker" seen)
+    prev_fp=$(marker_field "$marker" fp)
+    valid_date "$prev_seen" || prev_seen=""
+  fi
+
+  # A `review` PR keeps its version rather than chasing a newer release (see
+  # the header) for its first-seen cooldown AND one more cooldown after it,
+  # the grace window in which the merge bot (hourly) gets to merge it. Holding
+  # only until the cooldown ended let one bad day -- CI red, checks still
+  # running, mergeability not computed -- hand the PR to a newer version with
+  # a fresh clock, and a vendor that releases near-daily (the AWS CLI) could
+  # then be starved of every fix. A PR still open after the grace window is
+  # stuck for some other reason, so the newer version is proposed instead.
+  # Only while the held version is still above the base's pin and not above
+  # what the vendor now calls latest -- a lower "latest" means it was
+  # withdrawn.
+  if [ -n "$prev_to" ] && [ "$prev_to" != "$to" ] && [ -n "$prev_class" ] && [ "$prev_class" != auto ] \
+     && [ -n "$prev_seen" ] && [[ "$today" < "$(eligible_from "$(eligible_from "$prev_seen")")" ]] \
+     && ver_gt "$prev_to" "$old" && ver_gt "$to" "$prev_to"; then
+    if [[ "$today" < "$(eligible_from "$prev_seen")" ]]; then
+      note="kept at $prev_to, first seen $prev_seen, until its cooldown ends on $(eligible_from "$prev_seen"); $to comes after it. "
+    else
+      note="kept at $prev_to, first seen $prev_seen and mergeable since $(eligible_from "$prev_seen"), until $(eligible_from "$(eligible_from "$prev_seen")") so the merge bot can take it; $to comes after it. "
+    fi
+    to=$prev_to
   fi
   closed_same=$(jq -r --arg to "$to" \
     '[.[] | select(.state == "CLOSED" and ((.body // "") | (contains("to=" + $to + " -->") or contains("to=" + $to + " class="))))][0].url // empty' \
@@ -166,14 +236,29 @@ one_unit() {
   fi
 
   if [ -n "$open_json" ] && [ "$prev_to" = "$to" ]; then
-    if [ -n "$remote_sha" ] && git merge-base --is-ancestor "origin/$base" "$remote_sha"; then
-      heal "$remote_sha"
-      return $?
+    if [ -z "$prev_seen" ] || [ -z "$prev_fp" ]; then
+      # A PR opened before the first-seen clock existed: rebuilt, so its body
+      # gets a marker merge-bot-prs.sh can read. Its clock starts today.
+      note="${note}rebuilt to record its first-seen date. "
+    elif [ -n "$remote_sha" ] && git merge-base --is-ancestor "origin/$base" "$remote_sha"; then
+      if [ "$prev_class" = auto ]; then
+        heal "$remote_sha"
+        return $?
+      fi
+      # A review PR is still inside (or near) its first-seen cooldown, and for
+      # trust-on-first-use units the sums ARE the evidence: an artifact the
+      # vendor replaced under the same version must restart the clock, not
+      # ride the old one to a merge. So the bump runs again below, and the
+      # branch is only healed, unchanged, if every value it writes is the
+      # same as the marker's fingerprint.
+      heal_if_same=1
+    else
+      # Same version, but the branch is behind the base. With "require
+      # branches to be up to date" on, it could never merge, and doing
+      # nothing would leave it stuck forever; so it is rebuilt like an
+      # outdated one.
+      note="${note}rebuilt because the branch was behind $base. "
     fi
-    # Same version, but the branch is behind the base. With "require branches
-    # to be up to date" on, it could never merge, and doing nothing would
-    # leave it stuck forever; so it is rebuilt like an outdated one.
-    note="rebuilt because the branch was behind $base. "
   fi
   # --- rebuild the branch from the base, in a throwaway worktree.
   rm -rf "$wt"
@@ -191,7 +276,7 @@ one_unit() {
   class=$(jq -r '.class // ""' <<<"$result")
   case "$(jq -r .status <<<"$result")" in
     bumped) ;;
-    deferred) note=$(jq -r .reason <<<"$result"); row deferred "none: inside the cooldown"; return 0 ;;
+    deferred) note="${note}$(jq -r .reason <<<"$result")"; row deferred "none: inside the cooldown"; return 0 ;;
     current)  row current "none: $base is already at $new"; return 0 ;;
     *)        note=$(jq -r '.error // "unknown"' <<<"$result"); row error "bump failed"; return 1 ;;
   esac
@@ -202,11 +287,40 @@ one_unit() {
   urls=$(jq -r '.integrity_urls | map("- " + .) | join("\n")' <<<"$result")
   version_url=$(jq -r '.version_url // ""' <<<"$result")
   released=$(jq -r 'if .released then "released " + .released else "release date not established" end' <<<"$result")
+  # Defence in depth for the marker read back from this body (the LAST
+  # `<!-- pin-bump: ... -->` is the bot's, written at the very end): text that
+  # came from a vendor or registry can carry no HTML comment of its own.
+  local t
+  for t in reason released version_url; do
+    printf -v "$t" '%s' "$(printf '%s' "${!t}" | tr '\r\n' '  ' | sed -e 's/<!--/< !--/g' -e 's/-->/-- >/g')"
+  done
   title="Bump $unit from $old to $new"
+
+  # The first-seen clock (see the header): kept while the version and every
+  # value written are the same as the open PR's, restarted otherwise.
+  local source eligible
+  fp=$(jq -r '(.pins // [])[]' <<<"$result" | sha256_text | cut -c1-16)
+  if [ -n "$heal_if_same" ] && [ "$new" = "$prev_to" ] && [ "$fp" = "$prev_fp" ]; then
+    heal "$remote_sha"
+    return $?
+  fi
+  if [ -n "$open_json" ] && [ "$prev_to" = "$new" ] && [ -n "$prev_seen" ] && [ "$prev_fp" = "$fp" ]; then
+    seen=$prev_seen
+  else
+    seen=$today
+    if [ -n "$prev_seen" ] && [ "$prev_to" = "$new" ] && [ -n "$prev_fp" ]; then
+      note="${note}first-seen clock restarted: the values this bump writes for $new changed since $prev_seen. "
+    fi
+  fi
+  eligible=$(eligible_from "$seen")
+  case "$(jq -r '.integrity // ""' <<<"$result")" in
+    tofu) source="Checksums computed by scripts/bump-pins.sh from its own download of each artifact (trust on first use: the vendor publishes no checksum; a vendor signature, where listed below, was verified first)" ;;
+    *)    source="Checksum or integrity source (the vendor's own file or registry record for this version; nothing was computed from a download)" ;;
+  esac
 
   local_run git -C "$wt" add -u
   printf '%s\n\n%s\n\nClassification: %s (%s)\nChecksum source:\n%s\n' \
-    "$title" "Rewritten by scripts/bump-pins.sh from the vendor's published checksums or registry record." \
+    "$title" "Rewritten by scripts/bump-pins.sh. $source." \
     "$class" "$reason" "${urls:-  (none published)}" > "$work/msg-$unit"
   local_run env GIT_AUTHOR_NAME="$BOT_NAME" GIT_AUTHOR_EMAIL="$BOT_EMAIL" \
     GIT_COMMITTER_NAME="$BOT_NAME" GIT_COMMITTER_EMAIL="$BOT_EMAIL" \
@@ -222,17 +336,27 @@ one_unit() {
     echo "| Files | $files |"
     echo "| Release | $version_url ($released) |"
     echo "| Classification | **$class**: $reason |"
+    if [ "$class" != auto ]; then
+      echo "| First seen | $seen: merges no earlier than **$eligible** |"
+    fi
     echo
-    echo "Checksum or integrity source (the vendor's own file for this version; nothing was computed from a download):"
+    echo "$source:"
     echo
     if [ -n "$urls" ]; then echo "$urls"; else echo "- none published: this download is not checksum-verified"; fi
     echo
-    echo "This PR **merges itself** (squash) once all four required checks pass on its head commit, and"
+    if [ "$class" = auto ]; then
+      echo "This PR **merges itself** (squash) once all four required checks pass on its head commit, and"
+    else
+      echo "This PR **merges itself** (squash) once all four required checks pass on its head commit and its"
+      echo "${cooldown_days}-day first-seen cooldown is over ($eligible), and"
+    fi
     echo "the image publishes right after. It will not merge red. Add the \`hold\` label to stop it."
     if [ "$class" != auto ]; then
       echo
       echo "Labelled \`$LABEL\` for information: $reason. The full build, smoke tests and"
-      echo "vulnerability gate are what it merges on."
+      echo "vulnerability gate are what it merges on, and the cooldown is when. While the cooldown runs, the"
+      echo "daily run keeps this PR on \`$new\` even if a newer version ships, so the clock is not restarted;"
+      echo "the newer one follows after this merges."
     fi
     echo
     echo "CI was started by dispatching *Build and Push to GHCR* and *Security* on this branch, since a push"
@@ -245,8 +369,11 @@ one_unit() {
     echo
     [ -n "${RUN_URL:-}" ] && { echo "Run: $RUN_URL"; echo; }
     # Read back by the next run: the version this PR targets, and its class,
-    # which the heal path needs without re-running the bump.
-    echo "<!-- pin-bump: unit=$unit to=$new class=$class -->"
+    # which the heal path needs without re-running the bump; and the
+    # first-seen date and values digest, which keep the clock across
+    # rebuilds. merge-bot-prs.sh reads class and seen from here too, and
+    # will not merge a PR whose marker it cannot read.
+    echo "<!-- pin-bump: unit=$unit to=$new class=$class seen=$seen fp=$fp -->"
   } > "$work/body-$unit.md"
 
   if [ -n "$dry" ]; then
@@ -280,6 +407,7 @@ one_unit() {
     fi
     action="opened"
   fi
+  [ "$class" = auto ] || action="$action, first seen $seen (merges from $eligible)"
 
   dispatch build-and-push.yml security.yml
 
@@ -389,7 +517,7 @@ finish() { # [STATUS]
 ensure_label() {
   local rc=0
   run gh label create "$LABEL" --repo "$repo" --color d93f0b \
-    --description "Major or unchecksummed automated update. Information only: it still merges when green" || rc=$?
+    --description "Major or unchecksummed automated update. Information only: it merges itself when green, after its first-seen cooldown" || rc=$?
   [ "$rc" -eq 0 ] && return 0
   gh_read labels label list --repo "$repo" --search "$LABEL" --json name \
     | jq -e --arg l "$LABEL" 'any(.[]; .name == $l)' >/dev/null
@@ -408,6 +536,8 @@ if [ -z "${DRIFT_FILE:-}" ] || [ ! -f "$DRIFT_FILE" ]; then
   die "DRIFT_FILE must name a check-pins.sh --format json report"
 fi
 [ -n "$repo" ] || die "GITHUB_REPOSITORY is required"
+case "$cooldown_days" in ''|*[!0-9]*) die "BUMP_COOLDOWN_DAYS must be a whole number" ;; esac
+valid_date "$today" || die "PIN_BUMP_TODAY must be a YYYY-MM-DD date"
 if [ -z "$stub" ]; then command -v gh >/dev/null || die "gh not found"; fi
 for cmd in git jq; do command -v "$cmd" >/dev/null || die "$cmd not found"; done
 [ -z "$(git status --porcelain --untracked-files=no)" ] || die "the checkout has uncommitted changes"
@@ -474,6 +604,10 @@ cat "$work/summary.md"
 # visible on the run page and not only in the summary.
 if [ -n "${GITHUB_ACTIONS:-}" ]; then
   jq -r 'select(.status != "error" and (.note | test("could not (set|remove) the"))) | "::warning::\(.unit): \(.note)"' "$RESULTS"
+  # A release date that could not be read holds the bump back (the cooldown
+  # fails closed), every day until it can be: say so, so a broken lookup does
+  # not freeze a pin unnoticed.
+  jq -r 'select(.status == "deferred" and (.note | test("release date unknown"))) | "::warning::\(.unit): \(.note)"' "$RESULTS"
   jq -r 'select(.status == "error") | "::error::\(.unit): \(.note)"' "$RESULTS"
 fi
 
