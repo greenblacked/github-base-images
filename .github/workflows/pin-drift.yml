@@ -117,10 +117,19 @@ jobs:
         if: github.event_name != 'pull_request' && steps.check.outputs.drift == 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
           TITLE: Pinned tool versions are behind upstream
+          MARKER: '<!-- pin-drift: tracking issue -->'
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
+          # The default shell is `bash -e` without pipefail: a failed lookup
+          # piped into jq would otherwise read as "no issue yet" and open a
+          # duplicate.
+          set -o pipefail
           {
+            # First, so it survives however the rest of the body changes;
+            # it is how the next run recognises this issue (see below).
+            echo "$MARKER"
             echo "Some hand-pinned tool versions have fallen behind the version their vendor ships."
             echo
             cat table.md
@@ -139,11 +148,34 @@ jobs:
             echo "once every pin is current. Last checked: $RUN_URL"
           } > body.md
 
-          # Idempotent by construction: find the existing open issue by exact
-          # title and edit it, so a daily run updates one issue rather than
-          # opening a new one every day.
-          existing=$(gh issue list --state open --limit 100 --json number,title \
-            | jq -r --arg t "$TITLE" 'map(select(.title == $t)) | .[0].number // empty')
+          # Idempotent by construction: find the existing open issue and edit
+          # it, so a daily run updates one issue rather than opening a new one
+          # every day.
+          #
+          # "The existing issue" is one THIS WORKFLOW opened, not merely one
+          # with the same title: anyone with a GitHub account can open an
+          # issue here, and matching on the title alone would let them pick
+          # the issue the bot then keeps updating and closing -- or one whose
+          # body they can rewrite, around the bot's findings. So an issue
+          # counts only when GitHub records its author as github-actions[bot]
+          # (a Bot account, which no person can sign in as; `.user.type` rules
+          # out a look-alike login) AND its body carries the marker above,
+          # which only the bot and the repository's own maintainers can write
+          # into a bot's issue. The marker also tells this issue apart from
+          # any other the bot opens with GITHUB_TOKEN (published-audit.yml
+          # keeps one too). The REST API is read directly, rather than
+          # `gh issue list --json author`, because it states the login and
+          # the account type exactly; pull requests come back from the same
+          # endpoint and are dropped. Every page is read: the old
+          # `--limit 100` would have missed the issue in a busy tracker and
+          # opened a second one.
+          existing=$(gh api --paginate "repos/$REPO/issues?state=open&per_page=100" \
+            | jq -rs --arg t "$TITLE" --arg m "$MARKER" '
+                add // []
+                | map(select(.pull_request == null
+                             and .user.login == "github-actions[bot]" and .user.type == "Bot"
+                             and .title == $t and ((.body // "") | contains($m))))
+                | .[0].number // empty')
 
           if [ -n "$existing" ]; then
             echo "updating existing issue #$existing"
@@ -157,11 +189,21 @@ jobs:
         if: github.event_name != 'pull_request' && steps.check.outputs.drift == 'false'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
           TITLE: Pinned tool versions are behind upstream
+          MARKER: '<!-- pin-drift: tracking issue -->'
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
-          existing=$(gh issue list --state open --limit 100 --json number,title \
-            | jq -r --arg t "$TITLE" 'map(select(.title == $t)) | .[0].number // empty')
+          set -o pipefail
+          # The same lookup as the step above: only the bot's own issue,
+          # by author and marker, never one that merely has the title.
+          existing=$(gh api --paginate "repos/$REPO/issues?state=open&per_page=100" \
+            | jq -rs --arg t "$TITLE" --arg m "$MARKER" '
+                add // []
+                | map(select(.pull_request == null
+                             and .user.login == "github-actions[bot]" and .user.type == "Bot"
+                             and .title == $t and ((.body // "") | contains($m))))
+                | .[0].number // empty')
           if [ -n "$existing" ]; then
             echo "closing #$existing -- every pin is current"
             gh issue close "$existing" --comment "Every pinned tool is now current. Verified by $RUN_URL"

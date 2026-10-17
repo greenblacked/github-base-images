@@ -761,6 +761,35 @@ jobs:
       # A baked-in credential in a public CI image is always fixable from this
       # repo, so it gates at any severity -- not only HIGH/CRITICAL, and with
       # no "unfixed" carve-out, because there is no upstream to wait on.
+      #
+      # What it does NOT look at. This runs Trivy's secret scanner with its
+      # defaults, and those include Trivy's built-in allow rules
+      # (pkg/fanal/secret/builtin-allow-rules.go): a file whose path matches
+      # one is never read at all. At the Trivy release this action installs,
+      # that is any path containing `test` (as `test...` at the start, or
+      # `/test`, `-test`, `_test`, `.test`) or `example`; any `vendor/`,
+      # `locale/` or `locales/` directory; `*.md` files and Python `.dist-info/`
+      # metadata; and, by prefix, usr/share/, usr/include/, usr/lib/ (which
+      # takes in usr/lib/python3/dist-packages and usr/lib/gems),
+      # usr/local/lib/pythonX.Y/ (every pip-installed site-packages), usr/local/go/,
+      # opt/yarn-v*/, usr/src/wordpress/ and var/log/anaconda/. Binary files
+      # are skipped too (Python .pyc aside), and so is anything under 10 bytes.
+      # So this gate is "no secret Trivy can see in the files it reads", not
+      # "no secret anywhere in the image": a key under, say, a vendored test
+      # directory or in site-packages would pass. Most of what this
+      # repository's builds add -- tools in /usr/local/bin, SDKs under /opt,
+      # configuration in /etc and home directories -- is outside those paths
+      # and is read; anything installed into a system Python's site-packages,
+      # or into a directory with `test` or `vendor` in its path, is not. (The
+      # gsutil urllib3 fixtures that ci-cloud deletes were caught because
+      # their path, .../urllib3/dummyserver/, matches no allow rule.)
+      #
+      # The allow rules are deliberately left on. Turning them off would
+      # surface every test fixture that upstream packages vendor (private
+      # keys for test servers, sample tokens), in images this repository
+      # does not otherwise touch, and fail builds on findings nobody here can
+      # judge or remove without unreviewed exceptions. docs/security.md says
+      # the same for readers of the image.
       - name: Secret gate (${{ matrix.arch }})
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:

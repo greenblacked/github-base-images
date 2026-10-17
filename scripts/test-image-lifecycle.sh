@@ -331,6 +331,35 @@ serve "https://endoflife.date/api/v1/products/python/" v0.json
 plan_run "$t"
 check "an answer in another shape is unreadable: a warning" warned "python: endoflife.date"
 
+echo "plan 15: a codename or release name that is not plain is refused, and never reaches the log as a command"
+# endoflife.date is data from outside. A codename carrying a line break and
+# a workflow command would otherwise become part of a tag, a directory name
+# and, in the job log, a line of its own that the runner obeys
+# ("::stop-commands::" turns every later annotation off).
+no_command_lines() { ! grep -qE '^[[:space:]]*::|##\[' "$err"; }
+t=$(new_tree p15); fixtures p15
+release python "{\"name\": \"$PY\", \"releaseDate\": \"$(day -30)\"}"
+hub python "$PY-slim-trixie" amd64 arm64
+set_rel debian 13 codename '"Trixie\n::stop-commands::pwned\n##[group]x"'
+plan_run "$t"
+check "exit 0, no action" bash -c "[ $rc -eq 0 ] && [ ! -s '$out' ]"
+check "  a warning names endoflife.date (debian) and quotes the codename on one line" \
+  grep -qF "warning: endoflife.date (debian): the newest release's name 13 or codename \$'trixie\\n::stop-commands::pwned\\n## [group]x' is not one" "$err"
+check "  and the add is not made on an older Debian instead" warned "python $PY: endoflife.date (debian) could not be read"
+check "  no line of the log starts a workflow command" no_command_lines
+t=$(new_tree p15b); fixtures p15b
+set_rel debian 13 codename '"trixie;rm"'
+release python "{\"name\": \"$PY\", \"releaseDate\": \"$(day -30)\"}"
+plan_run "$t"
+check "a codename with punctuation: no action" [ ! -s "$out" ]
+check "  a warning quotes it" grep -qF 'codename trixie\;rm is not one' "$err"
+t=$(new_tree p15c); fixtures p15c
+release python "{\"name\": \"$PY\n::stop-commands::pwned\", \"releaseDate\": \"$(day -30)\"}"
+release python "{\"name\": \"::warning::$PY\", \"releaseDate\": \"$(day -30)\"}"
+plan_run "$t"
+check "a release name with a line break or a command: no action" [ ! -s "$out" ]
+check "  no line of the log starts a workflow command" no_command_lines
+
 # ================================================================================
 echo "apply 1: a scaffold per family -- lints, parses, and changes only what it must"
 t=$(new_tree a1)

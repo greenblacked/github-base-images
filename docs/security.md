@@ -84,7 +84,29 @@ for it (a step summary is capped at 1 MiB):
   - All three scans and the decision are kept as the `vuln-gate-<image>-<arch>` artifact.
 - **Secret scan** — **gates at any severity**. A baked-in credential in a public CI image is
   always fixable from this repo, with no upstream to wait on, so there is no excuse for shipping
-  one.
+  one. It is Trivy's secret scanner with its defaults, and that is **not the whole image**:
+  Trivy's [built-in allow rules](https://github.com/aquasecurity/trivy/blob/main/pkg/fanal/secret/builtin-allow-rules.go)
+  skip every file whose path matches one, without reading it. At the Trivy release the pinned
+  action installs, that is:
+  - any path containing `test` (`test…` at the start, or `/test`, `-test`, `_test`, `.test`) or
+    `example`;
+  - any `vendor/`, `locale/` or `locales/` directory, `*.md` files, and Python `.dist-info/`
+    metadata;
+  - by prefix: `usr/share/`, `usr/include/`, `usr/lib/` (which includes Debian's
+    `dist-packages` and `usr/lib/gems`), `usr/local/lib/pythonX.Y/` (every pip-installed
+    `site-packages`), `usr/local/go/`, `opt/yarn-v*/`, `usr/src/wordpress/` and
+    `var/log/anaconda/`;
+  - binary files (Python `.pyc` aside) and files under 10 bytes.
+
+  Everything else is read — the tools in `/usr/local/bin`, the SDKs under `/opt`, configuration
+  in `/etc` and home directories, which is where this repository's own builds put things. So the
+  gate means *no secret Trivy can see in the files it reads*; it does not vouch for upstream
+  test fixtures or for anything installed into a system Python's `site-packages`. The allow rules
+  are left on deliberately: turning them off would fail builds on the private keys and sample
+  tokens that upstream packages ship in their test suites, which nobody here can judge or remove
+  without a growing list of unreviewed exceptions. When a fixture *is* outside the rules, the gate
+  catches it and it is deleted in the Dockerfile — `ci-cloud` removes the two test-server keys in
+  gsutil's vendored urllib3 (`…/urllib3/dummyserver/`) this way.
 - **Misconfiguration scan** — lints the Dockerfile's build instructions (missing `USER`, `ADD` vs
   `COPY`, …). Best-practice guidance rather than exploitable findings, so it is **reported, not
   gating** — the gates stay reserved for real, fixable security problems.
@@ -347,9 +369,13 @@ It is a separate workflow so a finding can never block an image build, and so it
 days when no image directory changed — `build-and-push.yml` is path-filtered, this is not. It runs
 daily, on every push and pull request, and on a dispatch.
 
-- **Repository secret scan** — Trivy over the working tree, covering workflows, docs, and the
+- **Repository secret scan** — Trivy over the working tree, covering workflows, scripts, and the
   Makefile, none of which the image scan can see (nothing is `COPY`ed in). **Gates**, on the same
-  reasoning as the image secret gate.
+  reasoning as the image secret gate — and with the same built-in allow rules (see *Secret scan*
+  above), so it does not read Markdown (`*.md`, which is most of the docs) or any path containing
+  `test` or `example` (the `scripts/test-*.sh` suites among them). The git history scan below
+  uses gitleaks's own default allowlist instead, which does not skip Markdown or test paths, so
+  those files are still read there — reported in its log, not gated.
 - **Workflow security audit** — `zizmor` checks whether the workflows are *safe*: template
   injection through `${{ }}` into `run:` blocks, over-broad permissions, unpinned actions, cache
   poisoning. `actionlint` already checks they are *valid*; this is the other half. **Reported,
@@ -565,6 +591,9 @@ alerts, and this repository adds no personal access token or app credential to r
 report says so in its own section and links to *Security → Secret scanning* for a manual look.
 Secrets are covered in CI by the Trivy secret gate on every image, the Trivy secret scan of the
 working tree (which gates), and the gitleaks scan of the git history (reported, in its job log).
+Both Trivy scans skip the paths Trivy's built-in allow rules cover (test and example paths,
+vendored directories, Markdown, system library directories; listed under
+[Tests and security scanning](#tests-and-security-scanning) (*Secret scan*)).
 
 The Dependabot fetch needs the `vulnerability-alerts: read` token permission, which is separate
 from `security-events`. The pinned actionlint predates that permission, so

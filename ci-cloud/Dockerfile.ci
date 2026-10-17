@@ -143,9 +143,17 @@ RUN /opt/az/bin/python3 -m pip install --no-cache-dir --disable-pip-version-chec
 # any finding at any severity. That gate is right to fire: one that has to be
 # told which private keys are acceptable stops being a gate. So the fixtures
 # are removed rather than added to a scanner exception list, which also means
-# the published image genuinely contains no private key. Nothing in a CI image
-# needs urllib3's test server. If a future SDK bundles more fixtures the gate
-# will say so, and they get deleted here too.
+# these two keys are not in the published image at all. Nothing in a CI image
+# needs urllib3's test server.
+#
+# What the gate can vouch for is narrower than "no private key anywhere":
+# Trivy's built-in allow rules (listed above the Secret gate step in
+# .github/workflows/build-image.yml) skip any path with `test`, `example` or
+# `/vendor/` in it, and site-packages, among others. These fixtures were
+# caught only because .../urllib3/dummyserver/ happens to match none of
+# them. A future SDK that bundles more fixtures will be caught the same way
+# if their path is outside those rules -- and they get deleted here too --
+# but fixtures under, say, a `tests/` directory would pass the gate unseen.
 ARG TARGETARCH
 ARG GCLOUD_VERSION=589.0.0
 ARG GCLOUD_SHA256_AMD64=f865da648f6fdae2015abb5b32eaa0eb10520e88f0ca735cfb33795868c8d26f
