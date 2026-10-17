@@ -315,7 +315,7 @@ one_unit() {
   eligible=$(eligible_from "$seen")
   case "$(jq -r '.integrity // ""' <<<"$result")" in
     tofu) source="Checksums computed by scripts/bump-pins.sh from its own download of each artifact (trust on first use: the vendor publishes no checksum; a vendor signature, where listed below, was verified first)" ;;
-    *)    source="Checksum or integrity source (the vendor's own file or registry record for this version; nothing was computed from a download)" ;;
+    *)    source="Checksum or integrity source (the vendor's own file or registry record for this version; nothing was computed from a download; where the vendor signs that file, its signature, listed below, was verified first)" ;;
   esac
 
   local_run git -C "$wt" add -u

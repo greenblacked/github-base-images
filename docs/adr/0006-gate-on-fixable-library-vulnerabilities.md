@@ -84,7 +84,11 @@ So the gate takes **exceptions** from `.github/vuln-exceptions.json`, under thes
   (packages vendored inside pip appear under the aggregate `Python` target), `purls` names the
   package and its exact installed version as Trivy's PURL for the finding
   (`pkg:pypi/msgpack@1.1.2`): the same id in another package, or in another version of the same
-  one, still fails. When both are given, a finding must match both.
+  one, still fails. When both are given, a finding must match both. Since 2026-10-17 an entry
+  with `purls` must have `paths` too, or a `no_path` field saying why Trivy reports the finding
+  with no path: a PURL alone would also excuse a fixable copy of the same package and version
+  added elsewhere in the image, so purl-only is a reviewed exception, not a default (see
+  [ADR 0008's amendment](0008-self-updating.md#amendment-2026-10-17-vendor-signatures-on-checksums-files-and-exceptions-narrowed-to-a-path)).
 - **Ninety days at most.** Each entry has an `expires` date, which `scripts/lint.sh` rejects if it
   is more than 90 days away. It becomes the ignore file's `expired_at`, and from that date Trivy
   stops applying the entry: the image goes red again and someone has to look, then remove the

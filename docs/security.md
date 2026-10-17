@@ -251,18 +251,27 @@ JSON has no comments, so the file's format lives here. It is an array of entries
   `…dist-info/METADATA` or `.gemspec` file) the entry is limited to, written out in full as Trivy
   reports it: no leading `/`, no glob characters. Use it whenever the gate table, its *Report
   Summary* or the JSON report shows a stable path.
-- `purls` is for findings with no usable path (pip's vendored packages appear under the aggregate
-  `Python` target): the package's PURL as Trivy prints it in the JSON report's `PkgIdentifier`,
+- `purls` is the package's PURL as Trivy prints it in the JSON report's `PkgIdentifier`,
   `pkg:<type>/<name>@<version>`, for example `["pkg:pypi/msgpack@1.1.2"]`. It pins the exact
   installed version, so the entry stops applying when the package changes.
+- An entry with `purls` needs `paths` as well. A PURL alone matches that package and version
+  anywhere in the image, so an entry written for a copy vendored inside an upstream release would
+  also excuse a fixable copy of the same package added somewhere else; with `paths` too, Trivy
+  matches only the copy the entry was written for.
+- `no_path` is the one way to keep `purls` without `paths`: a sentence on why Trivy reports the
+  finding with no path to narrow to. Today that is only pip's vendored packages, which Trivy reads
+  from `pip/_vendor/bom.cdx.json` with no package path, under the aggregate `Python` target that
+  every site-packages package in the image shares too. Check it in the JSON report: the finding
+  has no `PkgPath`, and its `Target` is `Python`. `no_path` is read by lint and by
+  `build-image.yml`'s checks, and never written into the Trivy ignore file.
 
 ### Adding and renewing
 
 **Adding one.** Take the ids from the failing gate step's table — all of them, both
 architectures — and check that no release of the thing that bundles them carries the fix yet.
 Add one entry per image and id, then run `./scripts/lint.sh`, which checks every field, rejects
-an unknown image, a malformed id, date, path or PURL, an entry with neither `paths` nor `purls`, a
-duplicate, or an expiry more than 90 days out. A change to the file rebuilds exactly the images
+an unknown image, a malformed id, date, path or PURL, an entry with neither `paths` nor `purls`,
+`purls` with neither `paths` nor `no_path`, a duplicate, or an expiry more than 90 days out. A change to the file rebuilds exactly the images
 whose entries changed, on the pull request and again on `main`, and each gate step prints the
 Trivy ignore file it was given in its log and job summary.
 
@@ -646,7 +655,37 @@ downloaded binary — the tools in the images and each lint engine — is checks
 the vendor publishes a checksum, that is the one. The three that publish none (the AWS CLI, the
 Docker static client, gcloud) carry a trust-on-first-use sha256 that `scripts/bump-pins.sh`
 records from its own download, after verifying AWS's signature for the AWS CLI; they are labelled
-as such, and listed in [CONTRIBUTING.md](../CONTRIBUTING.md#what-does-not-belong-in-an-image). The
+as such, and listed in [CONTRIBUTING.md](../CONTRIBUTING.md#what-does-not-belong-in-an-image).
+
+A checksums file taken from the same release as the artifact only proves the two were published
+together, so wherever the vendor signs it, `bump-pins.sh` verifies that signature before it reads
+a single checksum, and a missing, bad or wrong-identity signature fails the bump (an error row:
+nothing is edited, no pull request is opened). The identities and keys are pinned in its `SIGS`
+table; each was read from a real release and verified end to end before it was pinned:
+
+| Tool | What is signed | Verified with | Pinned identity or key |
+|---|---|---|---|
+| terraform | `terraform_<v>_SHA256SUMS` (`.sig`) | `gpgv` | HashiCorp's key, `scripts/keys/hashicorp.asc` (from `hashicorp.com/.well-known/pgp-key.txt`), primary fingerprint `C874011F0AB405110D02105534365D9472D7468F` |
+| AWS CLI | each installer zip (`.sig`) | `gpgv` | AWS's key, `scripts/keys/aws-cli.asc`, fingerprint `FB5DB77FD5C118B80511ADA8A6310ACC4672475C` |
+| trivy | `trivy_<v>_checksums.txt` (`.sigstore.json`) | `cosign verify-blob` | `https://github.com/aquasecurity/trivy/.github/workflows/reusable-release.yaml@refs/tags/v<v>`, issuer `https://token.actions.githubusercontent.com` |
+| syft | `syft_<v>_checksums.txt` (`.sigstore.json`) | `cosign verify-blob` | `https://github.com/anchore/syft/.github/workflows/release.yaml@refs/heads/main`, issuer `https://token.actions.githubusercontent.com` (anchore releases from `main`) |
+| grype | `grype_<v>_checksums.txt` (`.sigstore.json`) | `cosign verify-blob` | `https://github.com/anchore/grype/.github/workflows/release.yaml@refs/heads/main`, issuer `https://token.actions.githubusercontent.com` |
+| cosign | `cosign_checksums.txt` (`.sigstore.json`) | `cosign verify-blob` | `keyless@projectsigstore.iam.gserviceaccount.com`, issuer `https://accounts.google.com` |
+
+The identities are exact, not patterns, and `bump-pins.sh --check` (run by lint) refuses a
+pattern, and refuses a signed tool with any file it reads that has no signature row. The cosign
+that verifies is the one `sigstore/cosign-installer` installs in the pin-bump workflow — the same
+action, pinned by the same SHA, that signs the images — never the cosign release being bumped.
+
+Not signature-checked, and why: kubectl signs each binary rather than its `.sha256` file, as a
+detached `.sig` and `.cert` with no Sigstore bundle, so checking it would mean downloading every
+binary and an online Rekor lookup (not yet done); gitleaks, golang-migrate, hadolint and
+actionlint publish no signature; osv-scanner publishes SLSA provenance, which needs
+`slsa-verifier` rather than cosign; Composer's `.asc` signs the phar, not the `sha256sum` file the
+bump reads; the Docker static client and gcloud publish neither a checksum nor a signature (trust
+on first use, above).
+
+The
 Python packages installed outside an image's base — the Azure CLI's swapped-in libraries
 (`ci-cloud/az-overrides.txt`) and zizmor (`.github/zizmor-requirements.txt`) — are exact versions
 installed with `pip --require-hashes`, every hash from PyPI. The one third-party apt repository,

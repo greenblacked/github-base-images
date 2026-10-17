@@ -320,3 +320,62 @@ a GitHub release whose asset is replaced after publication keeps its old `publis
 
 **Revisit if** a vendor starts publishing a checksum or a trustworthy release date for one of the
 three: move it to `sums` and its vendor date, and drop the trust-on-first-use row.
+
+## Amendment (2026-10-17): vendor signatures on checksums files, and exceptions narrowed to a path
+
+**Context.** Two things an automated merge relies on were weaker than they read.
+
+- A `sums` bump takes its checksums from the vendor's checksums file, read from the same release
+  as the artifact. That proves only that the two were published together: whoever can replace a
+  release asset can replace both, and the bump would pin the substitute and merge it. Only the
+  AWS CLI's signature was checked, because it was a trust-on-first-use download.
+- An exception narrowed only by `purls` matches that package and version anywhere in the image.
+  Trivy ANDs `paths` and `purls`, so with a path the entry excuses the copy it was written for;
+  without one, the entry for urllib3 vendored inside pip would also excuse a fixable urllib3 of
+  the same version installed next to it, with nothing in the gate to say so.
+
+**Decision.**
+
+- **Every vendor signature the bump can check is checked, before any checksum is read.** The
+  `SIGS` table in `scripts/bump-pins.sh` pins, per signed file, the signature's URL and either a
+  GPG key (file in `scripts/keys/`, primary fingerprint) or a Sigstore identity and OIDC issuer,
+  exact rather than a pattern. terraform's `SHA256SUMS` is verified with `gpgv` under HashiCorp's
+  key `C874011F0AB405110D02105534365D9472D7468F`; the `.sigstore.json` bundles on trivy's, syft's,
+  grype's and cosign's checksums files with `cosign verify-blob`, as trivy's
+  `reusable-release.yaml` at the release's own tag, anchore's `release.yaml` on `main` (which is
+  where anchore releases from), and cosign's `keyless@projectsigstore.iam.gserviceaccount.com`
+  (issuer `https://accounts.google.com`). Each identity was read from a current release's
+  certificate and verified end to end before it was pinned. A missing, bad or wrong-identity
+  signature fails the unit: an error row, nothing edited, no PR, nothing merged.
+  `bump-pins.sh --check` (in lint) rejects an identity that is not exact, and a signed tool that
+  reads any file with no signature row.
+- **cosign comes from the action that already signs the images.** The pin-bump workflow installs
+  it with `sigstore/cosign-installer`, at the same SHA and default cosign release as
+  `build-image.yml` — no new action, and the installer checks that cosign against digests pinned
+  in the action itself. It is never the cosign release a bump is moving to, and nothing the bump
+  verifies is executed.
+- **Exceptions with `purls` carry `paths`, or say why they cannot.** Where Trivy reports a path,
+  the entry lists it: the .NET SDK 8.0.426 `deps.json` files in `ci-dotnet8`. Where it reports
+  none — pip's vendored packages, read from `pip/_vendor/bom.cdx.json` under the aggregate
+  `Python` target that site-packages shares — the entry keeps `purls` alone and must say so in
+  `no_path`. `scripts/lint.sh` and `build-image.yml`'s exception step both reject `purls` with
+  neither; the ignore file Trivy reads is unchanged apart from the added paths.
+
+**Consequences.**
+
+- A release whose checksums file was replaced, or re-signed by anyone but the vendor's pipeline,
+  is not bumped; the error row says which signature failed. A vendor that changes its release
+  workflow or signing identity fails its bumps too, for a person to check and update the row.
+- kubectl, gitleaks, golang-migrate, osv-scanner, hadolint, actionlint and Composer are still
+  taken on the strength of their checksums file alone: their vendors sign nothing the bump reads
+  in a form it can check (docs/security.md, *Supply-chain pins*, has the reason for each).
+- A purl-only entry still cannot tell pip's vendored copy from a site-packages copy of the same
+  version: Trivy gives neither a distinguishing path. `no_path` makes that a reviewed decision, and
+  for `ci-cloud`'s urllib3 it records that `az-overrides.txt` is what keeps the site-packages copy
+  fixed.
+- `ci-dotnet8`'s entries stop applying when an SDK patch release moves `sdk/<version>/`; the gate
+  then lists those findings as inherited from the base image, and the entries need new paths.
+
+**Revisit if** kubectl ships Sigstore bundles for its `.sha256` files, or another pinned vendor
+starts signing its checksums: add its `SIGS` row. Or if Trivy reports a path for pip's vendored
+packages: replace `no_path` with it.

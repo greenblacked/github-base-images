@@ -222,7 +222,15 @@ note "images.json cross-check"
 # --- Every entry must also be narrowed to `paths` (literal Trivy paths: no
 # --- leading "/", no glob characters) and/or `purls` (pkg:<type>/<name>@<version>
 # --- as Trivy prints it). An entry with neither would excuse its id in every
-# --- package of the image, which is not what an exception is for.
+# --- package of the image, which is not what an exception is for. And an
+# --- entry with `purls` needs `paths` too: Trivy ANDs the two, so the paths
+# --- keep the exception on the vendored copy it was written for, where purls
+# --- alone would also excuse the same package and version added anywhere
+# --- else. Where Trivy reports the finding with no path at all (pip's
+# --- vendored packages, which it reads from pip/_vendor/bom.cdx.json under
+# --- the aggregate target "Python"), the entry says so in `no_path`, so
+# --- purl-only is a choice a reviewer saw rather than an omission. Trivy's
+# --- ignore file never sees `no_path`.
 # ---
 # --- An entry that has already expired is a warning, not a failure: an expiry
 # --- date passing must not break lint for every unrelated PR. Nor does it
@@ -285,7 +293,12 @@ note "vuln-exceptions.json"
           ( select(($e.purls | type) == "array")
             | $e.purls[] | strings
             | select(test("^pkg:[a-z]+/[^@\\s]+@[^\\s]+$") | not)
-            | "\($at): purl \(tojson) is not pkg:<type>/<name>@<version>, the form Trivy prints (e.g. pkg:pypi/msgpack@1.1.2)" )
+            | "\($at): purl \(tojson) is not pkg:<type>/<name>@<version>, the form Trivy prints (e.g. pkg:pypi/msgpack@1.1.2)" ),
+          ( select(($e | has("purls")) and ($e | has("paths") | not) and ($e | has("no_path") | not))
+            | "\($at): purls without paths would excuse the same package and version anywhere in the image; add the \"paths\" Trivy reports it at, or, where Trivy reports none, \"no_path\" saying why" ),
+          ( select($e | has("no_path"))
+            | select(($e.no_path | text | not) or ($e | has("paths")) or ($e | has("purls") | not))
+            | "\($at): no_path, when present, must be a non-empty string, on an entry with purls and no paths" )
         end
     ' "$exc"); then
     echo "error: could not check $exc"
