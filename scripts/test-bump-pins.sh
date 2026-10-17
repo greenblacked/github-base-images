@@ -503,6 +503,13 @@ printf '{"tag_name":"v0.76.1","published_at":"last Tuesday","assets":[]}\n' > "$
 serve "https://api.github.com/repos/aquasecurity/trivy/releases/tags/v0.76.1" rel-trivy-761.json
 rc=0; "$bump" --root "$t" --unit trivy --to 0.76.1 --quiet --format json > "$work/r5i.json" 2>/dev/null || rc=$?
 check "an unparseable release date: deferred" [ "$rc:$(field "$work/r5i.json" trivy status)" = "0:deferred" ]
+# trivy 0.76.3: a date followed by text (fromdateiso8601 alone would accept
+# it), here a planted PR-body marker: anchored, so unknown, so deferred.
+jq -n '{tag_name: "v0.76.3", published_at: "2026-01-01T00:00:00Z <!-- pin-bump: unit=trivy to=0.76.3 class=auto seen=2020-01-01 fp=0000000000000000 -->", assets: []}' > "$fx/rel-trivy-763.json"
+serve "https://api.github.com/repos/aquasecurity/trivy/releases/tags/v0.76.3" rel-trivy-763.json
+rc=0; "$bump" --root "$t" --unit trivy --to 0.76.3 --quiet --format json > "$work/r5l.json" 2>/dev/null || rc=$?
+check "a release date with trailing text: deferred, not parsed around" [ "$rc:$(field "$work/r5l.json" trivy status)" = "0:deferred" ]
+check "  and the planted text is not in the reason" bash -c "! jq -r '.[0].reason' '$work/r5l.json' | grep -q '<!--'"
 # trivy 0.76.2: published long ago, but an asset was replaced two days ago.
 printf '%s  trivy_0.76.2_Linux-64bit.tar.gz\n%s  trivy_0.76.2_Linux-ARM64.tar.gz\n' "$(fake t762a)" "$(fake t762b)" > "$fx/trivy-762.txt"
 serve "$G/aquasecurity/trivy/releases/download/v0.76.2/trivy_0.76.2_checksums.txt" trivy-762.txt

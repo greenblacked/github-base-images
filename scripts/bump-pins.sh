@@ -713,8 +713,15 @@ bump_unit() {
     if [ "$rc" -eq "$NO_FIXTURE" ]; then
       released=""; fail_unit "$unit" "no fixture for the release date of $new"; return 0
     fi
+    # Anchored before it is parsed: jq's fromdateiso8601 accepts trailing
+    # text after a space, and this string is the vendor's -- it ends up in the
+    # PR body, where a planted `<!-- pin-bump: ... -->` would be read as the
+    # bot's own marker. Anything but a bare UTC timestamp is "unknown".
+    if [ "$rc" -eq 0 ] && ! [[ "$released" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\.[0-9]+)?Z$ ]]; then
+      rc=65
+    fi
     if [ "$rc" -ne 0 ] || [ -z "$released" ] || ! epoch=$(iso_to_epoch "$released" 2>/dev/null) || [ -z "$epoch" ]; then
-      log info "$unit: could not establish the release date of $new (exit $rc, got '${released}'); deferred"
+      log info "$unit: could not establish the release date of $new (exit $rc, got '$(printf '%s' "$released" | tr -c 'A-Za-z0-9:.+-' '?' | cut -c1-40)'); deferred"
       released=""
       emit "$unit" deferred "$old" "$new" "" "release date unknown, so the ${cooldown_days}-day cooldown cannot be confirmed; not bumped until it can" ""
       return 0

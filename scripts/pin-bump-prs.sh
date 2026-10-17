@@ -173,7 +173,7 @@ one_unit() {
   if [ -n "$open_json" ]; then
     pr_num=$(jq -r .number <<<"$open_json"); pr_url=$(jq -r .url <<<"$open_json")
     marker=$(jq -r '.body // ""' <<<"$open_json" \
-      | grep -oE '<!-- pin-bump: unit=[^ ]+ to=[^ ]+( [a-z]+=[^ ]+)* -->' | head -1 || true)
+      | grep -oE '<!-- pin-bump: unit=[^ ]+ to=[^ ]+( [a-z]+=[^ ]+)* -->' | tail -1 || true)
     prev_to=$(marker_field "$marker" to)
     prev_class=$(marker_field "$marker" class)
     prev_seen=$(marker_field "$marker" seen)
@@ -278,6 +278,13 @@ one_unit() {
   urls=$(jq -r '.integrity_urls | map("- " + .) | join("\n")' <<<"$result")
   version_url=$(jq -r '.version_url // ""' <<<"$result")
   released=$(jq -r 'if .released then "released " + .released else "release date not established" end' <<<"$result")
+  # Defence in depth for the marker read back from this body (the LAST
+  # `<!-- pin-bump: ... -->` is the bot's, written at the very end): text that
+  # came from a vendor or registry can carry no HTML comment of its own.
+  local t
+  for t in reason released version_url; do
+    printf -v "$t" '%s' "$(printf '%s' "${!t}" | tr '\r\n' '  ' | sed -e 's/<!--/< !--/g' -e 's/-->/-- >/g')"
+  done
   title="Bump $unit from $old to $new"
 
   # The first-seen clock (see the header): kept while the version and every

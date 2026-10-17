@@ -490,7 +490,7 @@ pin_bump_cooled() {
   today=${MERGE_BOT_TODAY:-$(date -u +%Y-%m-%d)}
   cooldown=${BUMP_COOLDOWN_DAYS:-7}
   marker=$(jq -r '.body // ""' <<<"$detail" \
-    | grep -oE '<!-- pin-bump: unit=[^ ]+ to=[^ ]+( [a-z]+=[^ ]+)* -->' | head -1 || true)
+    | grep -oE '<!-- pin-bump: unit=[^ ]+ to=[^ ]+( [a-z]+=[^ ]+)* -->' | tail -1 || true)
   field_of() { tr ' ' '\n' <<<"$marker" | sed -n "s/^$1=//p" | head -1; }
   if [ -z "$marker" ] || [ "$(field_of unit)" != "$unit" ]; then
     note="no pin-bump marker for $unit in the body, so its cooldown cannot be confirmed; the daily pin-bump run rewrites it"

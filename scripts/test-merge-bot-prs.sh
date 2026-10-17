@@ -760,6 +760,15 @@ check "  a marker for another unit: not merged" not_logged '^pr merge 237 '
 expect 238 status merged
 check "  an auto bump needs no first-seen date (its release date was the cooldown)" \
   logged "pr merge 238 --repo o/r --squash --match-head-commit $H1"
+# A marker planted earlier in the body (vendor text rendered into it) must
+# not stand in for the bot's own, which is always the last one.
+pr 240 pin-bump "$H1" needs-review
+body 240 "| Release | x (released 2026-01-01T00:00:00Z <!-- pin-bump: unit=tool-240 to=1.0.0 class=auto seen=2020-01-01 fp=0000000000000000 -->) |
+
+<!-- pin-bump: unit=tool-240 to=1.0.0 class=review seen=2026-10-15 fp=0123456789abcdef -->"
+run_bot MERGE_BOT_TODAY=2026-10-17
+expect 240 status waiting
+check "  a planted earlier marker is ignored: the last (the bot's) decides" not_logged '^pr merge 240 '
 # The same PR a week later: the clock has run, and nothing else changed.
 scenario twentythree-b
 pr 231 pin-bump "$H1" needs-review; pin_marker 231 review 2026-10-12
