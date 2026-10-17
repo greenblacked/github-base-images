@@ -30,6 +30,19 @@
 # would pass. The build's `sha256sum --check` is then the cross-verification:
 # if the vendor's file and the vendor's artifact ever disagree, CI goes red.
 #
+# A checksums file read from the same release as the artifact proves only that
+# the two were published together: whoever could replace one could replace
+# both. So wherever the vendor signs that file, the signature is checked
+# before a single checksum is read from it (the SIGS table below): HashiCorp's
+# GPG signature on terraform's SHA256SUMS, against HashiCorp's key pinned by
+# fingerprint, and the Sigstore bundles trivy, syft, grype and cosign attach
+# to their checksums files, with `cosign verify-blob` pinned to the vendor's
+# own release identity -- the workflow (or service account) and the OIDC
+# issuer that signed it, so a bundle signed by anyone else, a stranger's
+# workflow included, fails. A signature that is missing, bad, or by another
+# identity fails the unit: it is an error row, nothing is edited, and nothing
+# is merged.
+#
 # The exception is the three vendors that publish no checksum at all: the AWS
 # CLI, the Docker static client and gcloud (integrity "tofu"). For those this
 # script downloads each artifact and records the sha256 of what it got --
@@ -46,7 +59,8 @@
 #
 # Each bump is classified:
 #   auto    the vendor publishes a checksum (or the registry an integrity
-#           digest), the version change is not a semver major, and the release
+#           digest) -- signed, and the signature verified, wherever the vendor
+#           signs it -- the version change is not a semver major, and the release
 #           is at least the cooldown old. Safe to merge once CI is green.
 #   review  anything else that can still be bumped: no vendor checksum (AWS
 #           CLI, Docker client, gcloud) or a major version. It merges itself
@@ -71,7 +85,8 @@
 # (epoch seconds) fixes "now" for the cooldown. In fixture mode only,
 # BUMP_PINS_KEYS (a directory) and BUMP_PINS_KEY_FPR stand in for scripts/keys
 # and the pinned signing-key fingerprint, so the tests can sign with a
-# throwaway key. See scripts/test-bump-pins.sh.
+# throwaway key; the Sigstore rows run whatever `cosign` is first on PATH,
+# which the tests make a fake. See scripts/test-bump-pins.sh.
 #
 # `--check` reads the tables below against the tree and touches nothing, with
 # no network: every pin, checksum and tofu row must name exactly one line that
@@ -279,19 +294,59 @@ gcloud | ci-cloud/Dockerfile.ci:GCLOUD_SHA256_AMD64 | https://storage.googleapis
 gcloud | ci-cloud/Dockerfile.ci:GCLOUD_SHA256_ARM64 | https://storage.googleapis.com/cloud-sdk-release/google-cloud-cli-{v}-linux-arm.tar.gz
 '
 
-# unit | a TOFU artifact URL | its detached signature | key file in scripts/keys | primary key fingerprint
+# unit | the signed file: a TOFU artifact or a SUMS checksums URL | its signature
+#      | gpg      | key file in scripts/keys | primary key fingerprint
+#      | sigstore | certificate identity     | OIDC issuer
 #
-# Checked before the artifact's hash is recorded: `gpgv` must report a valid
-# signature by exactly this key (an expired key still counts -- AWS lets the
-# expiry of its CLI key lapse between renewals, and the signature is no less
-# AWS's for it -- a revoked one does not). The key file is AWS's published
-# "AWS CLI Team" key; the fingerprint is the one AWS documents for it, and the
-# key file must carry it, so swapping the file alone changes nothing. A new
-# AWS key fails the bump, for a human to check and pin.
-readonly SIGS='
-awscli | https://awscli.amazonaws.com/awscli-exe-linux-x86_64-{v}.zip  | https://awscli.amazonaws.com/awscli-exe-linux-x86_64-{v}.zip.sig  | aws-cli.asc | FB5DB77FD5C118B80511ADA8A6310ACC4672475C
-awscli | https://awscli.amazonaws.com/awscli-exe-linux-aarch64-{v}.zip | https://awscli.amazonaws.com/awscli-exe-linux-aarch64-{v}.zip.sig | aws-cli.asc | FB5DB77FD5C118B80511ADA8A6310ACC4672475C
-'
+# Checked before the artifact's hash is recorded, or before any checksum is
+# read from the checksums file. A unit with any row here must have one for
+# every TOFU or SUMS URL it reads (--check enforces it): a vendor that signs
+# signs everything we take from it, and an unsigned file beside signed ones
+# is not taken on trust.
+#
+# gpg: `gpgv` must report a valid signature by exactly this key (an expired
+# key still counts -- AWS lets the expiry of its CLI key lapse between
+# renewals, and the signature is no less AWS's for it -- a revoked one does
+# not). The key file must carry the pinned fingerprint, so swapping the file
+# alone changes nothing; a new vendor key fails the bump, for a human to check
+# and pin.
+#   aws-cli.asc    AWS's published "AWS CLI Team" key, the fingerprint AWS
+#                  documents for it.
+#   hashicorp.asc  https://www.hashicorp.com/.well-known/pgp-key.txt, the
+#                  fingerprint on https://www.hashicorp.com/security. It signs
+#                  with a subkey; gpgv's VALIDSIG names the primary too.
+#
+# sigstore: `cosign verify-blob --bundle` against the public-good Sigstore
+# instance (Fulcio certificate, Rekor inclusion), with the certificate's
+# identity and issuer pinned exactly -- not a regexp. {v} in an identity is
+# the target version, so trivy's bundle must come from that tag's release run.
+# Each identity was read from a real release's certificate and verified with
+# cosign before it was pinned here. The vendors' own release pipelines:
+#   trivy    reusable-release.yaml, run for the tag (GitHub Actions OIDC)
+#   syft,    release.yaml, which anchore runs from main for every release
+#   grype    (so the ref is refs/heads/main, not the tag)
+#   cosign   Google Cloud Build's keyless@projectsigstore service account, the
+#            identity cosign's README documents for its releases. The cosign
+#            that checks it is the one the pin-bump workflow installs
+#            (sigstore/cosign-installer, pinned by SHA), never the release
+#            being bumped: nothing this script verifies is ever executed.
+#
+# Not here, and why (docs/security.md has the full list): kubectl signs each
+# binary, not its .sha256, with a detached .sig/.cert (no bundle), so
+# checking it means downloading every binary and a live Rekor lookup;
+# gitleaks, golang-migrate, hadolint and actionlint sign nothing; osv-scanner
+# publishes SLSA provenance, which needs slsa-verifier, not cosign; Composer's
+# .asc signs the phar, not the sha256sum we read; the Docker static client and
+# gcloud are unsigned tarballs (tofu).
+readonly SIGS="
+awscli    | https://awscli.amazonaws.com/awscli-exe-linux-x86_64-{v}.zip  | https://awscli.amazonaws.com/awscli-exe-linux-x86_64-{v}.zip.sig  | gpg | aws-cli.asc | FB5DB77FD5C118B80511ADA8A6310ACC4672475C
+awscli    | https://awscli.amazonaws.com/awscli-exe-linux-aarch64-{v}.zip | https://awscli.amazonaws.com/awscli-exe-linux-aarch64-{v}.zip.sig | gpg | aws-cli.asc | FB5DB77FD5C118B80511ADA8A6310ACC4672475C
+terraform | https://releases.hashicorp.com/terraform/{v}/terraform_{v}_SHA256SUMS | https://releases.hashicorp.com/terraform/{v}/terraform_{v}_SHA256SUMS.sig | gpg | hashicorp.asc | C874011F0AB405110D02105534365D9472D7468F
+trivy     | $GH/aquasecurity/trivy/releases/download/v{v}/trivy_{v}_checksums.txt | $GH/aquasecurity/trivy/releases/download/v{v}/trivy_{v}_checksums.txt.sigstore.json | sigstore | $GH/aquasecurity/trivy/.github/workflows/reusable-release.yaml@refs/tags/v{v} | https://token.actions.githubusercontent.com
+syft      | $GH/anchore/syft/releases/download/v{v}/syft_{v}_checksums.txt | $GH/anchore/syft/releases/download/v{v}/syft_{v}_checksums.txt.sigstore.json | sigstore | $GH/anchore/syft/.github/workflows/release.yaml@refs/heads/main | https://token.actions.githubusercontent.com
+grype     | $GH/anchore/grype/releases/download/v{v}/grype_{v}_checksums.txt | $GH/anchore/grype/releases/download/v{v}/grype_{v}_checksums.txt.sigstore.json | sigstore | $GH/anchore/grype/.github/workflows/release.yaml@refs/heads/main | https://token.actions.githubusercontent.com
+cosign    | $GH/sigstore/cosign/releases/download/v{v}/cosign_checksums.txt | $GH/sigstore/cosign/releases/download/v{v}/cosign_checksums.txt.sigstore.json | sigstore | keyless@projectsigstore.iam.gserviceaccount.com | https://accounts.google.com
+"
 
 trim() { printf '%s' "$1" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//'; }
 
@@ -386,51 +441,87 @@ sha256_of() {
 }
 
 # verify_sig UNIT URL FILE -- 0 when no SIGS row covers URL, or when its
-# signature verifies under the pinned key; 1, with the reason logged, when not.
+# signature verifies under the pinned key or identity; 1, with the reason
+# logged, when not.
 verify_sig() {
-  local unit="$1" url="$2" file="$3" row_unit row_url row_sig row_key row_fpr
-  local sig_url keyfile fpr keydir status cmd
-  while IFS='|' read -r row_unit row_url row_sig row_key row_fpr; do
+  local unit="$1" url="$2" file="$3" row_unit row_url row_sig row_method row_a row_b
+  while IFS='|' read -r row_unit row_url row_sig row_method row_a row_b; do
     [ "$(trim "$row_unit")" = "$unit" ] || continue
     [ "$(subst "$(trim "$row_url")" "$new")" = "$url" ] || continue
-    sig_url=$(subst "$(trim "$row_sig")" "$new")
-    keydir="$script_dir/keys"; fpr=$(trim "$row_fpr")
-    if [ -n "$fixtures" ]; then
-      keydir=${BUMP_PINS_KEYS:-$keydir}; fpr=${BUMP_PINS_KEY_FPR:-$fpr}
-    fi
-    keyfile="$keydir/$(trim "$row_key")"
-    for cmd in gpg gpgv; do
-      command -v "$cmd" >/dev/null || { log error "$cmd is needed to verify $sig_url"; return 1; }
-    done
-    [ -f "$keyfile" ] || { log error "signing key $keyfile is missing"; return 1; }
-    # A private GNUPGHOME: nothing is read from, or left in, the runner's own.
-    mkdir -p "$tmp/gnupg"; chmod 700 "$tmp/gnupg"
-    if [ "$(GNUPGHOME="$tmp/gnupg" gpg --batch --show-keys --with-colons "$keyfile" 2>/dev/null \
-            | awk -F: '$1 == "pub" { p = 1; next } p && $1 == "fpr" { print $10; p = 0 }')" != "$fpr" ]; then
-      log error "$keyfile is not exactly the key $fpr"
-      return 1
-    fi
-    GNUPGHOME="$tmp/gnupg" gpg --batch --yes --dearmor -o "$tmp/sigkey.gpg" "$keyfile" 2>/dev/null \
-      || { log error "could not read $keyfile"; return 1; }
-    http_download "$sig_url" "$tmp/artifact.sig" || { log error "no signature at $sig_url"; return 1; }
-    status=$(GNUPGHOME="$tmp/gnupg" gpgv --status-fd 1 --keyring "$tmp/sigkey.gpg" "$tmp/artifact.sig" "$file" 2>/dev/null) \
-      || { log error "$sig_url does not verify $url under $fpr"; return 1; }
-    if printf '%s\n' "$status" | grep -qE '^\[GNUPG:\] (REVKEYSIG|BADSIG|ERRSIG)'; then
-      log error "$sig_url: the key is revoked, or the signature is bad"
-      return 1
-    fi
-    if ! printf '%s\n' "$status" | awk -v f="$fpr" '$2 == "VALIDSIG" && ($3 == f || $NF == f) { ok = 1 } END { exit !ok }'; then
-      log error "$sig_url is not a valid signature by $fpr"
-      return 1
-    fi
-    integrity_urls+=("$sig_url")
-    log info "$unit: $url verifies under $fpr"
+    case "$(trim "$row_method")" in
+      gpg)      verify_gpg "$unit" "$url" "$file" "$(subst "$(trim "$row_sig")" "$new")" "$(trim "$row_a")" "$(trim "$row_b")" || return 1 ;;
+      sigstore) verify_sigstore "$unit" "$url" "$file" "$(subst "$(trim "$row_sig")" "$new")" \
+                  "$(subst "$(trim "$row_a")" "$new")" "$(trim "$row_b")" || return 1 ;;
+      *) log error "SIGS row for $unit: unknown method '$(trim "$row_method")'"; return 1 ;;
+    esac
   done <<< "$SIGS"
   return 0
 }
 
-# Cached per URL: several SUMS rows read the same checksums file.
-get_cached() {
+# verify_sigstore UNIT URL FILE BUNDLE_URL IDENTITY ISSUER -- the vendor's
+# Sigstore bundle for FILE verifies, and its certificate names exactly
+# IDENTITY and ISSUER. cosign checks the Fulcio chain, the Rekor inclusion
+# proof and the signature; the pinned identity is what makes it the vendor's
+# signature rather than anyone's.
+verify_sigstore() {
+  local unit="$1" url="$2" file="$3" sig_url="$4" identity="$5" issuer="$6"
+  command -v cosign >/dev/null || { log error "cosign is needed to verify $sig_url"; return 1; }
+  rm -f "$tmp/artifact.sigstore.json"
+  http_download "$sig_url" "$tmp/artifact.sigstore.json" || { log error "no signature at $sig_url"; return 1; }
+  if ! cosign verify-blob --bundle "$tmp/artifact.sigstore.json" \
+         --certificate-identity "$identity" --certificate-oidc-issuer "$issuer" \
+         "$file" > "$tmp/cosign.out" 2>&1; then
+    log error "$sig_url does not verify $url as $identity ($issuer): $(tail -1 "$tmp/cosign.out")"
+    return 1
+  fi
+  integrity_urls+=("$sig_url")
+  log info "$unit: $url verifies as $identity"
+}
+
+# verify_gpg UNIT URL FILE SIG_URL KEYFILE FPR -- SIG_URL is a valid detached
+# signature on FILE by exactly the key FPR, read from scripts/keys/KEYFILE.
+verify_gpg() {
+  local unit="$1" url="$2" file="$3" sig_url="$4" row_key="$5" fpr="$6"
+  local keyfile keydir status cmd
+  keydir="$script_dir/keys"
+  if [ -n "$fixtures" ]; then
+    keydir=${BUMP_PINS_KEYS:-$keydir}; fpr=${BUMP_PINS_KEY_FPR:-$fpr}
+  fi
+  keyfile="$keydir/$row_key"
+  for cmd in gpg gpgv; do
+    command -v "$cmd" >/dev/null || { log error "$cmd is needed to verify $sig_url"; return 1; }
+  done
+  [ -f "$keyfile" ] || { log error "signing key $keyfile is missing"; return 1; }
+  # A private GNUPGHOME: nothing is read from, or left in, the runner's own.
+  mkdir -p "$tmp/gnupg"; chmod 700 "$tmp/gnupg"
+  if [ "$(GNUPGHOME="$tmp/gnupg" gpg --batch --show-keys --with-colons "$keyfile" 2>/dev/null \
+          | awk -F: '$1 == "pub" { p = 1; next } p && $1 == "fpr" { print $10; p = 0 }')" != "$fpr" ]; then
+    log error "$keyfile is not exactly the key $fpr"
+    return 1
+  fi
+  GNUPGHOME="$tmp/gnupg" gpg --batch --yes --dearmor -o "$tmp/sigkey.gpg" "$keyfile" 2>/dev/null \
+    || { log error "could not read $keyfile"; return 1; }
+  rm -f "$tmp/artifact.sig"
+  http_download "$sig_url" "$tmp/artifact.sig" || { log error "no signature at $sig_url"; return 1; }
+  status=$(GNUPGHOME="$tmp/gnupg" gpgv --status-fd 1 --keyring "$tmp/sigkey.gpg" "$tmp/artifact.sig" "$file" 2>/dev/null) \
+    || { log error "$sig_url does not verify $url under $fpr"; return 1; }
+  if printf '%s\n' "$status" | grep -qE '^\[GNUPG:\] (REVKEYSIG|BADSIG|ERRSIG)'; then
+    log error "$sig_url: the key is revoked, or the signature is bad"
+    return 1
+  fi
+  if ! printf '%s\n' "$status" | awk -v f="$fpr" '$2 == "VALIDSIG" && ($3 == f || $NF == f) { ok = 1 } END { exit !ok }'; then
+    log error "$sig_url is not a valid signature by $fpr"
+    return 1
+  fi
+  integrity_urls+=("$sig_url")
+  log info "$unit: $url verifies under $fpr"
+}
+
+# Cached per URL: several SUMS rows read the same checksums file. cache_file
+# fetches it once and prints where it is; get_cached prints its content. The
+# signature on a checksums file is checked on that same cached copy, so the
+# bytes verified are the bytes every checksum is then read from.
+cache_file() {
   local url="$1" key
   key=$(printf '%s' "$url" | cksum | cut -d' ' -f1)
   if [ ! -f "$tmp/cache.$key" ]; then
@@ -439,7 +530,26 @@ get_cached() {
     [ "$rc" -eq 0 ] || { rm -f "$tmp/cache.$key.part"; return "$rc"; }
     mv "$tmp/cache.$key.part" "$tmp/cache.$key"
   fi
-  cat "$tmp/cache.$key"
+  printf '%s' "$tmp/cache.$key"
+}
+get_cached() {
+  local f rc=0
+  f=$(cache_file "$1") || rc=$?
+  [ "$rc" -eq 0 ] || return "$rc"
+  cat "$f"
+}
+
+# verify_sums UNIT URL -- the checksums file at URL is fetched, and its SIGS
+# row (if any) verified, once per run; later rows reading the same file reuse
+# the verdict. 0 verified or unsigned, 1 a signature that does not verify, 2
+# the file itself could not be fetched (left for sum_from to report).
+verify_sums() {
+  local unit="$1" url="$2" f marker
+  f=$(cache_file "$url") || return 2
+  marker="$f.verified.$unit"
+  [ -f "$marker" ] && return 0
+  verify_sig "$unit" "$url" "$f" || return 1
+  : > "$marker"
 }
 
 is_sha256() { printf '%s' "$1" | grep -qxE '[0-9a-f]{64}'; }
@@ -742,6 +852,12 @@ bump_unit() {
       while IFS='|' read -r row_unit row_pin row_url row_name; do
         [ "$(trim "$row_unit")" = "$unit" ] || continue
         surl=$(subst "$(trim "$row_url")" "$new"); sname=$(subst "$(trim "$row_name")" "$new")
+        # The signature first: not one checksum is read from a file whose
+        # vendor signs it until that signature verifies.
+        rc=0; verify_sums "$unit" "$surl" || rc=$?
+        if [ "$rc" -eq 1 ]; then
+          fail_unit "$unit" "the vendor signature on $surl does not verify"; return 0
+        fi
         if ! sum=$(sum_from "$surl" "$sname"); then
           fail_unit "$unit" "no vendor checksum for $sname at $surl"; return 0
         fi
@@ -806,18 +922,24 @@ bump_unit() {
   esac
 
   # --- classify
-  local class=auto reason
+  local class=auto reason signed=""
+  case " ${integrity_urls[*]} " in
+    *.sigstore.json\ *) signed="its Sigstore signature verified under the vendor's pinned release identity" ;;
+    *.sig\ *)           signed="its GPG signature verified under the vendor's pinned key" ;;
+  esac
   if [ "$integrity" = tofu ]; then
     class=review
     reason="the vendor publishes no checksum: sha256 recorded from our own download (trust on first use"
-    case " ${integrity_urls[*]} " in *.sig\ *) reason="$reason, after the vendor signature verified" ;; esac
+    [ -z "$signed" ] || reason="$reason, after the vendor signature verified"
     reason="$reason); merges only once its PR has carried this version for ${cooldown_days} days (first-seen cooldown)"
   elif [ "${old%%.*}" != "${new%%.*}" ]; then
     class=review
     reason="major version change (${old%%.*} -> ${new%%.*}); released $released; merges only once its PR has carried this version for ${cooldown_days} days (first-seen cooldown)"
+    [ -z "$signed" ] || reason="vendor checksum file, $signed; $reason"
   else
     case "$integrity" in
-      sums)   reason="checksums from the vendor's published checksum file" ;;
+      sums)   reason="checksums from the vendor's published checksum file"
+              [ -z "$signed" ] || reason="$reason, $signed" ;;
       npm:*)  reason="npm registry sha512 integrity, verified by npm on install" ;;
       pypi:*) reason="sha256 of every linux wheel from PyPI's JSON API, installed with pip --require-hashes" ;;
       *)      reason="registry-published sha256" ;;
@@ -914,13 +1036,49 @@ check_tables() {
       is_sha256 "$v" || complain "$u: tofu checksum $p is '$v', not a sha256"
     done
   done <<< "$TOFU"
-  while IFS='|' read -r u urow _ k _; do
+  # A URL a unit reads: column 3 of its TOFU rows, column 3 of its SUMS rows.
+  reads_url() { # UNIT URL
+    printf '%s\n%s\n' "$TOFU" "$SUMS" | awk -F'|' -v u="$1" -v r="$2" '
+      { x = $1; y = $3; gsub(/[[:space:]]/, "", x); gsub(/[[:space:]]/, "", y); if (x == u && y == r) f = 1 } END { exit !f }'
+  }
+  local sm sa sb signed_units=""
+  while IFS='|' read -r u urow _ sm sa sb; do
     u=$(trim "$u"); [ -n "$u" ] || continue
-    urow=$(trim "$urow")
-    printf '%s\n' "$TOFU" | awk -F'|' -v u="$u" -v r="$urow" '{ x = $1; y = $3; gsub(/[[:space:]]/, "", x); gsub(/[[:space:]]/, "", y); if (x == u && y == r) f = 1 } END { exit !f }' \
-      || complain "SIGS row for $u names $urow, which is no TOFU row of it"
-    [ -f "$script_dir/keys/$(trim "$k")" ] || complain "SIGS row for $u: scripts/keys/$(trim "$k") does not exist"
+    urow=$(trim "$urow"); sm=$(trim "$sm"); sa=$(trim "$sa"); sb=$(trim "$sb")
+    reads_url "$u" "$urow" || complain "SIGS row for $u names $urow, which is no TOFU or SUMS row of it"
+    case " $signed_units " in *" $u "*) ;; *) signed_units="$signed_units $u" ;; esac
+    case "$sm" in
+      gpg)
+        [ -f "$script_dir/keys/$sa" ] || complain "SIGS row for $u: scripts/keys/$sa does not exist"
+        printf '%s' "$sb" | grep -qxE '[0-9A-F]{40}' || complain "SIGS row for $u: '$sb' is not a full key fingerprint" ;;
+      sigstore)
+        # An exact identity: a workflow URL at a ref, or a service account.
+        printf '%s' "$sa" | grep -qE '^https://github\.com/[^/]+/[^/]+/\.github/workflows/[^@]+@refs/(tags|heads)/[^[:space:]]+$|^[a-z0-9-]+@[a-z0-9-]+\.iam\.gserviceaccount\.com$' \
+          || complain "SIGS row for $u: '$sa' is not an exact workflow or service-account identity"
+        # cosign compares the identity exactly, so a pattern character could
+        # only ever fail; it still means the row was written as a regexp.
+        if printf '%s' "$sa" | grep -qE '[][*?()|\\^$+]'; then
+          complain "SIGS row for $u: '$sa' contains a pattern character; identities are exact"
+        fi
+        case "$sb" in
+          https://token.actions.githubusercontent.com|https://accounts.google.com) ;;
+          *) complain "SIGS row for $u: '$sb' is not a known OIDC issuer" ;;
+        esac ;;
+      *) complain "SIGS row for $u: unknown method '$sm'" ;;
+    esac
   done <<< "$SIGS"
+  # A unit that is signed at all is signed everywhere: every URL it reads has
+  # its row, so a checksums file added beside a signed one cannot slip in
+  # unverified.
+  for u in $signed_units; do
+    while IFS='|' read -r n _ urow _; do
+      [ "$(trim "$n")" = "$u" ] || continue
+      urow=$(trim "$urow")
+      printf '%s\n' "$SIGS" | awk -F'|' -v u="$u" -v r="$urow" '
+        { x = $1; y = $2; gsub(/[[:space:]]/, "", x); gsub(/[[:space:]]/, "", y); if (x == u && y == r) f = 1 } END { exit !f }' \
+        || complain "$u is signed, but $urow has no SIGS row"
+    done <<< "$(printf '%s\n%s\n' "$TOFU" "$SUMS")"
+  done
   [ "$bad" -eq 0 ] || { log error "$bad problem(s) in the tables"; return 1; }
   log info "tables consistent with $root"
 }

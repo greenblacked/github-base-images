@@ -316,7 +316,12 @@ jobs:
       # package and exact version, matched against the PURL Trivy gives the
       # finding), so it cannot excuse the same id in another package. An
       # entry with neither would excuse the id anywhere in the image, so it is
-      # malformed here rather than applied.
+      # malformed here rather than applied. Trivy ANDs the two, and an entry
+      # with purls must have paths as well, so it excuses only the copy it was
+      # written for -- unless it carries `no_path`, the reviewed reason Trivy
+      # reports that finding with no path to narrow to (pip's vendored
+      # packages). `no_path` is checked here and never written to the file:
+      # Trivy sees exactly the id, statement, expiry, paths and purls.
       #
       # `expires` becomes Trivy's `expired_at`, written as an unquoted YAML
       # date because Trivy decodes it into a time.Time. Trivy stops applying
@@ -358,7 +363,9 @@ jobs:
               and (.package | text) and (.reason | text) and (.upstream | text) and (.expires | valid_date)
               and (has("paths") or has("purls"))
               and ((has("paths") | not) or (.paths | list_of(startswith("/") or test("[*?\\[]") | not)))
-              and ((has("purls") | not) or (.purls | list_of(test("^pkg:[a-z]+/[^@\\s]+@[^\\s]+$"))));
+              and ((has("purls") | not) or (.purls | list_of(test("^pkg:[a-z]+/[^@\\s]+@[^\\s]+$"))))
+              and ((has("purls") | not) or has("paths") or has("no_path"))
+              and ((has("no_path") | not) or ((.no_path | text) and has("purls") and (has("paths") | not)));
             if type != "array" then error("not a JSON array") else . end
             | map(select(type == "object" and .image == $img))
             | if all(.[]; well_formed) | not

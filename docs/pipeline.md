@@ -305,7 +305,11 @@ pin is read from the Dockerfiles of the images in `images.json`, so an image the
 retires needs no change to the pin tooling. Wherever the vendor publishes one, every checksum is
 read from the vendor's own checksums file or registry record for that version (for the Python
 libraries in `ci-cloud/az-overrides.txt` and the zizmor in `.github/zizmor-requirements.txt`,
-PyPI's sha256 for every linux wheel, installed with `pip --require-hashes`). The three vendors that
+PyPI's sha256 for every linux wheel, installed with `pip --require-hashes`). Where the vendor signs
+that checksums file — terraform (HashiCorp's GPG key), trivy, syft, grype and cosign (Sigstore
+bundles, verified with cosign against each vendor's pinned release identity) — the signature is
+verified first, and a missing or wrong one fails the bump
+([Supply-chain pins](security.md#supply-chain-pins)). The three vendors that
 publish none — the AWS CLI, the Docker static client and gcloud — get a **trust-on-first-use**
 sha256 instead: `bump-pins.sh` downloads each architecture's artifact and records the hash of what
 it got, after checking AWS's detached signature against AWS's key, pinned by fingerprint in
