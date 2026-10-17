@@ -1055,6 +1055,11 @@ check_tables() {
         # An exact identity: a workflow URL at a ref, or a service account.
         printf '%s' "$sa" | grep -qE '^https://github\.com/[^/]+/[^/]+/\.github/workflows/[^@]+@refs/(tags|heads)/[^[:space:]]+$|^[a-z0-9-]+@[a-z0-9-]+\.iam\.gserviceaccount\.com$' \
           || complain "SIGS row for $u: '$sa' is not an exact workflow or service-account identity"
+        # cosign compares the identity exactly, so a pattern character could
+        # only ever fail; it still means the row was written as a regexp.
+        if printf '%s' "$sa" | grep -qE '[][*?()|\\^$+]'; then
+          complain "SIGS row for $u: '$sa' contains a pattern character; identities are exact"
+        fi
         case "$sb" in
           https://token.actions.githubusercontent.com|https://accounts.google.com) ;;
           *) complain "SIGS row for $u: '$sb' is not a known OIDC issuer" ;;

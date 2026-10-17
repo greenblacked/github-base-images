@@ -740,6 +740,10 @@ check "  and names it" grep -q 'awscli is signed, but https://awscli.amazonaws.c
 sed 's|reusable-release.yaml@refs/tags/v{v} |reusable-release.yaml@.* |' "$bump" > "$t/scripts/bp.sh"
 rc=0; "$t/scripts/bp.sh" --root "$t" --check > /dev/null 2> "$work/c5j.err" || rc=$?
 check "an identity that is a pattern, not exact, fails --check" [ "$rc" -eq 1 ]
+sed 's|reusable-release.yaml@refs/tags/v{v} |reusable-release.yaml@refs/tags/v.* |' "$bump" > "$t/scripts/bp.sh"
+rc=0; "$t/scripts/bp.sh" --root "$t" --check > /dev/null 2> "$work/c5j.err" || rc=$?
+check "a pattern inside the ref fails --check" [ "$rc" -eq 1 ]
+check "  and names the pattern character" grep -q 'contains a pattern character' "$work/c5j.err"
 
 echo "case 5h: --check over the real tree"
 check "every pin, checksum, tofu and signature row names exactly one line" "$bump" --check --quiet
