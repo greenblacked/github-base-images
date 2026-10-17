@@ -181,14 +181,25 @@ one_unit() {
     valid_date "$prev_seen" || prev_seen=""
   fi
 
-  # A `review` PR inside its first-seen cooldown keeps its version rather than
-  # chasing a newer release (see the header): only while that version is
-  # still above the base's pin and not above what the vendor now calls
-  # latest -- a lower "latest" means it was withdrawn.
+  # A `review` PR keeps its version rather than chasing a newer release (see
+  # the header) for its first-seen cooldown AND one more cooldown after it,
+  # the grace window in which the merge bot (hourly) gets to merge it. Holding
+  # only until the cooldown ended let one bad day -- CI red, checks still
+  # running, mergeability not computed -- hand the PR to a newer version with
+  # a fresh clock, and a vendor that releases near-daily (the AWS CLI) could
+  # then be starved of every fix. A PR still open after the grace window is
+  # stuck for some other reason, so the newer version is proposed instead.
+  # Only while the held version is still above the base's pin and not above
+  # what the vendor now calls latest -- a lower "latest" means it was
+  # withdrawn.
   if [ -n "$prev_to" ] && [ "$prev_to" != "$to" ] && [ -n "$prev_class" ] && [ "$prev_class" != auto ] \
-     && [ -n "$prev_seen" ] && [[ "$today" < "$(eligible_from "$prev_seen")" ]] \
+     && [ -n "$prev_seen" ] && [[ "$today" < "$(eligible_from "$(eligible_from "$prev_seen")")" ]] \
      && ver_gt "$prev_to" "$old" && ver_gt "$to" "$prev_to"; then
-    note="kept at $prev_to, first seen $prev_seen, until its cooldown ends on $(eligible_from "$prev_seen"); $to comes after it. "
+    if [[ "$today" < "$(eligible_from "$prev_seen")" ]]; then
+      note="kept at $prev_to, first seen $prev_seen, until its cooldown ends on $(eligible_from "$prev_seen"); $to comes after it. "
+    else
+      note="kept at $prev_to, first seen $prev_seen and mergeable since $(eligible_from "$prev_seen"), until $(eligible_from "$(eligible_from "$prev_seen")") so the merge bot can take it; $to comes after it. "
+    fi
     to=$prev_to
   fi
   closed_same=$(jq -r --arg to "$to" \

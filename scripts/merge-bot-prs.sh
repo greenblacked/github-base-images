@@ -52,7 +52,10 @@
 #      day scripts/pin-bump-prs.sh first proposed that exact version, must be
 #      BUMP_COOLDOWN_DAYS (7) behind today. Until then it is waiting; a
 #      marker that is missing or carries no valid date is not merged at all.
-#      See pin_bump_cooled.
+#      See pin_bump_cooled. The marker is trusted as far as the PR body is:
+#      only the bot that opened it and users with write access can edit it,
+#      and write access can already push to the branch, so a backdated
+#      `seen=` grants nothing that access does not.
 #   5. Red, Dependabot, mergeable, and the branch is behind main: the red
 #      result may be main's old fault rather than the update's (a gate since
 #      fixed on main, say), and Dependabot rebases only on a conflict, so
@@ -497,7 +500,7 @@ pin_bump_cooled() {
   class=$(field_of class)
   [ "$class" = auto ] && return 0
   seen=$(field_of seen)
-  case "$cooldown" in ''|*[!0-9]*) cooldown=7 ;; esac
+  case "$cooldown" in ''|*[!0-9]*) die "BUMP_COOLDOWN_DAYS must be a whole number" ;; esac
   eligible=$(jq -rn --arg d "$seen" --argjson n "$cooldown" '
     try (if ($d | test("^[0-9]{4}-[0-9]{2}-[0-9]{2}$")) and (($d + "T00:00:00Z" | fromdateiso8601 | strftime("%Y-%m-%d")) == $d)
          then ($d + "T00:00:00Z" | fromdateiso8601) + $n * 86400 | strftime("%Y-%m-%d") else "" end) catch ""')

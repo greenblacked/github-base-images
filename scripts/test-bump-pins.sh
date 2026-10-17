@@ -907,13 +907,25 @@ expect_row docker status unchanged
 expect_row docker new 29.9.0
 check "  the note says why" bash -c "jq -r 'select(.unit == \"docker\") | .note' '$res' | grep -q 'kept at 29.9.0, first seen 2026-09-25, until its cooldown ends on 2026-10-02'"
 check "  the branch is not rebuilt, so the clock keeps running" [ "$(head_of pin-bump/docker)" = "$sha" ]
+# Past its cooldown but inside the grace window: still held, so a day the
+# merge bot missed does not restart the clock on a newer version.
+scenario l3
+sha=$(seed docker "$BOT" "$BOT")
+pr docker 21 OPEN 29.9.0 review 2026-09-18 "$fp_docker"
+printf '%s' "$CHECKS_ALL" > "$stub/checks-docker.json"
+run_prs <<< 'docker 29.9.1 29.8.1'
+expect_row docker status unchanged
+expect_row docker new 29.9.0
+check "  past its cooldown, inside the grace window: still held" \
+  bash -c "jq -r 'select(.unit == \"docker\") | .note' '$res' | grep -q 'mergeable since 2026-09-25, until 2026-10-02 so the merge bot can take it'"
+check "  the branch is not rebuilt" [ "$(head_of pin-bump/docker)" = "$sha" ]
 scenario l2
 seed docker "$BOT" "$BOT" > /dev/null
 pr docker 21 OPEN 29.9.0 review 2026-09-01 "$fp_docker"
 run_prs <<< 'docker 29.9.1 29.8.1'
 expect_row docker status ok
 expect_row docker new 29.9.1
-check "after its cooldown, the newer version is proposed, with a fresh clock" \
+check "after its cooldown and grace window, the newer version is proposed, with a fresh clock" \
   bash -c "grep -qE 'unit=docker to=29\.9\.1 class=review seen=2026-09-28 fp=' '$log.body'"
 check "  hashed from its own download" \
   bash -c "git -C '$origin' show pin-bump/docker:ci-tools/Dockerfile.ci | grep -qx 'ARG DOCKER_SHA256_ARM64=$(sha256sum "$fx/docker-2991-arm64" | cut -d' ' -f1)'"
