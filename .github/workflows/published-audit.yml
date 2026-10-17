@@ -34,9 +34,11 @@ on:
   # workflow_run is flagged as "almost always used insecurely" because the
   # common misuse is checking out and running a PR's head commit with this
   # workflow's privileged secrets. Nothing here does that: no step reads
-  # github.event.workflow_run.head_sha/head_branch/head_repository, and the
-  # checkout below takes no `ref:`, so it resolves the same way it would on
-  # workflow_dispatch or schedule -- this repository's own main.
+  # github.event.workflow_run.head_sha or head_branch, head_repository is only
+  # compared (in the job's `if:` and the concurrency group, never checked out
+  # or interpolated into a shell), and the checkout below takes no `ref:`, so
+  # it resolves the same way it would on workflow_dispatch or schedule --
+  # this repository's own main.
   #
   # The direct trigger: re-check within minutes of whatever build-and-push.yml
   # just did to main, success or not -- a failed run may still have left an
