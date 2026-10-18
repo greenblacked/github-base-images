@@ -542,7 +542,14 @@ verify_sig() {
 # two images read the same two files, and its binaries are 60 MB each.
 verify_digest() {
   local unit="$1" url="$2" sum="$3" row_unit row_url row_sig row_method row_a row_b row_c n=0 marker sig a b c
-  marker="$tmp/digest.$(printf '%s %s %s' "$unit" "$url" "$sum" | cksum | cut -d' ' -f1)"
+  # The key must be injective: a short checksum of the digest would let a
+  # crafted digest collide with one already verified and skip its check. The
+  # digest goes in verbatim (hex only), the unit and URL as their sha256.
+  case "$sum" in
+    ''|*[!0-9a-f]*) log error "$unit: '$sum' is not a hex digest"; return 1 ;;
+  esac
+  printf '%s %s' "$unit" "$url" > "$tmp/digest.key"
+  marker="$tmp/digest.$(sha256_of "$tmp/digest.key").$sum"
   [ -f "$marker" ] && return 0
   while IFS='|' read -r row_unit row_url row_sig row_method row_a row_b row_c; do
     [ "$(trim "$row_unit")" = "$unit" ] || continue
@@ -1221,7 +1228,11 @@ bump_unit() {
   elif [ "${old%%.*}" != "${new%%.*}" ]; then
     class=review
     reason="major version change (${old%%.*} -> ${new%%.*}); released $released; merges only once its PR has carried this version for ${cooldown_days} days (first-seen cooldown)"
-    [ -z "$signed" ] || reason="vendor checksum file, $signed; $reason"
+    if [ "$integrity" = attested ]; then
+      reason="sha256 hashed from our download, pinned only after $signed; $reason"
+    elif [ -n "$signed" ]; then
+      reason="vendor checksum file, $signed; $reason"
+    fi
   else
     case "$integrity" in
       sums)   reason="checksums from the vendor's published checksum file"
