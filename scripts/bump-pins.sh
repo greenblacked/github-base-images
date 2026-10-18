@@ -813,7 +813,7 @@ verify_sigstore() {
 # signs is written to FILE.signed, the only copy of it a caller may read.
 verify_gpg() {
   local unit="$1" url="$2" file="$3" sig_url="$4" row_key="$5" fpr="$6"
-  local keyfile keydir status cmd
+  local keyfile keydir status cmd inline=""
   keydir="$script_dir/keys"
   if [ -n "$fixtures" ]; then
     keydir=${BUMP_PINS_KEYS:-$keydir}; fpr=${BUMP_PINS_KEY_FPR:-$fpr}
@@ -843,7 +843,7 @@ verify_gpg() {
       log error "$url is not exactly one clearsigned message"
       return 1
     fi
-    sig_url=$url
+    sig_url=$url inline=1
     status=$(GNUPGHOME="$tmp/gnupg" gpgv --status-fd 1 --keyring "$tmp/sigkey.gpg" --output "$file.signed.part" "$file" 2>/dev/null) \
       || { rm -f "$file.signed.part"; log error "$url does not verify under $fpr"; return 1; }
   else
@@ -855,6 +855,16 @@ verify_gpg() {
   if printf '%s\n' "$status" | grep -qE '^\[GNUPG:\] (REVKEYSIG|BADSIG|ERRSIG)'; then
     rm -f "$file.signed.part"
     log error "$sig_url: the key is revoked, or the signature is bad"
+    return 1
+  fi
+  # An apt InRelease is held to what apt itself enforces at build time: a
+  # signature by an expired key or subkey, or an expired signature, is refused
+  # there, so it is refused here rather than opening a bump apt then rejects.
+  # (Detached rows are left as they are: gpgv accepts a signature made while
+  # the key was valid, and AWS's published key has itself lapsed.)
+  if [ -n "$inline" ] && printf '%s\n' "$status" | grep -qE '^\[GNUPG:\] (EXPKEYSIG|EXPSIG)'; then
+    rm -f "$file.signed.part"
+    log error "$sig_url: signed by an expired key, or the signature has expired"
     return 1
   fi
   if ! printf '%s\n' "$status" | awk -v f="$fpr" '$2 == "VALIDSIG" && ($3 == f || $NF == f) { ok = 1 } END { exit !ok }'; then

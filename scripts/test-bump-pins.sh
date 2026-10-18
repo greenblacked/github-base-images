@@ -863,6 +863,16 @@ if command -v gpg >/dev/null && command -v gpgv >/dev/null; then
   # would verify the block after it, and a parser of the whole file would
   # read the planted line first.
   { printf 'SHA256:\n %s 1 stable/binary-amd64/Packages\n' "$(sha256sum "$fx/dk-amd64-tampered" | cut -d' ' -f1)"; cat "$fx/dk-good"; } > "$fx/dk-prefixed"
+  # The good index again, signed by a key that has expired since: gpgv exits 0
+  # with EXPKEYSIG beside VALIDSIG, and apt would refuse it. (An expired
+  # signature, EXPSIG, gpgv itself already fails.)
+  gpg --batch --quiet --passphrase '' --quick-gen-key 'Lapsed <lapsed@example.com>' rsa2048 sign seconds=2 2>/dev/null
+  gpg --batch --quiet --yes --local-user lapsed@example.com --digest-algo SHA512 \
+    --clearsign -o "$fx/dk-expired" "$fx/dk-good.txt" 2>/dev/null
+  mkdir -p "$work/keys-lapsed"
+  gpg --batch --armor --export lapsed@example.com > "$work/keys-lapsed/docker.asc" 2>/dev/null
+  lapsed_fpr=$(gpg --batch --with-colons --fingerprint lapsed@example.com 2>/dev/null | awk -F: '$1 == "fpr" { print $10; exit }')
+  sleep 3
   dk_serve() { # INRELEASE AMD64-PACKAGES ARM64-PACKAGES
     reserve "$dk/InRelease" "$1"
     reserve "$dk/stable/binary-amd64/Packages" "$2"
@@ -888,6 +898,9 @@ if command -v gpg >/dev/null && command -v gpgv >/dev/null; then
   dk_fail "a validly signed InRelease of another suite" "the signed $dk/InRelease does not name the suite bookworm"
   dk_serve dk-prefixed dk-amd64-tampered dk-arm64
   dk_fail "unsigned text before the signed block" "$dk/InRelease is not exactly one clearsigned message"
+  dk_serve dk-expired dk-amd64 dk-arm64
+  BUMP_PINS_KEYS="$work/keys-lapsed" BUMP_PINS_KEY_FPR="$lapsed_fpr" \
+    dk_fail "an InRelease signed by a key that has since expired" "$dk/InRelease: signed by an expired key, or the signature has expired"
   reserve "$dk/InRelease" @404
   dk_fail "no InRelease at all" "could not fetch $dk/InRelease"
   check "  none of them edited anything" [ -z "$(changed_files "$t" "$work/fiveg4.snap")" ]
