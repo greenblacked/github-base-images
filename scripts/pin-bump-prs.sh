@@ -10,8 +10,8 @@
 #   4. CI dispatched on the branch -- pushes made with the workflow token do not
 #      trigger workflows, but a workflow_dispatch does, and its check runs land
 #      on the branch head, which is what the required checks look at;
-#   5. a `review` bump (no vendor checksum, or a major version) gets the
-#      `needs-review` label, as information.
+#   5. a `review` bump (no vendor checksum, no vendor release date, or a
+#      major version) gets the `needs-review` label, as information.
 # Merging is not done here. .github/workflows/merge-bot-prs.yml merges every
 # bump PR, `auto` and `review` alike, once its required checks are green on
 # its head commit -- a `review` one only once its first-seen cooldown is over
@@ -19,8 +19,9 @@
 #
 # The first-seen clock. An `auto` bump is at least BUMP_COOLDOWN_DAYS (7) old
 # by its vendor's release date before bump-pins.sh moves it at all. A
-# `review` bump has no such date to trust -- the AWS CLI, the Docker client
-# and gcloud publish none, and a vendor date is the vendor's to set anyway --
+# `review` bump has no such date to trust -- the AWS CLI, the Docker CLI's
+# apt repository and gcloud publish none, and a vendor date is the vendor's to
+# set anyway --
 # so its PR carries its own: the marker at the end of the body records
 # `seen=YYYY-MM-DD`, the day this workflow first proposed that exact version,
 # and `fp=`, a digest of every value the bump wrote (versions and sums).
@@ -315,6 +316,7 @@ one_unit() {
   eligible=$(eligible_from "$seen")
   case "$(jq -r '.integrity // ""' <<<"$result")" in
     tofu) source="Checksums computed by scripts/bump-pins.sh from its own download of each artifact (trust on first use: the vendor publishes no checksum; a vendor signature, where listed below, was verified first)" ;;
+    apt) source="Version string read by scripts/bump-pins.sh from the vendor's signed apt index: InRelease's GPG signature verified under the vendor's key, pinned by fingerprint, then each Packages file matched to the SHA-256 that signed InRelease lists for it; nothing was computed from a download, and apt checks the same chain, and every .deb's hash, again at build time" ;;
     attested) source="Checksum computed by scripts/bump-pins.sh from its own download of the release artifact, and pinned only after the vendor's attestation for exactly that digest, and its signature, listed below, verified" ;;
     *)    source="Checksum or integrity source (the vendor's own file or registry record for this version; nothing was computed from a download; where the vendor signs that file, its signature, listed below, was verified first)" ;;
   esac

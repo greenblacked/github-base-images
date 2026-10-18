@@ -13,6 +13,10 @@ LABEL org.opencontainers.image.licenses=MIT
 ENV DEBIAN_FRONTEND=noninteractive \
     CI=true
 
+# gpg (the gpg binary alone, not the gnupg suite) is needed to check the
+# fingerprint of Docker's ASCII-armoured signing key and convert it into a
+# keyring; see the Docker CLI below.
+#
 # DL3008: apt pins would go stale and break the weekly rebuild, which is the
 # actual update mechanism here.
 # The upgrade picks up Debian security fixes published since the upstream base
@@ -26,6 +30,7 @@ RUN apt-get update \
         ca-certificates \
         curl \
         git \
+        gpg \
         gzip \
         jq \
         openssh-client \
@@ -35,8 +40,9 @@ RUN apt-get update \
         zstd \
     && rm -rf /var/lib/apt/lists/*
 
-# Infra tools are installed as pinned upstream release binaries, not apt --
-# Debian's repos either lag far behind or do not carry them at all. Each pin is
+# Infra tools are installed as pinned upstream release binaries, not Debian's
+# apt -- Debian's repos either lag far behind or do not carry them at all (the
+# Docker CLI comes from Docker's own signed apt repository). Each pin is
 # a build arg so a bump is a one-line change that the vulnerability scan and
 # smoke tests then revalidate.
 #
@@ -47,18 +53,18 @@ RUN apt-get update \
 # published. Checksums are per-architecture, so a version bump is a three-line
 # change (version plus both sums) that CI revalidates.
 #
-# The Docker static tarball and the AWS CLI installer have no vendor checksum
-# to verify against: download.docker.com returns 404 for `<tarball>.sha256`,
-# and AWS ships only a detached GPG signature. Their sums below are therefore
+# The AWS CLI installer has no vendor checksum to verify against: AWS ships
+# only a detached GPG signature. Its sums below are therefore
 # trust-on-first-use: scripts/bump-pins.sh downloads each artifact when it
-# moves the version and records the sha256 of what it got -- for the AWS CLI
-# only after AWS's signature verified against AWS's key, pinned by
-# fingerprint in that script, so that first use is checked too. A TOFU sum
-# cannot prove the first download was genuine; what it does is pin it, so a
-# file substituted later fails every build, the daily rebuilds included,
-# instead of being installed. The bump PR then waits seven days from the day
-# it first carried that version before it may merge (docs/adr/0008,
-# amendment of 2026-10-17). CONTRIBUTING.md records which sums are which.
+# moves the version and records the sha256 of what it got -- only after AWS's
+# signature verified against AWS's key, pinned by fingerprint in that script,
+# so that first use is checked too. A TOFU sum cannot prove the first download
+# was genuine; what it does is pin it, so a file substituted later fails every
+# build, the daily rebuilds included, instead of being installed. The bump PR
+# then waits seven days from the day it first carried that version before it
+# may merge (docs/adr/0008, amendment of 2026-10-17). CONTRIBUTING.md records
+# which sums are which. The Docker CLI, the other TOFU download here until
+# 2026-10-18, now comes from Docker's signed apt repository (below).
 #
 # TARGETARCH is set by buildx (amd64 / arm64); each vendor spells the
 # architecture differently, hence the per-tool mapping. Every mapping now fails
@@ -79,9 +85,6 @@ ARG KUBECTL_SHA256_ARM64=ff749f4b78d9c4f1ec87307df9b50119ed819e2094aa9810cb9acff
 ARG AWSCLI_VERSION=2.38.1
 ARG AWSCLI_SHA256_AMD64=b11ed416d91f4251da363a17706938eeaf0e520745754c104c0c1890dd8363c7
 ARG AWSCLI_SHA256_ARM64=91360c0adb2ae508334ff657dce4787b598b443a11cf3dc58e08b74f12e16009
-ARG DOCKER_VERSION=29.9.0
-ARG DOCKER_SHA256_AMD64=33e1ab8b63d14bca449f7a3d30d7f6aa669daa544e60a86b17fec87f61afe2b4
-ARG DOCKER_SHA256_ARM64=811f6eee271678fc98dbe5c4d896c00fc5fe2daa4f7a37069c17abc036eab85b
 
 RUN case "${TARGETARCH}" in \
         amd64) sum="${TERRAFORM_SHA256_AMD64}" ;; \
@@ -126,21 +129,60 @@ RUN case "${TARGETARCH}" in \
     && rm -rf /tmp/awscli.zip /tmp/aws
 
 # Docker *client* only, no daemon. In Actions it talks to the host daemon via
-# the mounted socket, or to a docker:dind service container.
-RUN case "${TARGETARCH}" in \
-        amd64) dockerarch=x86_64 sum="${DOCKER_SHA256_AMD64}" ;; \
-        arm64) dockerarch=aarch64 sum="${DOCKER_SHA256_ARM64}" ;; \
-        *) echo "unsupported TARGETARCH: ${TARGETARCH}" >&2; exit 1 ;; \
+# the mounted socket, or to a docker:dind service container. Only the CLI:
+# this image has never shipped the buildx or compose plugins, so the
+# package's Recommends of both stay out (--no-install-recommends).
+#
+# It comes from Docker's own apt repository, the way the Azure CLI does in
+# ci-cloud: InRelease is GPG-signed and apt checks that signature against this
+# keyring (signed-by), then checks Packages against the hash InRelease lists
+# for it, and the .deb against the hash Packages lists. Every byte installed
+# so chains to a vendor signature. The static tarball this replaced was pinned
+# only by a trust-on-first-use sha256 of our own download: Docker publishes no
+# checksum or signature for it.
+#
+# The key is pinned the way Microsoft's is there: the file must hold exactly
+# one primary key, Docker's "Docker Release (CE deb)", with this fingerprint.
+# Docker signs with a subkey (D3306A018370199E527AE7997EA0A9C3F273FCD8); the
+# fingerprint pinned is the primary's, which gpgv's VALIDSIG names as well. A
+# swapped file, or a second key appended to it, fails the build instead of
+# becoming a key apt trusts for this repository. ci-tools/test.sh checks the
+# installed keyring the same way. gpg runs in a throwaway GNUPGHOME, so the
+# image keeps no gpg state. scripts/bump-pins.sh checks InRelease against the
+# same key, committed as scripts/keys/docker.asc.
+#
+# Unlike azure-cli, the version is pinned: one ARG holding the repository's
+# full version string (epoch, upstream version, Debian revision), which
+# scripts/bump-pins.sh rewrites from the signed index. Docker's repository
+# keeps every release, so this pin does not go stale the way a Debian package
+# pin would, and the CLI moves only through a bump PR, like every other tool
+# here.
+#
+# The package installs /usr/bin/docker; the link keeps /usr/local/bin/docker,
+# where the static binary lived, working for anything that names that path.
+ARG DOCKER_KEY_FINGERPRINT=9DC858229FC7DD38854AE2D88D81803C0EBFCD88
+ARG DOCKER_CLI_VERSION=5:29.9.0-1~debian.12~bookworm
+RUN case "$(dpkg --print-architecture)" in \
+        amd64|arm64) ;; \
+        *) echo "unsupported architecture: $(dpkg --print-architecture)" >&2; exit 1 ;; \
     esac \
-    && curl -fsSL --retry 3 --retry-all-errors --max-time 180 \
-        -o /tmp/docker.tgz \
-        "https://download.docker.com/linux/static/stable/${dockerarch}/docker-${DOCKER_VERSION}.tgz" \
-    && echo "${sum}  /tmp/docker.tgz" > /tmp/docker.sum \
-    && sha256sum --check --strict /tmp/docker.sum \
-    && rm /tmp/docker.sum \
-    && tar -xzf /tmp/docker.tgz -C /tmp docker/docker \
-    && mv /tmp/docker/docker /usr/local/bin/docker \
-    && rm -rf /tmp/docker.tgz /tmp/docker
+    && GNUPGHOME="$(mktemp -d)" \
+    && export GNUPGHOME \
+    && curl -fsSL --retry 3 --retry-all-errors --max-time 120 \
+        -o /tmp/docker.asc https://download.docker.com/linux/debian/gpg \
+    && gpg --batch --show-keys --with-colons /tmp/docker.asc > /tmp/docker.keys \
+    && fprs="$(awk -F: '$1 == "pub" { p = 1; next } p && $1 == "fpr" { print $10; p = 0 }' /tmp/docker.keys)" \
+    && if [ "${fprs}" != "${DOCKER_KEY_FINGERPRINT}" ]; then \
+        echo "download.docker.com served key(s) '${fprs}', expected exactly ${DOCKER_KEY_FINGERPRINT}" >&2; exit 1; \
+    fi \
+    && gpg --batch --dearmor -o /usr/share/keyrings/docker.gpg /tmp/docker.asc \
+    && rm -rf /tmp/docker.asc /tmp/docker.keys "${GNUPGHOME}" \
+    && echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/docker.gpg] https://download.docker.com/linux/debian bookworm stable" \
+        > /etc/apt/sources.list.d/docker.list \
+    && apt-get update \
+    && apt-get install --yes --no-install-recommends "docker-ce-cli=${DOCKER_CLI_VERSION}" \
+    && rm -rf /var/lib/apt/lists/* \
+    && ln -s /usr/bin/docker /usr/local/bin/docker
 
 WORKDIR /workspace
 

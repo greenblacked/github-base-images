@@ -476,9 +476,9 @@ retire_still_due() {
 # `auto` bump -- record a first-seen date at least the cooldown
 # (BUMP_COOLDOWN_DAYS, default 7) before today. An `auto` bump was already the
 # cooldown old by its vendor's release date before bump-pins.sh moved it. A
-# `review` one -- the AWS CLI, the Docker client and gcloud, which publish no
-# checksum and no release date this can trust, and major versions -- has only
-# this clock, which pin-bump-prs.sh keeps across rebuilds of the same version
+# `review` one -- the AWS CLI and gcloud, which publish no checksum and no
+# release date this can trust, the Docker CLI, whose signed apt index carries
+# no release date, and major versions -- has only this clock, which pin-bump-prs.sh keeps across rebuilds of the same version
 # and restarts when the version or any value it wrote changes. A marker that
 # is missing, unreadable, for another unit or with no valid date is not
 # merged: the clock fails closed, like the release-date cooldown it stands in

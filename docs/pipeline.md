@@ -313,8 +313,12 @@ written: osv-scanner's against its SLSA provenance, hadolint's, actionlint's and
 against their GitHub artifact attestations (Composer's sha256 is hashed from the release phar and
 pinned only once its attestation and GPG signature verify), and kubectl's by verifying each
 binary's signature and matching its sha256. A missing or wrong signature or attestation fails the
-bump ([Supply-chain pins](security.md#supply-chain-pins)). The three vendors that
-publish none — the AWS CLI, the Docker static client and gcloud — get a **trust-on-first-use**
+bump ([Supply-chain pins](security.md#supply-chain-pins)). The Docker CLI is pinned by its
+exact package version in Docker's signed apt repository, which the bump reads only from the
+signed index: `InRelease` verified with `gpgv` under Docker's key, pinned by fingerprint, then each
+architecture's `Packages` against the hash the signed file lists. apt checks the same chain, and
+each `.deb`, at build time. The two vendors that
+publish none — the AWS CLI and gcloud — get a **trust-on-first-use**
 sha256 instead: `bump-pins.sh` downloads each architecture's artifact and records the hash of what
 it got, after checking AWS's detached signature against AWS's key, pinned by fingerprint in
 `scripts/keys/`, for the AWS CLI. Every build, the daily rebuilds included, then checks the
@@ -339,8 +343,8 @@ release date they like, but not the day this repository first saw the release.
 
 | Pin-bump class | When | Outcome |
 |---|---|---|
-| `auto` | vendor checksum or registry integrity, not a major version, released 7+ days ago | merges itself once green |
-| `review` | no vendor checksum (AWS CLI, Docker client, gcloud: trust-on-first-use), or a major version | labelled `needs-review` as information; merges itself once green **and** 7 days after its PR first carried that version |
+| `auto` | vendor checksum, signed apt index or registry integrity, not a major version, released 7+ days ago by its vendor date | merges itself once green |
+| `review` | no vendor checksum (AWS CLI, gcloud: trust-on-first-use), no vendor release date (the Docker CLI's apt index carries none), or a major version | labelled `needs-review` as information; merges itself once green **and** 7 days after its PR first carried that version |
 | deferred | released less than 7 days ago, or its release date could not be established | no PR until it is 7 days old by a date that can be read |
 
 A push made with the workflow token starts no workflow, so pin-bump dispatches *Build and Push to

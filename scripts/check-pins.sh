@@ -125,7 +125,7 @@ readonly PINS='
 terraform  | ci-tools/Dockerfile.ci               | TERRAFORM_VERSION  | hashicorp | terraform
 kubectl    | ci-tools/Dockerfile.ci               | KUBECTL_VERSION    | k8s       | -
 awscli     | ci-tools/Dockerfile.ci               | AWSCLI_VERSION     | githubtag | aws/aws-cli
-docker     | ci-tools/Dockerfile.ci               | DOCKER_VERSION     | dockerstatic | -
+docker     | ci-tools/Dockerfile.ci               | DOCKER_CLI_VERSION | dockerapt | -
 gcloud     | ci-cloud/Dockerfile.ci               | GCLOUD_VERSION     | gcs       | -
 playwright | */Dockerfile.ci                      | PLAYWRIGHT_VERSION | npm       | playwright
 composer   | */Dockerfile.ci                      | COMPOSER_VERSION   | github    | composer/composer
@@ -193,11 +193,22 @@ resolve_hashicorp() {
     | sort -V | tail -1
 }
 
-resolve_dockerstatic() {
-  fetch https://download.docker.com/linux/static/stable/x86_64/ \
-    | grep -oE 'docker-[0-9]+\.[0-9]+\.[0-9]+\.tgz' \
-    | sed 's/docker-//;s/\.tgz//' | sort -V | tail -1
+# The Docker CLI is installed from Docker's apt repository, so the newest
+# docker-ce-cli in the bookworm stable index is what counts, as its upstream
+# version (5:29.9.1-1~debian.12~bookworm is 29.9.1). Read unverified: this is
+# a drift report. scripts/bump-pins.sh reads it again only from the signed
+# index (InRelease's signature, then each Packages file's hash) before it
+# writes anything.
+resolve_dockerapt() {
+  fetch https://download.docker.com/linux/debian/dists/bookworm/stable/binary-amd64/Packages \
+    | awk '/^Package: / { p = $2 } /^Version: / && p == "docker-ce-cli" { print $2 }' \
+    | sed -E 's/^[0-9]+://; s/-[^-]*$//' \
+    | grep -E '^[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -1
 }
+
+# An apt pin is a package's whole version string; it is compared, and
+# reported, as its upstream part, the version the vendor releases.
+apt_upstream() { printf '%s' "$1" | sed -E 's/^[0-9]+://; s/-[^-]*$//'; }
 
 resolve_npm() {
   local pkg="$1" major=""
@@ -300,6 +311,15 @@ while IFS='|' read -r name file key resolver arg; do
     failed=$((failed + 1)); continue
   fi
 
+  case "$resolver" in
+    dockerapt)
+      if ! printf '%s' "$pinned" | grep -qxE '([0-9]+:)?[0-9]+(\.[0-9]+)*-[A-Za-z0-9.+~]+'; then
+        log error "$name: $key in $file is '$pinned', not a Debian version string"
+        failed=$((failed + 1)); continue
+      fi
+      pinned=$(apt_upstream "$pinned") ;;
+  esac
+
   log info "checking $name (pinned $pinned)"
   latest=""
   case "$resolver" in
@@ -307,7 +327,7 @@ while IFS='|' read -r name file key resolver arg; do
     githubtag)    latest=$(resolve_githubtag "$arg" || true) ;;
     k8s)          latest=$(resolve_k8s || true) ;;
     hashicorp)    latest=$(resolve_hashicorp "$arg" || true) ;;
-    dockerstatic) latest=$(resolve_dockerstatic || true) ;;
+    dockerapt)    latest=$(resolve_dockerapt || true) ;;
     npm)          latest=$(resolve_npm "$arg" || true) ;;
     rubygems)     latest=$(resolve_rubygems "$arg" || true) ;;
     gcs)          latest=$(resolve_gcs || true) ;;

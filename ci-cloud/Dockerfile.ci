@@ -125,8 +125,8 @@ RUN /opt/az/bin/python3 -m pip install --no-cache-dir --disable-pip-version-chec
 
 # The Google Cloud CLI is a versioned tarball. Google publishes no per-file
 # SHA-256 alongside it -- the release bucket carries no .sha256 companions --
-# so its sums below are trust-on-first-use, like the Docker static tarball and
-# the AWS CLI installer in ci-tools: scripts/bump-pins.sh downloads each
+# so its sums below are trust-on-first-use, like the AWS CLI installer in
+# ci-tools: scripts/bump-pins.sh downloads each
 # tarball when it moves the version and records the sha256 of what it got.
 # That cannot prove the first download was genuine, but it pins it: a tarball
 # substituted later fails every build, the daily rebuilds included, instead

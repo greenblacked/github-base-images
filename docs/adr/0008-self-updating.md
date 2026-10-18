@@ -412,13 +412,26 @@ the artifact's digest, not the checksums file, so a file-signature check cannot 
 - **No new secret or permission.** The attestations API is read with the workflow's existing
   `GITHUB_TOKEN`, already in the bump step's environment for release dates; for public
   repositories it needs no permission, so the jobs keep theirs.
+- **The Docker CLI comes from Docker's signed apt repository, not the static tarball.**
+  `ci-tools` installs `docker-ce-cli` at an exact version (`DOCKER_CLI_VERSION`, the full
+  `5:<v>-1~debian.12~bookworm` string) from `download.docker.com/linux/debian bookworm stable`,
+  trusted through a keyring whose fingerprint the build checks against `DOCKER_KEY_FINGERPRINT`
+  (`9DC858229FC7DD38854AE2D88D81803C0EBFCD88`), as ci-cloud does Microsoft's; the trust-on-first-use
+  sums go. Its bump unit is a new integrity kind, `apt`: the version string is read only after
+  `InRelease` verifies with `gpgv` under that key (committed as `scripts/keys/docker.asc`, a gpg
+  `SIGS` row with an inline signature) and each architecture's `Packages` matches the SHA-256 the
+  signed file lists; a bad signature, a mismatched `Packages` or a missing architecture is an
+  error row. The index carries no release date, so the unit keeps the first-seen cooldown and
+  its bumps stay `review`: an `auto` bump merges with no clock of its own, which here would be no
+  cooldown at all.
 
 **Consequences.**
 
 - Of the pinned release binaries, only gitleaks and golang-migrate are still taken on their
-  checksums file alone (no signature asset, no attestation), and the Docker static client and
-  gcloud stay trust on first use (no signature over those bytes at all). docs/security.md,
-  *Supply-chain pins*, has each reason; the previous amendment's list is superseded.
+  checksums file alone (no signature asset, no attestation), and the AWS CLI (signed, but no
+  checksum) and gcloud stay trust on first use. The Docker CLI is no longer among them.
+  docs/security.md, *Supply-chain pins*, has each reason; the previous amendment's list is
+  superseded.
 - A kubectl bump downloads both binaries (about 120 MB) and needs Rekor and Sigstore's TUF root
   online, as the GitHub runners have; elsewhere it fails closed.
 - A vendor that moves to another release workflow, another SLSA generator version or another

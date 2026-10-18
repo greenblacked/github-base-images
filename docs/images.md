@@ -129,7 +129,9 @@ in the catalog.
 
 - **`ci-tools`** — infra/deploy tooling as pinned upstream release binaries: Terraform, kubectl,
   the AWS CLI v2, and the Docker *client* (no daemon — it talks to the host's socket or a
-  `docker:dind` service). Versions are pinned via `ARG`s in
+  `docker:dind` service). The Docker client is `docker-ce-cli` from Docker's GPG-signed apt
+  repository, at an exact version, whose signing key the build checks against a pinned
+  fingerprint; it has no buildx or compose plugin. Versions are pinned via `ARG`s in
   [ci-tools/Dockerfile.ci](../ci-tools/Dockerfile.ci); a bump is a one-line PR that CI revalidates.
 - **`ci-cloud`** — the GCP and Azure counterpart to `ci-tools`: the `gcloud` CLI, the Azure CLI,
   and the same pinned `kubectl`. Split by cloud rather than bundled into one image because most
