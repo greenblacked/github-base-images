@@ -979,7 +979,7 @@ check "  none of them edited anything" [ -z "$(changed_files "$t" "$work/fivel.s
 # The per-run verdict cache must be keyed by the digest itself: a short hash
 # such as cksum (CRC32) lets a crafted digest collide with a verified one.
 check "the digest verdict cache is keyed by the verbatim digest" \
-  bash -c "grep -qx '  marker=\"\$tmp/digest.\$(sha256_of \"\$tmp/digest.key\").\$sum\"' '$bump' && ! grep -n 'cksum' '$bump'"
+  bash -c "grep -qx '  marker=\"\$tmp/digest.\$(sha256_of \"\$tmp/digest.key\").\$sum\"' '$bump' && ! grep -nE '\| *cksum' '$bump'"
 # 2.16.0: each digest lists an SBOM attestation first, then the provenance.
 hl_bundle 2.16.0 "$HL_ID" hadolint/hadolint
 jq -c '.type = "spdxjson"' "$fx/hl-2.16.0.att" > "$fx/hl-2.16.0.sbom"

@@ -799,7 +799,9 @@ verify_gpg() {
 # bytes verified are the bytes every checksum is then read from.
 cache_file() {
   local url="$1" key
-  key=$(printf '%s' "$url" | cksum | cut -d' ' -f1)
+  # sha256, not a short checksum: two URLs must never share a cached file.
+  printf '%s' "$url" > "$tmp/cache.key"
+  key=$(sha256_of "$tmp/cache.key")
   if [ ! -f "$tmp/cache.$key" ]; then
     local rc=0
     http_get "$url" > "$tmp/cache.$key.part" || rc=$?
