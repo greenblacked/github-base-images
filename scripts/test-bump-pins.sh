@@ -600,6 +600,50 @@ check "  and the log says so" grep -q 'json: no image in .github/images.json pin
 rc=0; "$t/scripts/check-pins.sh" --only nosuch > /dev/null 2>&1 || rc=$?
 check "an unknown --only is still a usage error" [ "$rc" -eq 2 ]
 
+echo "case 5c2: check-pins -- the Docker CLI drifts by upstream version and Debian revision"
+# Offline: a fake curl on PATH answers Docker's amd64 Packages index from a
+# fixture, and every other URL with curl -f's exit 22.
+mkdir -p "$work/curl-bin"
+cat > "$work/curl-bin/curl" <<'EOF2'
+#!/usr/bin/env bash
+for url in "$@"; do :; done
+[ "$url" = https://download.docker.com/linux/debian/dists/bookworm/stable/binary-amd64/Packages ] || exit 22
+cat "$FAKE_CURL_PACKAGES"
+EOF2
+chmod +x "$work/curl-bin/curl"
+cp_packages() { # OUT VERSION... -- docker-ce-cli at each, and a newer docker-ce
+  local out="$1" v; shift
+  : > "$out"
+  for v in "$@"; do printf 'Package: docker-ce-cli\r\nArchitecture: amd64\r\nVersion: %s\r\n\r\n' "$v" >> "$out"; done
+  printf 'Package: docker-ce\nArchitecture: amd64\nVersion: 5:29.99.0-1~debian.12~bookworm\n\n' >> "$out"
+}
+# What check-pins does not parse is left out, never guessed at: a prerelease
+# upstream (~rc1) and a revision empty once its distro suffix is cut.
+cp_packages "$work/cp-rev.txt" 5:29.8.1-1~debian.12~bookworm 5:29.9.1-1~debian.12~bookworm 5:29.9.1-2~debian.12~bookworm \
+  5:29.99.0~rc1-1~debian.12~bookworm 5:29.99.1-~debian.12~bookworm
+cp_packages "$work/cp-minor.txt" 5:29.9.1-2~debian.12~bookworm 5:29.9.1-10~debian.12~bookworm 5:29.10.0-1~debian.12~bookworm
+check_docker() { # PIN PACKAGES -- check-pins --only docker in the scratch tree; sets rc
+  force "$t/ci-tools/Dockerfile.ci" DOCKER_CLI_VERSION "$1"
+  rc=0; PATH="$work/curl-bin:$PATH" FAKE_CURL_PACKAGES="$2" "$t/scripts/check-pins.sh" --only docker --format json \
+    > "$work/c5c2.json" 2> "$work/c5c2.err" || rc=$?
+}
+cp_state() { jq -r '.tools[0] | "\(.pinned) \(.latest) \(.state)"' "$work/c5c2.json"; }
+check_docker '5:29.9.1-1~debian.12~bookworm' "$work/cp-rev.txt"
+check "a revision-only drift, 29.9.1-1 behind 29.9.1-2: exit 3, behind" [ "$rc:$(cp_state)" = "3:29.9.1-1 29.9.1-2 behind" ]
+check_docker '5:29.9.1-2~debian.12~bookworm' "$work/cp-rev.txt"
+check "the newest revision pinned is current" [ "$rc:$(cp_state)" = "0:29.9.1-2 29.9.1-2 current" ]
+check_docker '5:29.9.1-2~debian.12~bookworm' "$work/cp-minor.txt"
+check "  29.9.1-2 < 29.9.1-10 < 29.10.0-1, so the latest is 29.10.0-1" [ "$rc:$(cp_state)" = "3:29.9.1-2 29.10.0-1 behind" ]
+check_docker '5:29.9.1-3~debian.12~bookworm' "$work/cp-rev.txt"
+check "a pinned revision newer than the index's is ahead, not behind" [ "$rc:$(cp_state)" = "0:29.9.1-3 29.9.1-2 ahead" ]
+check_docker '5:29.9.1-~debian.12~bookworm' "$work/cp-rev.txt"
+check "a pin whose revision is empty once its distro suffix is cut: exit 1" [ "$rc" -eq 1 ]
+check "  and the log says why" grep -qF "is '5:29.9.1-~debian.12~bookworm', not <upstream>-<revision>" "$work/c5c2.err"
+check_docker '29.9.1' "$work/cp-rev.txt"
+check "a bare upstream version is no Debian version string: exit 1" [ "$rc" -eq 1 ]
+check "the coreutils sort -V here orders unit versions as dpkg does" \
+  [ "$(printf '%s\n' 29.10.0-1 29.9.0-10 29.9.0-2 29.9.1-1 29.9.0-1 | sort -V | paste -sd' ' -)" = "29.9.0-1 29.9.0-2 29.9.0-10 29.9.1-1 29.10.0-1" ]
+
 echo "case 5d: npm's swapped-in undici moves in every Node image"
 if [ -n "$UNDICI_FILES" ]; then
   t=$(new_tree fived)
@@ -851,6 +895,11 @@ if command -v gpg >/dev/null && command -v gpgv >/dev/null; then
   deb_packages dk-arm64 arm64 "$(D 29.8.1-1)" "$(D 29.9.1-1)" "$(D 29.9.1-2)" "$(D 29.10.0-1)"
   deb_packages dk-arm64-old arm64 "$(D 29.8.1-1)"
   deb_packages dk-arm64-rev1 arm64 "$(D 29.8.1-1)" "$(D 29.9.1-1)"
+  # 29.9.1-2 on arm64 too, but under another distro suffix: the same unit
+  # version, a different version string.
+  deb_packages dk-arm64-suffix arm64 "$(D 29.8.1-1)" "$(D 29.9.1-1)" "5:29.9.1-2~debian.12.1~bookworm"
+  # And amd64 listing 29.9.1-2 under two suffixes at once: ambiguous.
+  deb_packages dk-amd64-twice amd64 "$(D 29.8.1-1)" "$(D 29.9.1-1)" "$(D 29.9.1-2)" "5:29.9.1-2~debian.12.1~bookworm"
   cp "$fx/dk-amd64" "$fx/dk-amd64-tampered"
   printf 'Package: docker-ce-cli\nArchitecture: amd64\nVersion: %s\n\n' "$(D 29.9.1-9)" >> "$fx/dk-amd64-tampered"
   in_release dk-good t@example.com bookworm stable/binary-amd64/Packages=dk-amd64 stable/binary-arm64/Packages=dk-arm64
@@ -859,6 +908,8 @@ if command -v gpg >/dev/null && command -v gpgv >/dev/null; then
   in_release dk-trixie t@example.com trixie stable/binary-amd64/Packages=dk-amd64 stable/binary-arm64/Packages=dk-arm64
   in_release dk-old t@example.com bookworm stable/binary-amd64/Packages=dk-amd64 stable/binary-arm64/Packages=dk-arm64-old
   in_release dk-rev1 t@example.com bookworm stable/binary-amd64/Packages=dk-amd64 stable/binary-arm64/Packages=dk-arm64-rev1
+  in_release dk-suffix t@example.com bookworm stable/binary-amd64/Packages=dk-amd64 stable/binary-arm64/Packages=dk-arm64-suffix
+  in_release dk-twice t@example.com bookworm stable/binary-amd64/Packages=dk-amd64-twice stable/binary-arm64/Packages=dk-arm64
   # Text before the signed block, listing the tampered file's hash: gpgv
   # would verify the block after it, and a parser of the whole file would
   # read the planted line first.
@@ -879,8 +930,8 @@ if command -v gpg >/dev/null && command -v gpgv >/dev/null; then
     reserve "$dk/stable/binary-arm64/Packages" "$3"
   }
   export BUMP_PINS_KEYS="$work/keys" BUMP_PINS_KEY_FPR="$fpr"
-  dk_fail() { # WHAT LOG-MESSAGE
-    rc=0; "$bump" --root "$t" --unit docker --to 29.9.1 --quiet --format json > "$work/r5w.json" 2> "$work/r5w.err" || rc=$?
+  dk_fail() { # WHAT LOG-MESSAGE [VERSION]
+    rc=0; "$bump" --root "$t" --unit docker --to "${3:-29.9.1-2}" --quiet --format json > "$work/r5w.json" 2> "$work/r5w.err" || rc=$?
     check "$1: exit 1, error" [ "$rc:$(field "$work/r5w.json" docker status)" = "1:error" ]
     check "  because: $2" grep -qF -- "$2" "$work/r5w.err"
   }
@@ -891,9 +942,16 @@ if command -v gpg >/dev/null && command -v gpgv >/dev/null; then
   dk_serve dk-noarm dk-amd64 dk-arm64
   dk_fail "an index with no arm64 Packages" "lists no single SHA-256 for stable/binary-arm64/Packages: bookworm does not carry arm64"
   dk_serve dk-old dk-amd64 dk-arm64-old
-  dk_fail "arm64 Packages without the version" "$dk/stable/binary-arm64/Packages has no docker-ce-cli 29.9.1 for arm64"
+  dk_fail "arm64 Packages without the version" "$dk/stable/binary-arm64/Packages has no docker-ce-cli 29.9.1-2 for arm64"
   dk_serve dk-rev1 dk-amd64 dk-arm64-rev1
-  dk_fail "the architectures on different revisions" "the architectures disagree: docker-ce-cli 29.9.1 is $(D 29.9.1-2) for one and $(D 29.9.1-1) for arm64"
+  dk_fail "arm64 Packages without that revision, only an older one" "$dk/stable/binary-arm64/Packages has no docker-ce-cli 29.9.1-2 for arm64"
+  dk_serve dk-suffix dk-amd64 dk-arm64-suffix
+  dk_fail "the architectures on different version strings of one revision" "the architectures disagree: docker-ce-cli 29.9.1-2 is $(D 29.9.1-2) for one and 5:29.9.1-2~debian.12.1~bookworm for arm64"
+  dk_serve dk-twice dk-amd64-twice dk-arm64
+  dk_fail "one architecture with two version strings of the revision" "$dk/stable/binary-amd64/Packages has two docker-ce-cli version strings for 29.9.1-2 on amd64"
+  dk_serve dk-good dk-amd64 dk-arm64
+  dk_fail "a revision the index does not have" "$dk/stable/binary-amd64/Packages has no docker-ce-cli 29.9.1-3 for amd64" 29.9.1-3
+  dk_fail "a bare upstream version, with no revision" "target version '29.9.1' is not <upstream>-<revision>" 29.9.1
   dk_serve dk-trixie dk-amd64 dk-arm64
   dk_fail "a validly signed InRelease of another suite" "the signed $dk/InRelease does not name the suite bookworm"
   dk_serve dk-prefixed dk-amd64-tampered dk-arm64
@@ -906,12 +964,12 @@ if command -v gpg >/dev/null && command -v gpgv >/dev/null; then
   check "  none of them edited anything" [ -z "$(changed_files "$t" "$work/fiveg4.snap")" ]
 
   dk_serve dk-good dk-amd64 dk-arm64
-  rc=0; "$bump" --root "$t" --unit docker --to 29.9.1 --quiet --format json > "$work/r5w.json" 2>/dev/null || rc=$?
+  rc=0; "$bump" --root "$t" --unit docker --to 29.9.1-2 --quiet --format json > "$work/r5w.json" 2>/dev/null || rc=$?
   check "a good signature and matching Packages: exit 0, bumped, review" \
     [ "$rc:$(field "$work/r5w.json" docker status):$(field "$work/r5w.json" docker class)" = "0:bumped:review" ]
   expect_pin "$t" ci-tools/Dockerfile.ci DOCKER_CLI_VERSION "$(D 29.9.1-2)"
-  check "  the newest revision of exactly that version, not 29.10.0, nor docker-ce's" [ "$(field "$work/r5w.json" docker new)" = 29.9.1 ]
-  check "  old and new are upstream versions" [ "$(field "$work/r5w.json" docker old)" = 29.8.1 ]
+  check "  exactly that upstream version and revision, not 29.9.1-1, 29.10.0, nor docker-ce's" [ "$(field "$work/r5w.json" docker new)" = 29.9.1-2 ]
+  check "  old and new are unit versions, upstream and revision" [ "$(field "$work/r5w.json" docker old)" = 29.8.1-1 ]
   check "  integrity apt, first-seen cooldown (the index carries no release date)" \
     [ "$(field "$work/r5w.json" docker integrity):$(field "$work/r5w.json" docker cooldown)" = apt:first-seen ]
   check "  InRelease and both Packages files are the integrity sources" \
@@ -923,15 +981,31 @@ if command -v gpg >/dev/null && command -v gpgv >/dev/null; then
   check "  only that one line changed" \
     [ "$(diff "$work/fiveg4.snap/ci-tools/Dockerfile.ci" "$t/ci-tools/Dockerfile.ci" | grep -c '^[<>]')" -eq 2 ]
   check "  and the result still passes --check" "$bump" --root "$t" --check --quiet
-  rc=0; "$bump" --root "$t" --unit docker --to 29.9.1 --quiet --format json > "$work/r5w.json" 2>/dev/null || rc=$?
+  rc=0; "$bump" --root "$t" --unit docker --to 29.9.1-2 --quiet --format json > "$work/r5w.json" 2>/dev/null || rc=$?
   check "the same version again is current" [ "$rc:$(field "$work/r5w.json" docker status)" = "0:current" ]
-  drift > "$work/drift5w.json" <<< 'docker 29.10.0 29.9.1'
+  cp "$t/ci-tools/Dockerfile.ci" "$work/fiveg4.at-2"
+  rc=0; "$bump" --root "$t" --unit docker --to 29.9.1-1 --quiet --format json > "$work/r5w.json" 2> "$work/r5w.err" || rc=$?
+  check "an older revision of the same version is refused: exit 1, error" [ "$rc:$(field "$work/r5w.json" docker status)" = "1:error" ]
+  check "  as a downgrade" grep -qF "target 29.9.1-1 is older than the pinned 29.9.1-2" "$work/r5w.err"
+  check "  and nothing was written" cmp -s "$work/fiveg4.at-2" "$t/ci-tools/Dockerfile.ci"
+  # A revision-only bump: the same upstream version, a newer Debian revision,
+  # the packaging or security fix that a comparison of upstream versions alone
+  # would never see.
+  force "$t/ci-tools/Dockerfile.ci" DOCKER_CLI_VERSION "$(D 29.9.1-1)"
+  rc=0; "$bump" --root "$t" --unit docker --to 29.9.1-2 --quiet --format json > "$work/r5w.json" 2>/dev/null || rc=$?
+  check "a revision-only bump, 29.9.1-1 to 29.9.1-2: exit 0, bumped, review" \
+    [ "$rc:$(field "$work/r5w.json" docker status):$(field "$work/r5w.json" docker class)" = "0:bumped:review" ]
+  check "  from 29.9.1-1 to 29.9.1-2" [ "$(field "$work/r5w.json" docker old) $(field "$work/r5w.json" docker new)" = "29.9.1-1 29.9.1-2" ]
+  check "  not a major version, and on the first-seen clock" \
+    bash -c "jq -r '.[0].reason' '$work/r5w.json' | grep -q 'not a major version; the vendor publishes no release date'"
+  expect_pin "$t" ci-tools/Dockerfile.ci DOCKER_CLI_VERSION "$(D 29.9.1-2)"
+  drift > "$work/drift5w.json" <<< 'docker 29.10.0-1 29.9.1-2'
   rc=0; "$bump" --root "$t" --drift "$work/drift5w.json" --quiet --format json > "$work/r5w.json" 2>/dev/null || rc=$?
-  check "a drift row moves it on, by its upstream version" [ "$rc:$(field "$work/r5w.json" docker status)" = "0:bumped" ]
+  check "a drift row moves it on, by its unit version" [ "$rc:$(field "$work/r5w.json" docker status)" = "0:bumped" ]
   expect_pin "$t" ci-tools/Dockerfile.ci DOCKER_CLI_VERSION "$(D 29.10.0-1)"
   check "  a major version from the index is review too" bash -c "
     t2=\$(mktemp -d) && cp -a '$t/.' \"\$t2\" && sed -i.b 's/^ARG DOCKER_CLI_VERSION=.*/ARG DOCKER_CLI_VERSION=$(D 28.5.0-1)/' \"\$t2/ci-tools/Dockerfile.ci\" &&
-    '$bump' --root \"\$t2\" --unit docker --to 29.9.1 --quiet --format json 2>/dev/null | jq -e '.[0].class == \"review\" and (.[0].reason | test(\"^version string from the vendor.s signed apt index, .*major version change \\\\(28 -> 29\\\\); merges only\"))' >/dev/null; rc=\$?; rm -rf \"\$t2\"; exit \$rc"
+    '$bump' --root \"\$t2\" --unit docker --to 29.9.1-2 --quiet --format json 2>/dev/null | jq -e '.[0].class == \"review\" and (.[0].reason | test(\"^version string from the vendor.s signed apt index, .*major version change \\\\(28 -> 29\\\\); merges only\"))' >/dev/null; rc=\$?; rm -rf \"\$t2\"; exit \$rc"
   unset BUMP_PINS_KEYS BUMP_PINS_KEY_FPR
   unset GNUPGHOME
 else
@@ -1282,6 +1356,10 @@ force "$t/ci-tools/Dockerfile.ci" DOCKER_CLI_VERSION 29.9.0
 rc=0; "$t/scripts/bp.sh" --root "$t" --check > /dev/null 2> "$work/c5j.err" || rc=$?
 check "an apt pin that is a bare version, not the package's version string, fails --check" [ "$rc" -eq 1 ]
 check "  and says so" grep -qF "is '29.9.0', not a Debian version string" "$work/c5j.err"
+force "$t/ci-tools/Dockerfile.ci" DOCKER_CLI_VERSION '5:29.9.0-~debian.12~bookworm'
+rc=0; "$t/scripts/bp.sh" --root "$t" --check > /dev/null 2> "$work/c5j.err" || rc=$?
+check "an apt pin whose revision is empty once its distro suffix is cut fails --check" [ "$rc" -eq 1 ]
+check "  and says so" grep -qF "is '5:29.9.0-~debian.12~bookworm', not a Debian version string of <upstream>-<revision>" "$work/c5j.err"
 
 echo "case 5h: --check over the real tree"
 check "every pin, checksum, tofu and signature row names exactly one line" "$bump" --check --quiet
@@ -1655,17 +1733,19 @@ check "  hashed from its own download" \
 
 echo "case 6m: a Docker CLI bump from the signed apt index is a review PR on the first-seen clock"
 if [ -n "${fpr:-}" ] && command -v gpgv >/dev/null; then
-  # The fixtures case 5g4 left in place: the good index, 29.9.1-2 its newest 29.9.1.
+  # The fixtures case 5g4 left in place: the good index, which has 29.9.1-2.
   scenario m
   export BUMP_PINS_KEYS="$work/keys" BUMP_PINS_KEY_FPR="$fpr"
-  run_prs <<< 'docker 29.9.1'
+  run_prs <<< 'docker 29.9.1-2'
   unset BUMP_PINS_KEYS BUMP_PINS_KEY_FPR
   check "exit 0" [ "$rc" -eq 0 ]
   expect_row docker class review
   check "  the marker records today as first seen" \
-    bash -c "grep -oE '<!-- pin-bump: [^>]* -->' '$log.body' | grep -qE '^<!-- pin-bump: unit=docker to=29\.9\.1 class=review seen=2026-09-28 fp=[0-9a-f]{16} -->$'"
+    bash -c "grep -oE '<!-- pin-bump: [^>]* -->' '$log.body' | grep -qE '^<!-- pin-bump: unit=docker to=29\.9\.1-2 class=review seen=2026-09-28 fp=[0-9a-f]{16} -->$'"
   check "  the body names the signed index as the source, and lists it" \
     bash -c "grep -qF 'from the vendor'\''s signed apt index' '$log.body' && grep -qxF -- '- $dk/InRelease' '$log.body'"
+  check "  the title names the unit versions, upstream and revision" \
+    bash -c "grep -q -- '^pr create .* --title Bump docker from 29.8.1-1 to 29.9.1-2 --body-file ' '$log'"
   check "  the branch pins the full version string" \
     bash -c "git -C '$origin' show pin-bump/docker:ci-tools/Dockerfile.ci | grep -qx 'ARG DOCKER_CLI_VERSION=5:29.9.1-2~debian.12~bookworm'"
 else

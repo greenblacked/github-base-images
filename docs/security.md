@@ -732,7 +732,11 @@ How the newer rows work, and what each binds:
   must carry the same version string. Any failure is an error row. Verified live on 2026-10-18:
   bookworm's `InRelease` gives `VALIDSIG` by the subkey for the pinned primary, both
   architectures' `Packages` and `Packages.gz` match its SHA-256 lines, and both list
-  `docker-ce-cli` up to `5:29.9.1-1~debian.12~bookworm`. The repository publishes no release
+  `docker-ce-cli` up to `5:29.9.1-1~debian.12~bookworm`. The unit's version, which `check-pins.sh`
+  reports and a bump asks for, is the upstream version and the Debian revision without the epoch
+  or the distro suffix (`29.9.1-1`), so a packaging or security fix Docker ships only as a new
+  revision is drift too; the bump takes exactly that revision from the signed index, never the
+  newest one of an upstream version. The repository publishes no release
   date, so the cooldown is the pin-bump PR's first-seen clock: a Docker bump is `review`, never
   `auto`, though it is verified like a signed checksum. The binary is a different build from the
   static tarball's, at `/usr/bin/docker`; `/usr/local/bin/docker` is a link to it.

@@ -193,22 +193,37 @@ resolve_hashicorp() {
     | sort -V | tail -1
 }
 
+# An apt pin is a package's whole version string; it is compared, and
+# reported, as its unit version: the upstream version and the Debian revision,
+# without the epoch or the distro suffix the revision carries after its first
+# `~` (5:29.9.0-1~debian.12~bookworm is 29.9.0-1). The revision is kept: a
+# packaging or security fix Docker ships only as a new revision (29.9.0-2) is
+# drift like any release. Exactly <dotted upstream>-<dotted revision>, or
+# nothing and a failure: sort -V orders those as dpkg does (29.9.0-1 <
+# 29.9.0-2 < 29.9.0-10 < 29.10.0-1), and nothing else is guessed at.
+# The same helper is in scripts/bump-pins.sh.
+apt_unit_version() {
+  local v="$1" up rev re_deb='^([0-9]+:)?[0-9][A-Za-z0-9.+~]*-[A-Za-z0-9.+~]+$' re_num='^[0-9]+(\.[0-9]+)*$'
+  [[ $v =~ $re_deb ]] || return 1
+  v=${v#*:}   # the epoch: the only place a Debian version string has a colon
+  up=${v%-*}; rev=${v##*-}; rev=${rev%%~*}
+  if ! [[ $up =~ $re_num ]] || ! [[ $rev =~ $re_num ]]; then return 1; fi
+  printf '%s-%s\n' "$up" "$rev"
+}
+
 # The Docker CLI is installed from Docker's apt repository, so the newest
-# docker-ce-cli in the bookworm stable index is what counts, as its upstream
-# version (5:29.9.1-1~debian.12~bookworm is 29.9.1). Read unverified: this is
-# a drift report. scripts/bump-pins.sh reads it again only from the signed
+# docker-ce-cli in the bookworm stable index is what counts, as its unit
+# version (5:29.9.1-2~debian.12~bookworm is 29.9.1-2). Read unverified: this
+# is a drift report. scripts/bump-pins.sh reads it again only from the signed
 # index (InRelease's signature, then each Packages file's hash) before it
 # writes anything.
 resolve_dockerapt() {
+  local v
   fetch https://download.docker.com/linux/debian/dists/bookworm/stable/binary-amd64/Packages \
-    | awk '/^Package: / { p = $2 } /^Version: / && p == "docker-ce-cli" { print $2 }' \
-    | sed -E 's/^[0-9]+://; s/-[^-]*$//' \
-    | grep -E '^[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -1
+    | awk '{ sub(/\r$/, "") } /^Package: / { p = $2 } /^Version: / && p == "docker-ce-cli" { print $2 }' \
+    | while IFS= read -r v; do apt_unit_version "$v" || true; done \
+    | sort -V | tail -1
 }
-
-# An apt pin is a package's whole version string; it is compared, and
-# reported, as its upstream part, the version the vendor releases.
-apt_upstream() { printf '%s' "$1" | sed -E 's/^[0-9]+://; s/-[^-]*$//'; }
 
 resolve_npm() {
   local pkg="$1" major=""
@@ -317,7 +332,11 @@ while IFS='|' read -r name file key resolver arg; do
         log error "$name: $key in $file is '$pinned', not a Debian version string"
         failed=$((failed + 1)); continue
       fi
-      pinned=$(apt_upstream "$pinned") ;;
+      raw=$pinned
+      if ! pinned=$(apt_unit_version "$raw"); then
+        log error "$name: $key in $file is '$raw', not <upstream>-<revision> once its epoch and distro suffix are cut"
+        failed=$((failed + 1)); continue
+      fi ;;
   esac
 
   log info "checking $name (pinned $pinned)"

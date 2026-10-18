@@ -414,7 +414,7 @@ the artifact's digest, not the checksums file, so a file-signature check cannot 
   repositories it needs no permission, so the jobs keep theirs.
 - **The Docker CLI comes from Docker's signed apt repository, not the static tarball.**
   `ci-tools` installs `docker-ce-cli` at an exact version (`DOCKER_CLI_VERSION`, the full
-  `5:<v>-1~debian.12~bookworm` string) from `download.docker.com/linux/debian bookworm stable`,
+  `5:<v>-<rev>~debian.12~bookworm` string) from `download.docker.com/linux/debian bookworm stable`,
   trusted through a keyring whose fingerprint the build checks against `DOCKER_KEY_FINGERPRINT`
   (`9DC858229FC7DD38854AE2D88D81803C0EBFCD88`), as ci-cloud does Microsoft's; the trust-on-first-use
   sums go. Its bump unit is a new integrity kind, `apt`: the version string is read only after
@@ -423,7 +423,12 @@ the artifact's digest, not the checksums file, so a file-signature check cannot 
   signed file lists; a bad signature, a mismatched `Packages` or a missing architecture is an
   error row. The index carries no release date, so the unit keeps the first-seen cooldown and
   its bumps stay `review`: an `auto` bump merges with no clock of its own, which here would be no
-  cooldown at all.
+  cooldown at all. The unit's version — what `check-pins.sh` reports, the drift and `--to` ask
+  for, and the PR title and marker carry — is the upstream version and the Debian revision,
+  without the epoch or the distro suffix (`5:29.9.0-1~debian.12~bookworm` is `29.9.0-1`). An
+  upstream version alone would call `29.9.0-1` current with `29.9.0-2` published, and a packaging or
+  security fix Docker ships only as a new revision would never be taken; so the bump reads exactly
+  the revision asked for from the signed index, refuses an older one, and writes the full string.
 
 **Consequences.**
 

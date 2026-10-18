@@ -153,7 +153,8 @@ usage: bump-pins.sh (--drift FILE | --unit NAME [--to VERSION] | --check) [optio
 
   --drift FILE   a `check-pins.sh --format json` report; bump every row that is behind
   --unit NAME    bump one unit (see UNITS below) to --to, or to the vendor's latest
-  --to VERSION   the version to bump --unit to
+  --to VERSION   the version to bump --unit to (an apt unit's is
+                 <upstream>-<revision>, e.g. docker --to 29.9.1-1)
   --plan         with --drift: print one JSON line per unit to bump, and edit nothing
   --check        verify the tables below against --root (no network, no edits)
   --root DIR     the tree to edit (default: this script's repository)
@@ -230,8 +231,11 @@ trap 'rm -rf "$tmp"' EXIT INT TERM
 #                            apt index (InRelease, verified by its gpg SIGS
 #                            row, then Packages, verified by the hash in it).
 #                            The unit's version is that string's upstream
-#                            part (5:29.9.0-1~debian.12~bookworm is 29.9.0),
-#                            and every version pin of the unit must be an APT
+#                            version and Debian revision, without the epoch
+#                            or distro suffix (5:29.9.0-1~debian.12~bookworm
+#                            is 29.9.0-1; --to 29.9.0-2 asks for exactly
+#                            that revision), and every version pin of the
+#                            unit must be an APT
 #                            row, so the two cannot disagree
 #             attested       each DOWNLOADS row is downloaded and hashed, and
 #                            the hash pinned only once a digest SIGS row
@@ -345,7 +349,9 @@ composer | */Dockerfile.ci:COMPOSER_SHA256            | $GH/composer/composer/re
 # and the suite it names must be this one. Then, for each architecture, the
 # component's binary-<arch>/Packages file must hash to exactly the SHA-256 the
 # signed InRelease lists for it, and only then is it read: the newest version
-# string of the package whose upstream part is the target version. Every
+# string of the package whose unit version -- upstream version and Debian
+# revision, 29.9.1-2 for 5:29.9.1-2~debian.12~bookworm -- is exactly the
+# target version. Every
 # architecture must have one, and the same one. Both architectures the images
 # are built for are listed (--check enforces it).
 readonly APT="
@@ -1011,14 +1017,15 @@ pypi_hashes() {
 }
 
 # apt_resolve UNIT VERSION REPOSITORY SUITE COMPONENT PACKAGE ARCHES -- the
-# version string of PACKAGE whose upstream part is VERSION, from the signed
+# version string of PACKAGE whose unit version (apt_unit_version: upstream
+# version and Debian revision, 29.9.1-2) is exactly VERSION, from the signed
 # index of SUITE (the APT table's comment has the chain), in apt_value; on any
 # broken link sets apt_err to the reason and returns 1. Not run in a command
 # substitution: the URLs and notes it records belong to this unit.
 apt_err="" apt_value=""
 apt_resolve() {
   local unit="$1" v="$2" repo="$3" suite="$4" comp="$5" pkg="$6" arches="$7"
-  local rel_url f signed arch path want pkgs_url pf got found one="" rc
+  local rel_url f signed arch path want pkgs_url pf got found cand one="" rc
   apt_err=""; apt_value=""
   rel_url="$repo/dists/$suite/InRelease"
   rc=0; f=$(cache_file "$rel_url") || rc=$?
@@ -1051,20 +1058,25 @@ apt_resolve() {
     if [ "$got" != "$want" ]; then
       apt_err="$pkgs_url hashes to $got, not the $want the signed InRelease lists for it"; return 1
     fi
-    # Only now is it read: the newest version string of PACKAGE for ARCH whose
-    # upstream part is VERSION.
-    found=$(awk -v pkg="$pkg" -v a="$arch" -v v="$v" '
-      function done_stanza(   u) {
-        if (p == pkg && ar == a && ver ~ /^([0-9]+:)?[0-9][A-Za-z0-9.+~]*-[A-Za-z0-9.+~]+$/) {
-          u = ver; sub(/^[0-9]+:/, "", u); sub(/-[^-]*$/, "", u)
-          if (u == v) print ver
-        }
+    # Only now is it read: the one version string of PACKAGE for ARCH whose
+    # unit version is exactly VERSION. Two (the same upstream version and
+    # revision under two distro suffixes) are ambiguous, and refused.
+    found=""
+    while IFS= read -r cand; do
+      [ "$(apt_unit_version "$cand" || true)" = "$v" ] || continue
+      if [ -n "$found" ] && [ "$cand" != "$found" ]; then
+        apt_err="$pkgs_url has two $pkg version strings for $v on $arch, $found and $cand"; return 1
+      fi
+      found=$cand
+    done < <(awk -v pkg="$pkg" -v a="$arch" '
+      function done_stanza() {
+        if (p == pkg && ar == a && ver != "") print ver
         p = ""; ar = ""; ver = ""
       }
       { sub(/\r$/, "") }
       /^$/ { done_stanza(); next }
       /^Package: / { p = $2 } /^Architecture: / { ar = $2 } /^Version: / { ver = $2 }
-      END { done_stanza() }' "$pf" | sort -V | tail -1)
+      END { done_stanza() }' "$pf")
     if [ -z "$found" ]; then
       apt_err="$pkgs_url has no $pkg $v for $arch"; return 1
     fi
@@ -1086,8 +1098,27 @@ is_version() { printf '%s' "$1" | grep -qxE '[0-9]+(\.[0-9]+)*'; }
 # required (every package in a vendor's repository has one), in the
 # characters Debian allows -- nothing that could break out of an ARG line.
 is_apt_version() { printf '%s' "$1" | grep -qxE '([0-9]+:)?[0-9][A-Za-z0-9.+~]*-[A-Za-z0-9.+~]+'; }
-# Its upstream part: 5:29.9.0-1~debian.12~bookworm -> 29.9.0.
-apt_upstream() { printf '%s' "$1" | sed -E 's/^[0-9]+://; s/-[^-]*$//'; }
+# Its unit version, the one check-pins reports and the drift and --to ask
+# for: the upstream version and the Debian revision, without the epoch or the
+# distro suffix after the revision's first `~` (5:29.9.0-1~debian.12~bookworm
+# -> 29.9.0-1). The revision is part of it, so a fix Docker ships only as a
+# new revision (29.9.0-2) is a bump like any release. Exactly <dotted
+# upstream>-<dotted revision> (is_apt_unit_version), or nothing and a
+# failure. The same helper is in scripts/check-pins.sh.
+apt_unit_version() {
+  local v="$1" up rev re_num='^[0-9]+(\.[0-9]+)*$'
+  is_apt_version "$v" || return 1
+  v=${v#*:}   # the epoch: the only place a Debian version string has a colon
+  up=${v%-*}; rev=${v##*-}; rev=${rev%%~*}
+  if ! [[ $up =~ $re_num ]] || ! [[ $rev =~ $re_num ]]; then return 1; fi
+  printf '%s-%s\n' "$up" "$rev"
+}
+# An apt unit's version: 29.9.0-1, which sort -V (ver_gt) orders as dpkg
+# does: 29.9.0-1 < 29.9.0-2 < 29.9.0-10 < 29.10.0-1.
+is_apt_unit_version() { printf '%s' "$1" | grep -qxE '[0-9]+(\.[0-9]+)*-[0-9]+(\.[0-9]+)*'; }
+# unit_version_ok INTEGRITY VERSION -- VERSION has the shape of that unit's
+# versions: <upstream>-<revision> for an apt unit, a dotted number otherwise.
+unit_version_ok() { if [ "$1" = apt ]; then is_apt_unit_version "$2"; else is_version "$2"; fi; }
 # 0 when $1 sorts strictly after $2.
 ver_gt() { [ "$1" != "$2" ] && [ "$(printf '%s\n%s\n' "$1" "$2" | sort -V | tail -1)" = "$1" ]; }
 
@@ -1227,7 +1258,11 @@ bump_unit() {
   date_spec=$(unit_field "$unit" 5)
   version_url=$(subst "$(unit_field "$unit" 6)" "$new")
 
-  if ! is_version "$new"; then fail_unit "$unit" "target version '$new' is not a dotted number"; return 0; fi
+  # An apt unit's version is <upstream>-<revision> (apt_unit_version); every
+  # other unit's a dotted number.
+  local version_shape="a dotted number"
+  if [ "$integrity" = apt ]; then version_shape="<upstream>-<revision>, such as 29.9.0-1"; fi
+  if ! unit_version_ok "$integrity" "$new"; then fail_unit "$unit" "target version '$new' is not $version_shape"; return 0; fi
 
   # Every copy of the pin is read. The first is the one check-pins reports.
   for pin in $pins; do
@@ -1236,10 +1271,12 @@ bump_unit() {
     cur=$(get_pin "$root/$file" "$key")
     [ -n "$cur" ] || { fail_unit "$unit" "no $key in $file"; return 0; }
     # An apt pin is the package's whole version string; the unit's version,
-    # the one check-pins reports and the drift asks for, is its upstream part.
+    # the one check-pins reports and the drift asks for, is its upstream
+    # version and Debian revision (apt_unit_version).
     if [ "$integrity" = apt ]; then
       is_apt_version "$cur" || { fail_unit "$unit" "$key in $file is '$cur', not a Debian version string"; return 0; }
-      cur=$(apt_upstream "$cur")
+      cur=$(apt_unit_version "$cur") \
+        || { fail_unit "$unit" "$key in $file is '$(get_pin "$root/$file" "$key")', not <upstream>-<revision> once its epoch and distro suffix are cut"; return 0; }
     fi
     [ -n "$old" ] || old=$cur
     [ "$cur" = "$old" ] || note="copies disagreed before this bump ($file had $cur); all now move together. "
@@ -1251,7 +1288,7 @@ bump_unit() {
     emit "$unit" current "$old" "$new" "" "already at $new" ""
     return 0
   fi
-  if ! is_version "$old"; then fail_unit "$unit" "pinned version '$old' is not a dotted number"; return 0; fi
+  if ! unit_version_ok "$integrity" "$old"; then fail_unit "$unit" "pinned version '$old' is not $version_shape"; return 0; fi
   if [ "$old" != "$new" ] && ! ver_gt "$new" "$old"; then
     fail_unit "$unit" "target $new is older than the pinned $old"; return 0
   fi
@@ -1304,7 +1341,7 @@ bump_unit() {
                "$(trim "$row_pkg")" "$(trim "$row_arches")"; then
           fail_unit "$unit" "$apt_err"; return 0
         fi
-        if ! is_apt_version "$apt_value" || [ "$(apt_upstream "$apt_value")" != "$new" ]; then
+        if ! is_apt_version "$apt_value" || [ "$(apt_unit_version "$apt_value" || true)" != "$new" ]; then
           fail_unit "$unit" "the signed index gave '$apt_value' for $new"; return 0
         fi
         for row in $(expand_pins "$(trim "$row_pin")"); do
@@ -1524,8 +1561,8 @@ check_tables() {
     for p in $(expand_pins $specs); do
       one_line "$p" "$u: pin" || continue
       if [ "$integ" = apt ]; then
-        if ! is_apt_version "$v" || ! is_version "$(apt_upstream "$v")"; then
-          complain "$u: pin $p is '$v', not a Debian version string of a version"
+        if ! is_apt_version "$v" || ! apt_unit_version "$v" > /dev/null; then
+          complain "$u: pin $p is '$v', not a Debian version string of <upstream>-<revision>"
         fi
         apt_pins_of "$u" > "$tmp/apt.pins"
         grep -qxF "$p" "$tmp/apt.pins" || complain "$u: pin $p is a version pin of an apt unit, but no APT row writes it"

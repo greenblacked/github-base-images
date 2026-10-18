@@ -206,7 +206,7 @@ very digest, and either check failing fails the bump. Set it with the script
 
 The Docker CLI in `ci-tools` has no checksum `ARG` at all. It is installed from Docker's signed
 apt repository (`download.docker.com/linux/debian bookworm stable`), and its pin,
-`DOCKER_CLI_VERSION`, is the package's full version string (`5:<VERSION>-1~debian.12~bookworm`).
+`DOCKER_CLI_VERSION`, is the package's full version string (`5:29.9.0-1~debian.12~bookworm`).
 apt verifies `InRelease` against the keyring the build installs — Docker's key, which must have
 the fingerprint in `DOCKER_KEY_FINGERPRINT` — then `Packages` against `InRelease` and the `.deb`
 against `Packages`. `scripts/bump-pins.sh` reads a new version string only from that signed
@@ -220,7 +220,11 @@ gpgv --keyring <(gpg --dearmor < scripts/keys/docker.asc) --output InRelease.sig
 sed -n '/^SHA256:/,$p' InRelease.signed | grep ' stable/binary-amd64/Packages$'   # = sha256sum Packages
 ```
 
-Set it with the script (`./scripts/bump-pins.sh --unit docker --to <VERSION>`). Its index carries
+Set it with the script (`./scripts/bump-pins.sh --unit docker --to <VERSION>-<REVISION>`, say
+`--to 29.9.1-1`). The unit's version is the upstream version **and** the Debian revision, without
+the epoch or the distro suffix (`5:29.9.0-1~debian.12~bookworm` is `29.9.0-1`): a fix Docker ships
+only as a new revision (`29.9.0-2`) is drift, and a bump, like any release. `--to` names that exact
+revision, and the full string the signed index lists for it is what is written. Its index carries
 no release date, so a Docker bump is labelled `needs-review` and waits the first-seen clock like
 the two below, though it is not trust on first use.
 

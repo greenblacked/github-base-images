@@ -314,7 +314,9 @@ against their GitHub artifact attestations (Composer's sha256 is hashed from the
 pinned only once its attestation and GPG signature verify), and kubectl's by verifying each
 binary's signature and matching its sha256. A missing or wrong signature or attestation fails the
 bump ([Supply-chain pins](security.md#supply-chain-pins)). The Docker CLI is pinned by its
-exact package version in Docker's signed apt repository, which the bump reads only from the
+exact package version in Docker's signed apt repository — drift and bumps compare its upstream
+version and Debian revision (`29.9.0-1` for `5:29.9.0-1~debian.12~bookworm`), so a fix shipped only
+as a new revision is not missed — which the bump reads only from the
 signed index: `InRelease` verified with `gpgv` under Docker's key, pinned by fingerprint, then each
 architecture's `Packages` against the hash the signed file lists. apt checks the same chain, and
 each `.deb`, at build time. The two vendors that
