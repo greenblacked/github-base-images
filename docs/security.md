@@ -652,10 +652,13 @@ from `security-events`. The pinned actionlint predates that permission, so
 
 Every action is pinned by commit SHA ([ADR 0004](adr/0004-sha-pinned-actions.md)), and every
 downloaded binary — the tools in the images and each lint engine — is checksum-verified. Wherever
-the vendor publishes a checksum, that is the one. The three that publish none (the AWS CLI, the
-Docker static client, gcloud) carry a trust-on-first-use sha256 that `scripts/bump-pins.sh`
-records from its own download, after verifying AWS's signature for the AWS CLI; they are labelled
-as such, and listed in [CONTRIBUTING.md](../CONTRIBUTING.md#what-does-not-belong-in-an-image).
+the vendor publishes a checksum, that is the one. The two that publish none (the AWS CLI and
+gcloud) carry a trust-on-first-use sha256 that `scripts/bump-pins.sh` records from its own
+download, after verifying AWS's signature for the AWS CLI; they are labelled as such, and listed
+in [CONTRIBUTING.md](../CONTRIBUTING.md#what-does-not-belong-in-an-image). The Docker CLI was the
+third until it moved from Docker's unsigned static tarball to Docker's signed apt repository: it
+is now `docker-ce-cli` at an exact version, installed by apt, which checks every byte against
+Docker's signature (below).
 Composer's sha256 is also hashed from the bump's own download of the phar on the GitHub release,
 but it is not trust on first use: it is pinned only once GitHub's attestation for exactly that
 digest, and the phar's GPG signature, verify (below).
@@ -682,6 +685,7 @@ release, and those marked below were verified end to end, before it was pinned:
 | actionlint | each archive digest in `actionlint_<v>_checksums.txt`, by its GitHub attestation | as hadolint | `https://github.com/rhysd/actionlint/.github/workflows/release.yaml@refs/tags/v<v>`, repository `rhysd/actionlint` |
 | Composer | `composer.phar` on the GitHub release: its digest by GitHub attestation, and the file by its `.asc` | as hadolint, then `gpgv` | `https://github.com/composer/composer/.github/workflows/release.yml@refs/tags/<v>` (no `v`), repository `composer/composer`; key `scripts/keys/composer.asc` (from keyserver.ubuntu.com), fingerprint `161DFBE342889F01DDAC4E61CBB3D576F2A0946F` |
 | kubectl | each binary (`kubectl.sig`, `kubectl.cert`) | `cosign verify-blob --signature --certificate`, then sha256 of the binary = the `.sha256` sum | `krel-staging@k8s-releng-prod.iam.gserviceaccount.com`, issuer `https://accounts.google.com` |
+| Docker CLI | the bookworm `InRelease` of `download.docker.com/linux/debian` (clearsigned), then each `stable/binary-<arch>/Packages` by the SHA-256 that signed file lists | `gpgv`, then sha256 of each Packages file = the signed sum | Docker's "Docker Release (CE deb)" key, `scripts/keys/docker.asc` (from `download.docker.com/linux/debian/gpg`), primary fingerprint `9DC858229FC7DD38854AE2D88D81803C0EBFCD88` (it signs with subkey `D3306A018370199E527AE7997EA0A9C3F273FCD8`) |
 
 The identities are exact, not patterns, and `bump-pins.sh --check` (run by lint) refuses a
 pattern, an unknown issuer, a digest row without the repository it binds (and, for the SLSA
@@ -717,21 +721,40 @@ How the newer rows work, and what each binds:
   was checked there against the certificate's key, whose identity and issuer are the pinned ones,
   and the cosign invocation is the one cosign v3 takes for a signature and certificate without a
   bundle (`--insecure-ignore-tlog` is never used).
+- **Docker CLI.** The pin is `DOCKER_CLI_VERSION` in `ci-tools/Dockerfile.ci`, the package's full
+  version string (`5:29.9.0-1~debian.12~bookworm`), and no checksum: apt verifies `InRelease`
+  against the keyring the build installs (`signed-by`, the key's fingerprint checked first against
+  `DOCKER_KEY_FINGERPRINT`, as Microsoft's is for the Azure CLI), `Packages` against `InRelease`,
+  and the `.deb` against `Packages`. The bump walks the same chain before it writes a version:
+  the `InRelease` must be one clearsigned message (nothing outside the signed block is read; what
+  is read is `gpgv`'s own output of what was signed) by the pinned key, and name the suite;
+  each architecture's `Packages` must hash to the sum the signed file lists; and amd64 and arm64
+  must carry the same version string. Any failure is an error row. Verified live on 2026-10-18:
+  bookworm's `InRelease` gives `VALIDSIG` by the subkey for the pinned primary, both
+  architectures' `Packages` and `Packages.gz` match its SHA-256 lines, and both list
+  `docker-ce-cli` up to `5:29.9.1-1~debian.12~bookworm`. The unit's version, which `check-pins.sh`
+  reports and a bump asks for, is the upstream version and the Debian revision without the epoch
+  or the distro suffix (`29.9.1-1`), so a packaging or security fix Docker ships only as a new
+  revision is drift too; the bump takes exactly that revision from the signed index, never the
+  newest one of an upstream version. The repository publishes no release
+  date, so the cooldown is the pin-bump PR's first-seen clock: a Docker bump is `review`, never
+  `auto`, though it is verified like a signed checksum. The binary is a different build from the
+  static tarball's, at `/usr/bin/docker`; `/usr/local/bin/docker` is a link to it.
 
 Not signature-checked, and why: **gitleaks** and **golang-migrate** publish no signature asset and
 have no GitHub attestations (`gh attestation verify` reports none), so they are checked against
-their checksums files only. The **Docker static client** tarball is unsigned — Docker's signed apt
-repository carries different bytes, so its signature says nothing about the tarball — and
-**gcloud**'s tarball has only Google Cloud Storage's md5/crc metadata; both stay trust on first
-use (above). npm, PyPI and RubyGems packages are pinned by their registries' digests (below).
+their checksums files only. **gcloud**'s tarball has only Google Cloud Storage's md5/crc metadata,
+so it stays trust on first use (above). npm, PyPI and RubyGems packages are pinned by their
+registries' digests (below).
 
 The
 Python packages installed outside an image's base — the Azure CLI's swapped-in libraries
 (`ci-cloud/az-overrides.txt`) and zizmor (`.github/zizmor-requirements.txt`) — are exact versions
-installed with `pip --require-hashes`, every hash from PyPI. The one third-party apt repository,
-Microsoft's for the Azure CLI, is trusted only through a key whose fingerprint the build checks
-(`BC528686B50D79E339D3721CEB3E94ADBE1229CF`, as Microsoft documents it) and `ci-cloud/test.sh`
-checks again in the image. The upstream base itself is copied into GHCR by digest and verified
+installed with `pip --require-hashes`, every hash from PyPI. The two third-party apt
+repositories are each trusted only through a key whose fingerprint the build checks, and the
+image's smoke test checks again: Microsoft's for the Azure CLI
+(`BC528686B50D79E339D3721CEB3E94ADBE1229CF`, as Microsoft documents it; `ci-cloud/test.sh`), and
+Docker's for the Docker CLI (`9DC858229FC7DD38854AE2D88D81803C0EBFCD88`; `ci-tools/test.sh`). The upstream base itself is copied into GHCR by digest and verified
 ([Mirrored upstream base](pipeline.md#mirrored-upstream-base)).
 
 Dependabot keeps action pins and base images current with a seven-day `cooldown` on every

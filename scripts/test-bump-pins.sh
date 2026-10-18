@@ -201,11 +201,6 @@ serve "$G/anchore/syft/releases/download/v2.0.0/syft_2.0.0_checksums.txt" syft.t
 sign_sigstore "$G/anchore/syft/releases/download/v2.0.0/syft_2.0.0_checksums.txt" syft.txt "$SYFT_ID"
 gh_release anchore/syft v2.0.0 "$OLD"
 
-# docker 29.9.0: no vendor checksum -> review, and the artifacts must exist.
-echo present > "$fx/present"
-serve "https://download.docker.com/linux/static/stable/x86_64/docker-29.9.0.tgz" present
-serve "https://download.docker.com/linux/static/stable/aarch64/docker-29.9.0.tgz" present
-
 # grype 0.120.0: the checksums file 404s -> this unit fails, others carry on.
 serve "$G/anchore/grype/releases/download/v0.120.0/grype_0.120.0_checksums.txt" @404
 gh_release anchore/grype v0.120.0 "$OLD"
@@ -315,7 +310,8 @@ new_tree() {
   force "$t/.github/workflows/security.yml" GITLEAKS_VERSION 8.30.1
   force "$t/ci-tools/Dockerfile.ci" KUBECTL_VERSION 1.37.0
   force "$t/ci-cloud/Dockerfile.ci" KUBECTL_VERSION 1.37.0
-  force "$t/ci-tools/Dockerfile.ci" DOCKER_VERSION 29.8.1
+  force "$t/ci-tools/Dockerfile.ci" DOCKER_CLI_VERSION '5:29.8.1-1~debian.12~bookworm'
+  force "$t/ci-cloud/Dockerfile.ci" GCLOUD_VERSION 588.0.0
   force "$t/ci-db/Dockerfile.ci" MIGRATE_VERSION 4.20.1
   force "$t/scripts/lint.sh" HADOLINT_VERSION 2.15.1
   for f in $NODE_FILES; do force "$t/$f" NPM_VERSION 12.1.0; done
@@ -375,7 +371,6 @@ drift > "$work/drift1.json" <<'EOF'
 trivy 0.75.0
 kubectl 1.38.0
 syft 2.0.0
-docker 29.9.0
 grype 0.120.0
 migrate 4.20.2
 gitleaks 8.31.0
@@ -389,7 +384,7 @@ EOF
 rc=0
 "$bump" --root "$t" --drift "$work/drift1.json" --format json --quiet > "$work/r1.json" 2> "$work/r1.err" || rc=$?
 check "exit 1, because grype and osv-scanner failed" [ "$rc" -eq 1 ]
-check "one result per unit, gitleaks rows merged" [ "$(jq length "$work/r1.json")" -eq 12 ]
+check "one result per unit, gitleaks rows merged" [ "$(jq length "$work/r1.json")" -eq 11 ]
 
 echo " normal bump (trivy)"
 expect_field "$work/r1.json" trivy status bumped
@@ -437,10 +432,6 @@ else
   expect_field "$work/r1.json" json status error
 fi
 
-echo " no vendor checksum -> review (docker)"
-expect_field "$work/r1.json" docker class review
-expect_pin "$t" ci-tools/Dockerfile.ci DOCKER_VERSION 29.9.0
-
 echo " registry integrity (npm, both images) and lint.sh digests (hadolint, CRLF + '*')"
 expect_field "$work/r1.json" npm class auto
 for f in $NODE_FILES; do expect_pin "$t" "$f" NPM_VERSION 12.2.0; done
@@ -482,7 +473,6 @@ drift > "$work/drift2.json" <<'EOF'
 trivy 0.75.0
 kubectl 1.38.0
 syft 2.0.0
-docker 29.9.0
 migrate 4.20.2
 gitleaks 8.31.0
 hadolint 2.15.2
@@ -524,7 +514,7 @@ echo "case 4: --plan lists units without editing"
 t=$(new_tree four); cp -a "$t" "$work/four.snap"
 rc=0; "$bump" --root "$t" --plan --drift "$work/drift1.json" > "$work/plan.jsonl" 2>/dev/null || rc=$?
 check "exit 0" [ "$rc" -eq 0 ]
-check "12 units, gitleaks once" [ "$(jq -s length "$work/plan.jsonl")" -eq 12 ]
+check "11 units, gitleaks once" [ "$(jq -s length "$work/plan.jsonl")" -eq 11 ]
 check "no file touched" [ -z "$(changed_files "$t" "$work/four.snap")" ]
 printf '{"drift":1,"failed":0,"tools":[{"tool":"brand-new-tool","pinned":"1","latest":"2","file":"x","key":"x","state":"behind"}]}' > "$work/drift4.json"
 rc=0; "$bump" --root "$t" --plan --drift "$work/drift4.json" > "$work/plan4.jsonl" 2>/dev/null || rc=$?
@@ -609,6 +599,50 @@ check "an optional key no image carries: exit 0, skipped" [ "$rc:$(jq '.tools | 
 check "  and the log says so" grep -q 'json: no image in .github/images.json pins JSON_VERSION any more, and it is optional; skipped' "$work/c5d.err"
 rc=0; "$t/scripts/check-pins.sh" --only nosuch > /dev/null 2>&1 || rc=$?
 check "an unknown --only is still a usage error" [ "$rc" -eq 2 ]
+
+echo "case 5c2: check-pins -- the Docker CLI drifts by upstream version and Debian revision"
+# Offline: a fake curl on PATH answers Docker's amd64 Packages index from a
+# fixture, and every other URL with curl -f's exit 22.
+mkdir -p "$work/curl-bin"
+cat > "$work/curl-bin/curl" <<'EOF2'
+#!/usr/bin/env bash
+for url in "$@"; do :; done
+[ "$url" = https://download.docker.com/linux/debian/dists/bookworm/stable/binary-amd64/Packages ] || exit 22
+cat "$FAKE_CURL_PACKAGES"
+EOF2
+chmod +x "$work/curl-bin/curl"
+cp_packages() { # OUT VERSION... -- docker-ce-cli at each, and a newer docker-ce
+  local out="$1" v; shift
+  : > "$out"
+  for v in "$@"; do printf 'Package: docker-ce-cli\r\nArchitecture: amd64\r\nVersion: %s\r\n\r\n' "$v" >> "$out"; done
+  printf 'Package: docker-ce\nArchitecture: amd64\nVersion: 5:29.99.0-1~debian.12~bookworm\n\n' >> "$out"
+}
+# What check-pins does not parse is left out, never guessed at: a prerelease
+# upstream (~rc1) and a revision empty once its distro suffix is cut.
+cp_packages "$work/cp-rev.txt" 5:29.8.1-1~debian.12~bookworm 5:29.9.1-1~debian.12~bookworm 5:29.9.1-2~debian.12~bookworm \
+  5:29.99.0~rc1-1~debian.12~bookworm 5:29.99.1-~debian.12~bookworm
+cp_packages "$work/cp-minor.txt" 5:29.9.1-2~debian.12~bookworm 5:29.9.1-10~debian.12~bookworm 5:29.10.0-1~debian.12~bookworm
+check_docker() { # PIN PACKAGES -- check-pins --only docker in the scratch tree; sets rc
+  force "$t/ci-tools/Dockerfile.ci" DOCKER_CLI_VERSION "$1"
+  rc=0; PATH="$work/curl-bin:$PATH" FAKE_CURL_PACKAGES="$2" "$t/scripts/check-pins.sh" --only docker --format json \
+    > "$work/c5c2.json" 2> "$work/c5c2.err" || rc=$?
+}
+cp_state() { jq -r '.tools[0] | "\(.pinned) \(.latest) \(.state)"' "$work/c5c2.json"; }
+check_docker '5:29.9.1-1~debian.12~bookworm' "$work/cp-rev.txt"
+check "a revision-only drift, 29.9.1-1 behind 29.9.1-2: exit 3, behind" [ "$rc:$(cp_state)" = "3:29.9.1-1 29.9.1-2 behind" ]
+check_docker '5:29.9.1-2~debian.12~bookworm' "$work/cp-rev.txt"
+check "the newest revision pinned is current" [ "$rc:$(cp_state)" = "0:29.9.1-2 29.9.1-2 current" ]
+check_docker '5:29.9.1-2~debian.12~bookworm' "$work/cp-minor.txt"
+check "  29.9.1-2 < 29.9.1-10 < 29.10.0-1, so the latest is 29.10.0-1" [ "$rc:$(cp_state)" = "3:29.9.1-2 29.10.0-1 behind" ]
+check_docker '5:29.9.1-3~debian.12~bookworm' "$work/cp-rev.txt"
+check "a pinned revision newer than the index's is ahead, not behind" [ "$rc:$(cp_state)" = "0:29.9.1-3 29.9.1-2 ahead" ]
+check_docker '5:29.9.1-~debian.12~bookworm' "$work/cp-rev.txt"
+check "a pin whose revision is empty once its distro suffix is cut: exit 1" [ "$rc" -eq 1 ]
+check "  and the log says why" grep -qF "is '5:29.9.1-~debian.12~bookworm', not <upstream>-<revision>" "$work/c5c2.err"
+check_docker '29.9.1' "$work/cp-rev.txt"
+check "a bare upstream version is no Debian version string: exit 1" [ "$rc" -eq 1 ]
+check "the coreutils sort -V here orders unit versions as dpkg does" \
+  [ "$(printf '%s\n' 29.10.0-1 29.9.0-10 29.9.0-2 29.9.1-1 29.9.0-1 | sort -V | paste -sd' ' -)" = "29.9.0-1 29.9.0-2 29.9.0-10 29.9.1-1 29.10.0-1" ]
 
 echo "case 5d: npm's swapped-in undici moves in every Node image"
 if [ -n "$UNDICI_FILES" ]; then
@@ -824,6 +858,155 @@ if command -v gpg >/dev/null && command -v gpgv >/dev/null; then
   check "  the phar, its .asc and the attestations API are the integrity sources" \
     [ "$(jq -r '.[0].integrity_urls | join(" ")' "$work/r5v.json")" = "https://api.github.com/repos/composer/composer/attestations $co/2.10.5/composer.phar $co/2.10.5/composer.phar.asc" ]
   check "  the integrity kind is attested" [ "$(field "$work/r5v.json" composer integrity)" = attested ]
+
+  echo "case 5g4: the Docker CLI's version is read only from its signed apt index"
+  t=$(new_tree fiveg4); cp -a "$t" "$work/fiveg4.snap"
+  gpg --batch --armor --export t@example.com > "$work/keys/docker.asc" 2>/dev/null
+  dk=https://download.docker.com/linux/debian/dists/bookworm
+  # reserve URL FILE -- URL answers FILE from now on, whatever it answered before.
+  reserve() { awk -v u="$1" '$1 != u' "$fx/urls" > "$fx/urls.new"; mv "$fx/urls.new" "$fx/urls"; serve "$1" "$2"; }
+  # deb_packages OUT ARCH VERSION... -- a Packages file for ARCH in the
+  # repository's format: docker-ce-cli at each VERSION, and docker-ce at a
+  # newer one, which is never the package read.
+  deb_packages() {
+    local out="$1" arch="$2" v; shift 2
+    : > "$fx/$out"
+    for v in "$@"; do
+      printf 'Package: docker-ce-cli\nArchitecture: %s\nVersion: %s\nDepends: libc6 (>= 2.34)\nFilename: dists/bookworm/pool/stable/%s/docker-ce-cli_%s_%s.deb\nSHA256: %s\n\n' \
+        "$arch" "$v" "$arch" "${v#*:}" "$arch" "$(fake "deb-$arch-$v")" >> "$fx/$out"
+    done
+    printf 'Package: docker-ce\nArchitecture: %s\nVersion: 5:29.99.0-1~debian.12~bookworm\n\n' "$arch" >> "$fx/$out"
+  }
+  # in_release OUT SIGNER SUITE PATH=FIXTURE... -- an InRelease for SUITE
+  # listing each fixture under PATH, clearsigned by SIGNER. Its MD5Sum section
+  # lists other hashes for the same paths: only SHA256 may be read.
+  in_release() {
+    local out="$1" signer="$2" suite="$3" pf; shift 3
+    {
+      printf 'Architectures: amd64 arm64\nComponents: stable\nDate: Wed, 14 Oct 2026 18:57:24 +0000\nLabel: Docker CE\nOrigin: Docker\nSuite: %s\nMD5Sum:\n' "$suite"
+      for pf in "$@"; do printf ' %s %s %s\n' "$(fake "md5-$pf" | cut -c1-32)" "$(wc -c < "$fx/${pf#*=}" | tr -d ' ')" "${pf%%=*}"; done
+      printf 'SHA256:\n'
+      for pf in "$@"; do printf ' %s %s %s\n' "$(sha256sum "$fx/${pf#*=}" | cut -d' ' -f1)" "$(wc -c < "$fx/${pf#*=}" | tr -d ' ')" "${pf%%=*}"; done
+    } > "$fx/$out.txt"
+    gpg --batch --quiet --yes --local-user "$signer" --digest-algo SHA512 --clearsign -o "$fx/$out" "$fx/$out.txt" 2>/dev/null
+  }
+  D() { printf '5:%s~debian.12~bookworm' "$1"; }
+  deb_packages dk-amd64 amd64 "$(D 29.8.1-1)" "$(D 29.9.1-1)" "$(D 29.9.1-2)" "$(D 29.10.0-1)"
+  deb_packages dk-arm64 arm64 "$(D 29.8.1-1)" "$(D 29.9.1-1)" "$(D 29.9.1-2)" "$(D 29.10.0-1)"
+  deb_packages dk-arm64-old arm64 "$(D 29.8.1-1)"
+  deb_packages dk-arm64-rev1 arm64 "$(D 29.8.1-1)" "$(D 29.9.1-1)"
+  # 29.9.1-2 on arm64 too, but under another distro suffix: the same unit
+  # version, a different version string.
+  deb_packages dk-arm64-suffix arm64 "$(D 29.8.1-1)" "$(D 29.9.1-1)" "5:29.9.1-2~debian.12.1~bookworm"
+  # And amd64 listing 29.9.1-2 under two suffixes at once: ambiguous.
+  deb_packages dk-amd64-twice amd64 "$(D 29.8.1-1)" "$(D 29.9.1-1)" "$(D 29.9.1-2)" "5:29.9.1-2~debian.12.1~bookworm"
+  cp "$fx/dk-amd64" "$fx/dk-amd64-tampered"
+  printf 'Package: docker-ce-cli\nArchitecture: amd64\nVersion: %s\n\n' "$(D 29.9.1-9)" >> "$fx/dk-amd64-tampered"
+  in_release dk-good t@example.com bookworm stable/binary-amd64/Packages=dk-amd64 stable/binary-arm64/Packages=dk-arm64
+  in_release dk-otherkey x@example.com bookworm stable/binary-amd64/Packages=dk-amd64 stable/binary-arm64/Packages=dk-arm64
+  in_release dk-noarm t@example.com bookworm stable/binary-amd64/Packages=dk-amd64
+  in_release dk-trixie t@example.com trixie stable/binary-amd64/Packages=dk-amd64 stable/binary-arm64/Packages=dk-arm64
+  in_release dk-old t@example.com bookworm stable/binary-amd64/Packages=dk-amd64 stable/binary-arm64/Packages=dk-arm64-old
+  in_release dk-rev1 t@example.com bookworm stable/binary-amd64/Packages=dk-amd64 stable/binary-arm64/Packages=dk-arm64-rev1
+  in_release dk-suffix t@example.com bookworm stable/binary-amd64/Packages=dk-amd64 stable/binary-arm64/Packages=dk-arm64-suffix
+  in_release dk-twice t@example.com bookworm stable/binary-amd64/Packages=dk-amd64-twice stable/binary-arm64/Packages=dk-arm64
+  # Text before the signed block, listing the tampered file's hash: gpgv
+  # would verify the block after it, and a parser of the whole file would
+  # read the planted line first.
+  { printf 'SHA256:\n %s 1 stable/binary-amd64/Packages\n' "$(sha256sum "$fx/dk-amd64-tampered" | cut -d' ' -f1)"; cat "$fx/dk-good"; } > "$fx/dk-prefixed"
+  # The good index again, signed by a key that has expired since: gpgv exits 0
+  # with EXPKEYSIG beside VALIDSIG, and apt would refuse it. (An expired
+  # signature, EXPSIG, gpgv itself already fails.)
+  gpg --batch --quiet --passphrase '' --quick-gen-key 'Lapsed <lapsed@example.com>' rsa2048 sign seconds=2 2>/dev/null
+  gpg --batch --quiet --yes --local-user lapsed@example.com --digest-algo SHA512 \
+    --clearsign -o "$fx/dk-expired" "$fx/dk-good.txt" 2>/dev/null
+  mkdir -p "$work/keys-lapsed"
+  gpg --batch --armor --export lapsed@example.com > "$work/keys-lapsed/docker.asc" 2>/dev/null
+  lapsed_fpr=$(gpg --batch --with-colons --fingerprint lapsed@example.com 2>/dev/null | awk -F: '$1 == "fpr" { print $10; exit }')
+  sleep 3
+  dk_serve() { # INRELEASE AMD64-PACKAGES ARM64-PACKAGES
+    reserve "$dk/InRelease" "$1"
+    reserve "$dk/stable/binary-amd64/Packages" "$2"
+    reserve "$dk/stable/binary-arm64/Packages" "$3"
+  }
+  export BUMP_PINS_KEYS="$work/keys" BUMP_PINS_KEY_FPR="$fpr"
+  dk_fail() { # WHAT LOG-MESSAGE [VERSION]
+    rc=0; "$bump" --root "$t" --unit docker --to "${3:-29.9.1-2}" --quiet --format json > "$work/r5w.json" 2> "$work/r5w.err" || rc=$?
+    check "$1: exit 1, error" [ "$rc:$(field "$work/r5w.json" docker status)" = "1:error" ]
+    check "  because: $2" grep -qF -- "$2" "$work/r5w.err"
+  }
+  dk_serve dk-otherkey dk-amd64 dk-arm64
+  dk_fail "an InRelease signed by another key" "the vendor signature on $dk/InRelease does not verify"
+  dk_serve dk-good dk-amd64-tampered dk-arm64
+  dk_fail "a Packages file whose hash is not the signed one" "$dk/stable/binary-amd64/Packages hashes to $(sha256sum "$fx/dk-amd64-tampered" | cut -d' ' -f1), not the $(sha256sum "$fx/dk-amd64" | cut -d' ' -f1)"
+  dk_serve dk-noarm dk-amd64 dk-arm64
+  dk_fail "an index with no arm64 Packages" "lists no single SHA-256 for stable/binary-arm64/Packages: bookworm does not carry arm64"
+  dk_serve dk-old dk-amd64 dk-arm64-old
+  dk_fail "arm64 Packages without the version" "$dk/stable/binary-arm64/Packages has no docker-ce-cli 29.9.1-2 for arm64"
+  dk_serve dk-rev1 dk-amd64 dk-arm64-rev1
+  dk_fail "arm64 Packages without that revision, only an older one" "$dk/stable/binary-arm64/Packages has no docker-ce-cli 29.9.1-2 for arm64"
+  dk_serve dk-suffix dk-amd64 dk-arm64-suffix
+  dk_fail "the architectures on different version strings of one revision" "the architectures disagree: docker-ce-cli 29.9.1-2 is $(D 29.9.1-2) for one and 5:29.9.1-2~debian.12.1~bookworm for arm64"
+  dk_serve dk-twice dk-amd64-twice dk-arm64
+  dk_fail "one architecture with two version strings of the revision" "$dk/stable/binary-amd64/Packages has two docker-ce-cli version strings for 29.9.1-2 on amd64"
+  dk_serve dk-good dk-amd64 dk-arm64
+  dk_fail "a revision the index does not have" "$dk/stable/binary-amd64/Packages has no docker-ce-cli 29.9.1-3 for amd64" 29.9.1-3
+  dk_fail "a bare upstream version, with no revision" "target version '29.9.1' is not <upstream>-<revision>" 29.9.1
+  dk_serve dk-trixie dk-amd64 dk-arm64
+  dk_fail "a validly signed InRelease of another suite" "the signed $dk/InRelease does not name the suite bookworm"
+  dk_serve dk-prefixed dk-amd64-tampered dk-arm64
+  dk_fail "unsigned text before the signed block" "$dk/InRelease is not exactly one clearsigned message"
+  dk_serve dk-expired dk-amd64 dk-arm64
+  BUMP_PINS_KEYS="$work/keys-lapsed" BUMP_PINS_KEY_FPR="$lapsed_fpr" \
+    dk_fail "an InRelease signed by a key that has since expired" "$dk/InRelease: signed by an expired key, or the signature has expired"
+  reserve "$dk/InRelease" @404
+  dk_fail "no InRelease at all" "could not fetch $dk/InRelease"
+  check "  none of them edited anything" [ -z "$(changed_files "$t" "$work/fiveg4.snap")" ]
+
+  dk_serve dk-good dk-amd64 dk-arm64
+  rc=0; "$bump" --root "$t" --unit docker --to 29.9.1-2 --quiet --format json > "$work/r5w.json" 2>/dev/null || rc=$?
+  check "a good signature and matching Packages: exit 0, bumped, review" \
+    [ "$rc:$(field "$work/r5w.json" docker status):$(field "$work/r5w.json" docker class)" = "0:bumped:review" ]
+  expect_pin "$t" ci-tools/Dockerfile.ci DOCKER_CLI_VERSION "$(D 29.9.1-2)"
+  check "  exactly that upstream version and revision, not 29.9.1-1, 29.10.0, nor docker-ce's" [ "$(field "$work/r5w.json" docker new)" = 29.9.1-2 ]
+  check "  old and new are unit versions, upstream and revision" [ "$(field "$work/r5w.json" docker old)" = 29.8.1-1 ]
+  check "  integrity apt, first-seen cooldown (the index carries no release date)" \
+    [ "$(field "$work/r5w.json" docker integrity):$(field "$work/r5w.json" docker cooldown)" = apt:first-seen ]
+  check "  InRelease and both Packages files are the integrity sources" \
+    [ "$(jq -r '.[0].integrity_urls | join(" ")' "$work/r5w.json")" = "$dk/InRelease $dk/stable/binary-amd64/Packages $dk/stable/binary-arm64/Packages" ]
+  check "  the reason names the signed index and the first-seen cooldown" \
+    bash -c "jq -r '.[0].reason' '$work/r5w.json' | grep -q \"signed apt index, its GPG signature verified under the vendor's pinned key; each Packages index matched the SHA-256 its signed InRelease lists.*first-seen cooldown\""
+  check "  the full version string is what the values digest covers" \
+    [ "$(jq -r '.[0].pins | join(" ")' "$work/r5w.json")" = "ci-tools/Dockerfile.ci:DOCKER_CLI_VERSION=$(D 29.9.1-2)" ]
+  check "  only that one line changed" \
+    [ "$(diff "$work/fiveg4.snap/ci-tools/Dockerfile.ci" "$t/ci-tools/Dockerfile.ci" | grep -c '^[<>]')" -eq 2 ]
+  check "  and the result still passes --check" "$bump" --root "$t" --check --quiet
+  rc=0; "$bump" --root "$t" --unit docker --to 29.9.1-2 --quiet --format json > "$work/r5w.json" 2>/dev/null || rc=$?
+  check "the same version again is current" [ "$rc:$(field "$work/r5w.json" docker status)" = "0:current" ]
+  cp "$t/ci-tools/Dockerfile.ci" "$work/fiveg4.at-2"
+  rc=0; "$bump" --root "$t" --unit docker --to 29.9.1-1 --quiet --format json > "$work/r5w.json" 2> "$work/r5w.err" || rc=$?
+  check "an older revision of the same version is refused: exit 1, error" [ "$rc:$(field "$work/r5w.json" docker status)" = "1:error" ]
+  check "  as a downgrade" grep -qF "target 29.9.1-1 is older than the pinned 29.9.1-2" "$work/r5w.err"
+  check "  and nothing was written" cmp -s "$work/fiveg4.at-2" "$t/ci-tools/Dockerfile.ci"
+  # A revision-only bump: the same upstream version, a newer Debian revision,
+  # the packaging or security fix that a comparison of upstream versions alone
+  # would never see.
+  force "$t/ci-tools/Dockerfile.ci" DOCKER_CLI_VERSION "$(D 29.9.1-1)"
+  rc=0; "$bump" --root "$t" --unit docker --to 29.9.1-2 --quiet --format json > "$work/r5w.json" 2>/dev/null || rc=$?
+  check "a revision-only bump, 29.9.1-1 to 29.9.1-2: exit 0, bumped, review" \
+    [ "$rc:$(field "$work/r5w.json" docker status):$(field "$work/r5w.json" docker class)" = "0:bumped:review" ]
+  check "  from 29.9.1-1 to 29.9.1-2" [ "$(field "$work/r5w.json" docker old) $(field "$work/r5w.json" docker new)" = "29.9.1-1 29.9.1-2" ]
+  check "  not a major version, and on the first-seen clock" \
+    bash -c "jq -r '.[0].reason' '$work/r5w.json' | grep -q 'not a major version; the vendor publishes no release date'"
+  expect_pin "$t" ci-tools/Dockerfile.ci DOCKER_CLI_VERSION "$(D 29.9.1-2)"
+  drift > "$work/drift5w.json" <<< 'docker 29.10.0-1 29.9.1-2'
+  rc=0; "$bump" --root "$t" --drift "$work/drift5w.json" --quiet --format json > "$work/r5w.json" 2>/dev/null || rc=$?
+  check "a drift row moves it on, by its unit version" [ "$rc:$(field "$work/r5w.json" docker status)" = "0:bumped" ]
+  expect_pin "$t" ci-tools/Dockerfile.ci DOCKER_CLI_VERSION "$(D 29.10.0-1)"
+  check "  a major version from the index is review too" bash -c "
+    t2=\$(mktemp -d) && cp -a '$t/.' \"\$t2\" && sed -i.b 's/^ARG DOCKER_CLI_VERSION=.*/ARG DOCKER_CLI_VERSION=$(D 28.5.0-1)/' \"\$t2/ci-tools/Dockerfile.ci\" &&
+    '$bump' --root \"\$t2\" --unit docker --to 29.9.1-2 --quiet --format json 2>/dev/null | jq -e '.[0].class == \"review\" and (.[0].reason | test(\"^version string from the vendor.s signed apt index, .*major version change \\\\(28 -> 29\\\\); merges only\"))' >/dev/null; rc=\$?; rm -rf \"\$t2\"; exit \$rc"
+  unset BUMP_PINS_KEYS BUMP_PINS_KEY_FPR
   unset GNUPGHOME
 else
   ok "gpg/gpgv not installed; signature cases skipped"
@@ -1151,6 +1334,32 @@ bad_tables "a kubectl row signed as a pattern" "is not an exact workflow or serv
   '/^kubectl .*arm64.* sigcert /s/krel-staging@/.*@/'
 bad_tables "a kubectl arch with no signature row" "kubectl is signed, but https://dl.k8s.io/release/v{v}/bin/linux/arm64/kubectl.sha256 has no SIGS row" \
   '/^kubectl .*arm64.* sigcert /d'
+bad_tables "an apt InRelease with no signature row" \
+  "docker reads https://download.docker.com/linux/debian/dists/bookworm/InRelease, which has no inline gpg SIGS row" \
+  '/^docker .*InRelease | - | gpg /d'
+bad_tables "an apt InRelease given a detached signature" "is an InRelease, signed inline, but the row names a detached" \
+  's#InRelease | - | gpg #InRelease | https://download.docker.com/linux/debian/dists/bookworm/Release.gpg | gpg #'
+bad_tables "an inline signature on a file that is not an InRelease" "an inline signature ('-') is only for an APT row's InRelease" \
+  's#| https://releases.hashicorp.com/terraform/{v}/terraform_{v}_SHA256SUMS.sig | gpg #| - | gpg #'
+bad_tables "an APT row that does not read arm64" "APT row for docker does not read arm64" \
+  's/| docker-ce-cli | amd64 arm64$/| docker-ce-cli | amd64/'
+bad_tables "an APT row for an architecture the images are not built for" "'armhf' is not an architecture the images are built for" \
+  's/| docker-ce-cli | amd64 arm64$/| docker-ce-cli | amd64 arm64 armhf/'
+bad_tables "an APT row over plain http" "is not an https repository URL" \
+  's#DOCKER_CLI_VERSION | https://download.docker.com/linux/debian |#DOCKER_CLI_VERSION | http://download.docker.com/linux/debian |#'
+bad_tables "an apt unit whose version pin no APT row writes" "is a version pin of an apt unit, but no APT row writes it" \
+  's#| ci-tools/Dockerfile.ci:DOCKER_CLI_VERSION | apt |#| ci-tools/Dockerfile.ci:DOCKER_CLI_VERSION ci-tools/Dockerfile.ci:AWSCLI_VERSION | apt |#'
+bad_tables "an APT row for a unit that is not apt" "APT row for docker, which is not an apt unit" \
+  's#| ci-tools/Dockerfile.ci:DOCKER_CLI_VERSION | apt |#| ci-tools/Dockerfile.ci:DOCKER_CLI_VERSION | sums |#'
+cp -p "$bump" "$t/scripts/bp.sh"
+force "$t/ci-tools/Dockerfile.ci" DOCKER_CLI_VERSION 29.9.0
+rc=0; "$t/scripts/bp.sh" --root "$t" --check > /dev/null 2> "$work/c5j.err" || rc=$?
+check "an apt pin that is a bare version, not the package's version string, fails --check" [ "$rc" -eq 1 ]
+check "  and says so" grep -qF "is '29.9.0', not a Debian version string" "$work/c5j.err"
+force "$t/ci-tools/Dockerfile.ci" DOCKER_CLI_VERSION '5:29.9.0-~debian.12~bookworm'
+rc=0; "$t/scripts/bp.sh" --root "$t" --check > /dev/null 2> "$work/c5j.err" || rc=$?
+check "an apt pin whose revision is empty once its distro suffix is cut fails --check" [ "$rc" -eq 1 ]
+check "  and says so" grep -qF "is '5:29.9.0-~debian.12~bookworm', not a Debian version string of <upstream>-<revision>" "$work/c5j.err"
 
 echo "case 5h: --check over the real tree"
 check "every pin, checksum, tofu and signature row names exactly one line" "$bump" --check --quiet
@@ -1158,6 +1367,13 @@ check "the AWS key file is exactly the pinned key" \
   bash -c "GNUPGHOME=\$(mktemp -d) gpg --batch --show-keys --with-colons '$here/keys/aws-cli.asc' 2>/dev/null | awk -F: '\$1 == \"fpr\" { print \$10 }' | grep -qx FB5DB77FD5C118B80511ADA8A6310ACC4672475C"
 check "the HashiCorp key file's primary key is exactly the pinned key" \
   bash -c "GNUPGHOME=\$(mktemp -d) gpg --batch --show-keys --with-colons '$here/keys/hashicorp.asc' 2>/dev/null | awk -F: '\$1 == \"pub\" { p = 1; next } p && \$1 == \"fpr\" { print \$10; p = 0 }' | grep -qx C874011F0AB405110D02105534365D9472D7468F"
+check "the Docker key file holds exactly one primary key, the pinned one" \
+  bash -c "GNUPGHOME=\$(mktemp -d) gpg --batch --show-keys --with-colons '$here/keys/docker.asc' 2>/dev/null | awk -F: '\$1 == \"pub\" { p = 1; next } p && \$1 == \"fpr\" { print \$10; p = 0 }' | { read -r a && [ \"\$a\" = 9DC858229FC7DD38854AE2D88D81803C0EBFCD88 ] && ! read -r _; }"
+check "  and the Dockerfile pins the same fingerprint" \
+  grep -qx 'ARG DOCKER_KEY_FINGERPRINT=9DC858229FC7DD38854AE2D88D81803C0EBFCD88' "$repo/ci-tools/Dockerfile.ci"
+check "  as does the InRelease signature row" grep -qE '^docker +\| https://download.docker.com/linux/debian/dists/bookworm/InRelease \| - \| gpg \| docker.asc \| 9DC858229FC7DD38854AE2D88D81803C0EBFCD88$' "$bump"
+check "  and the bump reads the suite and component the Dockerfile installs from" \
+  bash -c "grep -qF 'https://download.docker.com/linux/debian bookworm stable\" \\' '$repo/ci-tools/Dockerfile.ci' && grep -qE '^docker +\| ci-tools/Dockerfile.ci:DOCKER_CLI_VERSION \| https://download.docker.com/linux/debian \| bookworm \| stable \| docker-ce-cli \| amd64 arm64$' '$bump'"
 
 # --- scripts/pin-bump-prs.sh ---------------------------------------------------
 # Real git against a local bare repository as origin, so pushes, leases and
@@ -1405,9 +1621,15 @@ check "  the note says so" grep -q 'could not set the needs-review label' "$res"
 check "  CI was still dispatched" logged "workflow run build-and-push.yml --repo o/r --ref pin-bump/syft"
 
 echo "case 6j: a review bump with no vendor date records its first-seen date"
-printf 'docker 29.9.1 amd64\n' > "$fx/docker-2991-amd64"; printf 'docker 29.9.1 arm64\n' > "$fx/docker-2991-arm64"
-serve "https://download.docker.com/linux/static/stable/x86_64/docker-29.9.1.tgz" docker-2991-amd64
-serve "https://download.docker.com/linux/static/stable/aarch64/docker-29.9.1.tgz" docker-2991-arm64
+# gcloud: no vendor checksum and no release date (trust on first use), so
+# its first-seen date is the only cooldown it has.
+for v in 589 590; do
+  printf 'gcloud %s.0.0 x86_64\n' "$v" > "$fx/gcloud-$v-amd64"; printf 'gcloud %s.0.0 arm\n' "$v" > "$fx/gcloud-$v-arm64"
+done
+serve "https://storage.googleapis.com/cloud-sdk-release/google-cloud-cli-589.0.0-linux-x86_64.tar.gz" gcloud-589-amd64
+serve "https://storage.googleapis.com/cloud-sdk-release/google-cloud-cli-589.0.0-linux-arm.tar.gz" gcloud-589-arm64
+serve "https://storage.googleapis.com/cloud-sdk-release/google-cloud-cli-590.0.0-linux-x86_64.tar.gz" gcloud-590-amd64
+serve "https://storage.googleapis.com/cloud-sdk-release/google-cloud-cli-590.0.0-linux-arm.tar.gz" gcloud-590-arm64
 # advance_main -- one commit on origin's main, so a pin-bump branch is behind it.
 advance_main() {
   local s="$d/advance"
@@ -1418,96 +1640,117 @@ advance_main() {
 }
 marker_of() { grep -oE '<!-- pin-bump: [^>]* -->' "$log.body" | tail -1; }
 scenario j
-run_prs <<< 'docker 29.9.0'
+run_prs <<< 'gcloud 589.0.0'
 check "exit 0" [ "$rc" -eq 0 ]
-expect_row docker class review
-check "the marker records today as first seen" bash -c "grep -oE '<!-- pin-bump: [^>]* -->' '$log.body' | grep -qE '^<!-- pin-bump: unit=docker to=29\.9\.0 class=review seen=2026-09-28 fp=[0-9a-f]{16} -->$'"
+expect_row gcloud class review
+check "the marker records today as first seen" bash -c "grep -oE '<!-- pin-bump: [^>]* -->' '$log.body' | grep -qE '^<!-- pin-bump: unit=gcloud to=589\.0\.0 class=review seen=2026-09-28 fp=[0-9a-f]{16} -->$'"
 check "  the body says it merges itself, no earlier than seven days on" grep -qF 'merges no earlier than **2026-10-05**' "$log.body"
-check "  and so does the summary" bash -c "jq -r 'select(.unit == \"docker\") | .action' '$res' | grep -qF 'first seen 2026-09-28 (merges from 2026-10-05)'"
-fp_docker=$(marker_of | sed -E 's/.* fp=([0-9a-f]+) -->/\1/')
+check "  and so does the summary" bash -c "jq -r 'select(.unit == \"gcloud\") | .action' '$res' | grep -qF 'first seen 2026-09-28 (merges from 2026-10-05)'"
+fp_gcloud=$(marker_of | sed -E 's/.* fp=([0-9a-f]+) -->/\1/')
 
 echo "case 6k: the first-seen date survives a rebuild of the same version, and only that"
 scenario k
-seed docker "$BOT" "$BOT" > /dev/null
+seed gcloud "$BOT" "$BOT" > /dev/null
 advance_main
-pr docker 20 OPEN 29.9.0 review 2026-09-25 "$fp_docker"
-run_prs <<< 'docker 29.9.0'
+pr gcloud 20 OPEN 589.0.0 review 2026-09-25 "$fp_gcloud"
+run_prs <<< 'gcloud 589.0.0'
 check "exit 0" [ "$rc" -eq 0 ]
-expect_row docker status ok
-check "  rebuilt, because the branch was behind main" bash -c "jq -r 'select(.unit == \"docker\") | .note' '$res' | grep -q 'rebuilt because the branch was behind main'"
-check "  onto the new main" [ "$(git -C "$origin" rev-parse pin-bump/docker^)" = "$(main_sha)" ]
+expect_row gcloud status ok
+check "  rebuilt, because the branch was behind main" bash -c "jq -r 'select(.unit == \"gcloud\") | .note' '$res' | grep -q 'rebuilt because the branch was behind main'"
+check "  onto the new main" [ "$(git -C "$origin" rev-parse pin-bump/gcloud^)" = "$(main_sha)" ]
 check "  the first-seen date is kept: the daily rebuild does not restart the clock" \
-  bash -c "grep -qF 'class=review seen=2026-09-25 fp=$fp_docker -->' '$log.body'"
+  bash -c "grep -qF 'class=review seen=2026-09-25 fp=$fp_gcloud -->' '$log.body'"
 # Same version, but the artifact behind it changed: a new clock.
 scenario k2
-seed docker "$BOT" "$BOT" > /dev/null
+seed gcloud "$BOT" "$BOT" > /dev/null
 advance_main
-pr docker 20 OPEN 29.9.0 review 2026-09-25 ffffffffffffffff
-run_prs <<< 'docker 29.9.0'
-expect_row docker status ok
+pr gcloud 20 OPEN 589.0.0 review 2026-09-25 ffffffffffffffff
+run_prs <<< 'gcloud 589.0.0'
+expect_row gcloud status ok
 check "a sum that changed under the same version restarts the clock" \
-  bash -c "grep -qF 'class=review seen=2026-09-28 fp=$fp_docker -->' '$log.body'"
-check "  and says so" bash -c "jq -r 'select(.unit == \"docker\") | .note' '$res' | grep -q 'first-seen clock restarted'"
+  bash -c "grep -qF 'class=review seen=2026-09-28 fp=$fp_gcloud -->' '$log.body'"
+check "  and says so" bash -c "jq -r 'select(.unit == \"gcloud\") | .note' '$res' | grep -q 'first-seen clock restarted'"
 # The same, with the branch up to date with main (the heal path): a review
 # PR is re-verified, not healed on trust, so a replaced artifact still
 # restarts the clock...
 scenario k4
-seed docker "$BOT" "$BOT" > /dev/null
-pr docker 20 OPEN 29.9.0 review 2026-09-25 ffffffffffffffff
-run_prs <<< 'docker 29.9.0'
-expect_row docker status ok
+seed gcloud "$BOT" "$BOT" > /dev/null
+pr gcloud 20 OPEN 589.0.0 review 2026-09-25 ffffffffffffffff
+run_prs <<< 'gcloud 589.0.0'
+expect_row gcloud status ok
 check "an up-to-date review PR whose sums changed is rebuilt with a new clock" \
-  bash -c "grep -qF 'class=review seen=2026-09-28 fp=$fp_docker -->' '$log.body'"
+  bash -c "grep -qF 'class=review seen=2026-09-28 fp=$fp_gcloud -->' '$log.body'"
 # ...and one whose values are unchanged is healed, branch untouched.
 scenario k5
-sha=$(seed docker "$BOT" "$BOT")
-pr docker 20 OPEN 29.9.0 review 2026-09-25 "$fp_docker"
-printf '%s' "$CHECKS_ALL" > "$stub/checks-docker.json"
-run_prs <<< 'docker 29.9.0'
-check "an up-to-date review PR with the same values is healed, not rebuilt" [ "$(head_of pin-bump/docker)" = "$sha" ]
-expect_row docker status unchanged
+sha=$(seed gcloud "$BOT" "$BOT")
+pr gcloud 20 OPEN 589.0.0 review 2026-09-25 "$fp_gcloud"
+printf '%s' "$CHECKS_ALL" > "$stub/checks-gcloud.json"
+run_prs <<< 'gcloud 589.0.0'
+check "an up-to-date review PR with the same values is healed, not rebuilt" [ "$(head_of pin-bump/gcloud)" = "$sha" ]
+expect_row gcloud status unchanged
 # A PR from before the clock existed: rebuilt, so its marker gets a date.
 scenario k3
-seed docker "$BOT" "$BOT" > /dev/null
-pr docker 20 OPEN 29.9.0 review -
-run_prs <<< 'docker 29.9.0'
-expect_row docker status ok
+seed gcloud "$BOT" "$BOT" > /dev/null
+pr gcloud 20 OPEN 589.0.0 review -
+run_prs <<< 'gcloud 589.0.0'
+expect_row gcloud status ok
 check "a marker with no first-seen date is rebuilt to record one" \
-  bash -c "grep -qF 'class=review seen=2026-09-28 fp=$fp_docker -->' '$log.body'"
+  bash -c "grep -qF 'class=review seen=2026-09-28 fp=$fp_gcloud -->' '$log.body'"
 
 echo "case 6l: inside its cooldown a review PR keeps its version; after it, it moves on"
 scenario l
-sha=$(seed docker "$BOT" "$BOT")
-pr docker 21 OPEN 29.9.0 review 2026-09-25 "$fp_docker"
-printf '%s' "$CHECKS_ALL" > "$stub/checks-docker.json"
-run_prs <<< 'docker 29.9.1 29.8.1'
+sha=$(seed gcloud "$BOT" "$BOT")
+pr gcloud 21 OPEN 589.0.0 review 2026-09-25 "$fp_gcloud"
+printf '%s' "$CHECKS_ALL" > "$stub/checks-gcloud.json"
+run_prs <<< 'gcloud 590.0.0 588.0.0'
 check "exit 0" [ "$rc" -eq 0 ]
-expect_row docker status unchanged
-expect_row docker new 29.9.0
-check "  the note says why" bash -c "jq -r 'select(.unit == \"docker\") | .note' '$res' | grep -q 'kept at 29.9.0, first seen 2026-09-25, until its cooldown ends on 2026-10-02'"
-check "  the branch is not rebuilt, so the clock keeps running" [ "$(head_of pin-bump/docker)" = "$sha" ]
+expect_row gcloud status unchanged
+expect_row gcloud new 589.0.0
+check "  the note says why" bash -c "jq -r 'select(.unit == \"gcloud\") | .note' '$res' | grep -q 'kept at 589.0.0, first seen 2026-09-25, until its cooldown ends on 2026-10-02'"
+check "  the branch is not rebuilt, so the clock keeps running" [ "$(head_of pin-bump/gcloud)" = "$sha" ]
 # Past its cooldown but inside the grace window: still held, so a day the
 # merge bot missed does not restart the clock on a newer version.
 scenario l3
-sha=$(seed docker "$BOT" "$BOT")
-pr docker 21 OPEN 29.9.0 review 2026-09-18 "$fp_docker"
-printf '%s' "$CHECKS_ALL" > "$stub/checks-docker.json"
-run_prs <<< 'docker 29.9.1 29.8.1'
-expect_row docker status unchanged
-expect_row docker new 29.9.0
+sha=$(seed gcloud "$BOT" "$BOT")
+pr gcloud 21 OPEN 589.0.0 review 2026-09-18 "$fp_gcloud"
+printf '%s' "$CHECKS_ALL" > "$stub/checks-gcloud.json"
+run_prs <<< 'gcloud 590.0.0 588.0.0'
+expect_row gcloud status unchanged
+expect_row gcloud new 589.0.0
 check "  past its cooldown, inside the grace window: still held" \
-  bash -c "jq -r 'select(.unit == \"docker\") | .note' '$res' | grep -q 'mergeable since 2026-09-25, until 2026-10-02 so the merge bot can take it'"
-check "  the branch is not rebuilt" [ "$(head_of pin-bump/docker)" = "$sha" ]
+  bash -c "jq -r 'select(.unit == \"gcloud\") | .note' '$res' | grep -q 'mergeable since 2026-09-25, until 2026-10-02 so the merge bot can take it'"
+check "  the branch is not rebuilt" [ "$(head_of pin-bump/gcloud)" = "$sha" ]
 scenario l2
-seed docker "$BOT" "$BOT" > /dev/null
-pr docker 21 OPEN 29.9.0 review 2026-09-01 "$fp_docker"
-run_prs <<< 'docker 29.9.1 29.8.1'
-expect_row docker status ok
-expect_row docker new 29.9.1
+seed gcloud "$BOT" "$BOT" > /dev/null
+pr gcloud 21 OPEN 589.0.0 review 2026-09-01 "$fp_gcloud"
+run_prs <<< 'gcloud 590.0.0 588.0.0'
+expect_row gcloud status ok
+expect_row gcloud new 590.0.0
 check "after its cooldown and grace window, the newer version is proposed, with a fresh clock" \
-  bash -c "grep -qE 'unit=docker to=29\.9\.1 class=review seen=2026-09-28 fp=' '$log.body'"
+  bash -c "grep -qE 'unit=gcloud to=590\.0\.0 class=review seen=2026-09-28 fp=' '$log.body'"
 check "  hashed from its own download" \
-  bash -c "git -C '$origin' show pin-bump/docker:ci-tools/Dockerfile.ci | grep -qx 'ARG DOCKER_SHA256_ARM64=$(sha256sum "$fx/docker-2991-arm64" | cut -d' ' -f1)'"
+  bash -c "git -C '$origin' show pin-bump/gcloud:ci-cloud/Dockerfile.ci | grep -qx 'ARG GCLOUD_SHA256_ARM64=$(sha256sum "$fx/gcloud-590-arm64" | cut -d' ' -f1)'"
+
+echo "case 6m: a Docker CLI bump from the signed apt index is a review PR on the first-seen clock"
+if [ -n "${fpr:-}" ] && command -v gpgv >/dev/null; then
+  # The fixtures case 5g4 left in place: the good index, which has 29.9.1-2.
+  scenario m
+  export BUMP_PINS_KEYS="$work/keys" BUMP_PINS_KEY_FPR="$fpr"
+  run_prs <<< 'docker 29.9.1-2'
+  unset BUMP_PINS_KEYS BUMP_PINS_KEY_FPR
+  check "exit 0" [ "$rc" -eq 0 ]
+  expect_row docker class review
+  check "  the marker records today as first seen" \
+    bash -c "grep -oE '<!-- pin-bump: [^>]* -->' '$log.body' | grep -qE '^<!-- pin-bump: unit=docker to=29\.9\.1-2 class=review seen=2026-09-28 fp=[0-9a-f]{16} -->$'"
+  check "  the body names the signed index as the source, and lists it" \
+    bash -c "grep -qF 'from the vendor'\''s signed apt index' '$log.body' && grep -qxF -- '- $dk/InRelease' '$log.body'"
+  check "  the title names the unit versions, upstream and revision" \
+    bash -c "grep -q -- '^pr create .* --title Bump docker from 29.8.1-1 to 29.9.1-2 --body-file ' '$log'"
+  check "  the branch pins the full version string" \
+    bash -c "git -C '$origin' show pin-bump/docker:ci-tools/Dockerfile.ci | grep -qx 'ARG DOCKER_CLI_VERSION=5:29.9.1-2~debian.12~bookworm'"
+else
+  ok "gpg/gpgv not installed; the Docker apt PR case skipped"
+fi
 
 echo "case 6h: a failed dispatch errors its unit, after every unit was processed"
 scenario h

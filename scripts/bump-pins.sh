@@ -48,8 +48,19 @@
 # identity fails the unit: it is an error row, nothing is edited, and nothing
 # is merged.
 #
-# The exception is the three vendors that publish no checksum at all: the AWS
-# CLI, the Docker static client and gcloud (integrity "tofu"). For those this
+# The Docker CLI is installed from Docker's signed apt repository, and its pin
+# is the package's exact version string rather than a checksum (integrity
+# "apt", the APT table below). Its version is read only from the vendor's
+# signed index, and only along the chain apt itself checks at build time:
+# InRelease's inline GPG signature verified against Docker's key, pinned by
+# fingerprint, before a line of it is read; then each architecture's Packages
+# file matched to the SHA-256 the signed InRelease lists for it before a
+# version is read from that. A signature that does not verify, a Packages
+# file that does not match, or an architecture the index does not carry, is
+# an error row, and nothing is edited.
+#
+# The exception is the two vendors that publish no checksum at all: the AWS
+# CLI and gcloud (integrity "tofu"). For those this
 # script downloads each artifact and records the sha256 of what it got --
 # trust on first use. That cannot prove the first download was genuine, but it
 # pins it: every later build, the daily rebuilds included, fails on a
@@ -71,13 +82,17 @@
 #
 # Each bump is classified:
 #   auto    the vendor publishes a checksum (or the registry an integrity
-#           digest) -- signed, and the signature verified, wherever the vendor
-#           signs it -- the version change is not a semver major, and the release
-#           is at least the cooldown old. Safe to merge once CI is green.
+#           digest, or a signed apt index) -- signed, and the signature
+#           verified, wherever the vendor signs it -- the version change is
+#           not a semver major, and the release is at least the cooldown old
+#           by the vendor's release date. Safe to merge once CI is green.
 #   review  anything else that can still be bumped: no vendor checksum (AWS
-#           CLI, Docker client, gcloud) or a major version. It merges itself
-#           once CI is green, but only after its PR has carried that exact
-#           version for the cooldown (the first-seen clock above).
+#           CLI, gcloud), a major version, or no vendor release date to
+#           measure the cooldown from (the Docker CLI: its apt index carries
+#           none, so its verified bump cannot be auto -- an auto PR merges
+#           with no first-seen clock, and would get no cooldown at all). It
+#           merges itself once CI is green, but only after its PR has carried
+#           that exact version for the cooldown (the first-seen clock above).
 # and a release younger than the cooldown (BUMP_COOLDOWN_DAYS, default 7, the
 # same seven days Dependabot waits) is not bumped at all this run: "deferred".
 # So is a release whose date cannot be established -- a 404, an unreachable
@@ -138,7 +153,8 @@ usage: bump-pins.sh (--drift FILE | --unit NAME [--to VERSION] | --check) [optio
 
   --drift FILE   a `check-pins.sh --format json` report; bump every row that is behind
   --unit NAME    bump one unit (see UNITS below) to --to, or to the vendor's latest
-  --to VERSION   the version to bump --unit to
+  --to VERSION   the version to bump --unit to (an apt unit's is
+                 <upstream>-<revision>, e.g. docker --to 29.9.1-1)
   --plan         with --drift: print one JSON line per unit to bump, and edit nothing
   --check        verify the tables below against --root (no network, no edits)
   --root DIR     the tree to edit (default: this script's repository)
@@ -210,6 +226,17 @@ trap 'rm -rf "$tmp"' EXIT INT TERM
 #                            row below is the sha256 of our own download of
 #                            that artifact (and a SIGS row, where there is
 #                            one, a vendor signature checked first)
+#             apt            the pin is a package's exact version string, from
+#                            an APT row below: read from the vendor's signed
+#                            apt index (InRelease, verified by its gpg SIGS
+#                            row, then Packages, verified by the hash in it).
+#                            The unit's version is that string's upstream
+#                            version and Debian revision, without the epoch
+#                            or distro suffix (5:29.9.0-1~debian.12~bookworm
+#                            is 29.9.0-1; --to 29.9.0-2 asks for exactly
+#                            that revision), and every version pin of the
+#                            unit must be an APT
+#                            row, so the two cannot disagree
 #             attested       each DOWNLOADS row is downloaded and hashed, and
 #                            the hash pinned only once a digest SIGS row
 #                            (ghattest) verifies exactly that digest as the
@@ -235,7 +262,7 @@ readonly UNITS='
 terraform   | terraform           | ci-tools/Dockerfile.ci:TERRAFORM_VERSION | sums | hashicorp:terraform | https://releases.hashicorp.com/terraform/{v}/
 kubectl     | kubectl             | ci-tools/Dockerfile.ci:KUBECTL_VERSION ci-cloud/Dockerfile.ci:KUBECTL_VERSION | sums | github:kubernetes/kubernetes:v{v} | https://github.com/kubernetes/kubernetes/releases/tag/v{v}
 awscli      | awscli              | ci-tools/Dockerfile.ci:AWSCLI_VERSION | tofu | first-seen | https://github.com/aws/aws-cli/blob/{v}/CHANGELOG.rst
-docker      | docker              | ci-tools/Dockerfile.ci:DOCKER_VERSION | tofu | first-seen | https://docs.docker.com/engine/release-notes/
+docker      | docker              | ci-tools/Dockerfile.ci:DOCKER_CLI_VERSION | apt | first-seen | https://docs.docker.com/engine/release-notes/
 gcloud      | gcloud              | ci-cloud/Dockerfile.ci:GCLOUD_VERSION | tofu | first-seen | https://cloud.google.com/sdk/docs/release-notes
 az-pyjwt    | az-pyjwt            | ci-cloud/az-overrides.txt:pyjwt | pypi:PyJWT | pypi:PyJWT | https://pypi.org/project/PyJWT/{v}/
 az-cryptography | az-cryptography | ci-cloud/az-overrides.txt:cryptography | pypi:cryptography | pypi:cryptography | https://pypi.org/project/cryptography/{v}/
@@ -306,19 +333,43 @@ actionlint  | scripts/lint.sh:ACTIONLINT_SHA256_DARWIN_ARM64 | $GH/rhysd/actionl
 readonly DOWNLOADS="
 awscli   | ci-tools/Dockerfile.ci:AWSCLI_SHA256_AMD64 | https://awscli.amazonaws.com/awscli-exe-linux-x86_64-{v}.zip
 awscli   | ci-tools/Dockerfile.ci:AWSCLI_SHA256_ARM64 | https://awscli.amazonaws.com/awscli-exe-linux-aarch64-{v}.zip
-docker   | ci-tools/Dockerfile.ci:DOCKER_SHA256_AMD64 | https://download.docker.com/linux/static/stable/x86_64/docker-{v}.tgz
-docker   | ci-tools/Dockerfile.ci:DOCKER_SHA256_ARM64 | https://download.docker.com/linux/static/stable/aarch64/docker-{v}.tgz
 gcloud   | ci-cloud/Dockerfile.ci:GCLOUD_SHA256_AMD64 | https://storage.googleapis.com/cloud-sdk-release/google-cloud-cli-{v}-linux-x86_64.tar.gz
 gcloud   | ci-cloud/Dockerfile.ci:GCLOUD_SHA256_ARM64 | https://storage.googleapis.com/cloud-sdk-release/google-cloud-cli-{v}-linux-arm.tar.gz
 composer | */Dockerfile.ci:COMPOSER_SHA256            | $GH/composer/composer/releases/download/{v}/composer.phar
 "
 
-# unit | the file: a DOWNLOADS artifact or a SUMS checksums URL | its signature
-#      | method | two method-specific values | (digest methods) a binding
+# unit | file:KEY the version string is written to | repository | suite
+#      | component | package | architectures
+#
+# For an `apt` unit: the exact version string of the package, as the
+# Dockerfile installs it (`package=<string>`), from the repository's signed
+# index for that suite -- the same `deb <repository> <suite> <component>` line
+# the Dockerfile writes. Its InRelease (<repository>/dists/<suite>/InRelease)
+# must have an inline gpg SIGS row; nothing in it is read until that verifies,
+# and the suite it names must be this one. Then, for each architecture, the
+# component's binary-<arch>/Packages file must hash to exactly the SHA-256 the
+# signed InRelease lists for it, and only then is it read: the newest version
+# string of the package whose unit version -- upstream version and Debian
+# revision, 29.9.1-2 for 5:29.9.1-2~debian.12~bookworm -- is exactly the
+# target version. Every
+# architecture must have one, and the same one. Both architectures the images
+# are built for are listed (--check enforces it).
+readonly APT="
+docker   | ci-tools/Dockerfile.ci:DOCKER_CLI_VERSION | https://download.docker.com/linux/debian | bookworm | stable | docker-ce-cli | amd64 arm64
+"
+
+# unit | the file: a DOWNLOADS artifact, a SUMS checksums URL or an APT
+#      | InRelease | its signature | method | two method-specific values
+#      | (digest methods) a binding
 #
 # File methods -- the file itself is signed, and checked before the
 # artifact's hash is recorded, or before any checksum is read from it:
 #      | gpg       | key file in scripts/keys | primary key fingerprint
+# A gpg row whose signature is `-` is an inline (clearsigned) signature: an
+# apt InRelease, and only that (--check enforces it). The file must be
+# exactly one clearsigned message, and what is read from it afterwards is
+# what gpgv wrote out as signed -- never the file's own text, where lines
+# outside the signed block could sit.
 #      | sigstore  | certificate identity     | OIDC issuer
 # Digest methods -- the vendor signs the artifacts, so each digest the unit
 # would pin from that file (or hashed from that download) is checked on its
@@ -348,6 +399,13 @@ composer | */Dockerfile.ci:COMPOSER_SHA256            | $GH/composer/composer/re
 #   composer.asc   "Packagist Conductors", the key that signs each release's
 #                  composer.phar.asc; fetched from keyserver.ubuntu.com by
 #                  its fingerprint and checked against 2.10.3's signature.
+#   docker.asc     "Docker Release (CE deb)", the key that signs Docker's apt
+#                  repositories: https://download.docker.com/linux/debian/gpg,
+#                  the fingerprint Docker's install documentation gives, and
+#                  the one ci-tools/Dockerfile.ci pins as
+#                  DOCKER_KEY_FINGERPRINT; checked against bookworm's
+#                  InRelease. It signs with a subkey (D3306A01...F273FCD8);
+#                  gpgv's VALIDSIG names the primary too.
 #
 # sigstore: `cosign verify-blob --bundle` against the public-good Sigstore
 # instance (Fulcio certificate, Rekor inclusion), with the certificate's
@@ -401,10 +459,11 @@ composer | */Dockerfile.ci:COMPOSER_SHA256            | $GH/composer/composer/re
 #
 # Not here, and why (docs/security.md has the full list): gitleaks and
 # golang-migrate publish no signature asset and no GitHub attestation;
-# Docker's static tarball is unsigned (its signed apt repository carries
-# other bytes); gcloud's tarball has only GCS md5/crc metadata. Those stay
-# checksum-only (gitleaks, golang-migrate) or trust on first use (Docker,
-# gcloud).
+# gcloud's tarball has only GCS md5/crc metadata. Those stay checksum-only
+# (gitleaks, golang-migrate) or trust on first use (gcloud). The Docker CLI
+# was trust on first use too, while it came from the unsigned static
+# tarball; it now comes from Docker's signed apt repository, whose InRelease
+# is the inline gpg row below.
 readonly SIGS="
 awscli    | https://awscli.amazonaws.com/awscli-exe-linux-x86_64-{v}.zip  | https://awscli.amazonaws.com/awscli-exe-linux-x86_64-{v}.zip.sig  | gpg | aws-cli.asc | FB5DB77FD5C118B80511ADA8A6310ACC4672475C
 awscli    | https://awscli.amazonaws.com/awscli-exe-linux-aarch64-{v}.zip | https://awscli.amazonaws.com/awscli-exe-linux-aarch64-{v}.zip.sig | gpg | aws-cli.asc | FB5DB77FD5C118B80511ADA8A6310ACC4672475C
@@ -417,6 +476,7 @@ osv-scanner | $GH/google/osv-scanner/releases/download/v{v}/osv-scanner_SHA256SU
 hadolint  | $GH/hadolint/hadolint/releases/download/v{v}/checksums.sha256 | https://api.github.com/repos/hadolint/hadolint/attestations | ghattest | $GH/hadolint/hadolint/.github/workflows/release.yml@refs/heads/master | https://token.actions.githubusercontent.com | hadolint/hadolint
 actionlint | $GH/rhysd/actionlint/releases/download/v{v}/actionlint_{v}_checksums.txt | https://api.github.com/repos/rhysd/actionlint/attestations | ghattest | $GH/rhysd/actionlint/.github/workflows/release.yaml@refs/tags/v{v} | https://token.actions.githubusercontent.com | rhysd/actionlint
 composer  | $GH/composer/composer/releases/download/{v}/composer.phar | $GH/composer/composer/releases/download/{v}/composer.phar.asc | gpg | composer.asc | 161DFBE342889F01DDAC4E61CBB3D576F2A0946F
+docker    | https://download.docker.com/linux/debian/dists/bookworm/InRelease | - | gpg | docker.asc | 9DC858229FC7DD38854AE2D88D81803C0EBFCD88
 composer  | $GH/composer/composer/releases/download/{v}/composer.phar | https://api.github.com/repos/composer/composer/attestations | ghattest | $GH/composer/composer/.github/workflows/release.yml@refs/tags/{v} | https://token.actions.githubusercontent.com | composer/composer
 kubectl   | https://dl.k8s.io/release/v{v}/bin/linux/amd64/kubectl.sha256 | https://dl.k8s.io/release/v{v}/bin/linux/amd64/kubectl | sigcert | krel-staging@k8s-releng-prod.iam.gserviceaccount.com | https://accounts.google.com
 kubectl   | https://dl.k8s.io/release/v{v}/bin/linux/arm64/kubectl.sha256 | https://dl.k8s.io/release/v{v}/bin/linux/arm64/kubectl | sigcert | krel-staging@k8s-releng-prod.iam.gserviceaccount.com | https://accounts.google.com
@@ -755,9 +815,11 @@ verify_sigstore() {
 
 # verify_gpg UNIT URL FILE SIG_URL KEYFILE FPR -- SIG_URL is a valid detached
 # signature on FILE by exactly the key FPR, read from scripts/keys/KEYFILE.
+# SIG_URL `-`: FILE is itself one clearsigned message by that key, and what it
+# signs is written to FILE.signed, the only copy of it a caller may read.
 verify_gpg() {
   local unit="$1" url="$2" file="$3" sig_url="$4" row_key="$5" fpr="$6"
-  local keyfile keydir status cmd
+  local keyfile keydir status cmd inline=""
   keydir="$script_dir/keys"
   if [ -n "$fixtures" ]; then
     keydir=${BUMP_PINS_KEYS:-$keydir}; fpr=${BUMP_PINS_KEY_FPR:-$fpr}
@@ -776,18 +838,47 @@ verify_gpg() {
   fi
   GNUPGHOME="$tmp/gnupg" gpg --batch --yes --dearmor -o "$tmp/sigkey.gpg" "$keyfile" 2>/dev/null \
     || { log error "could not read $keyfile"; return 1; }
-  rm -f "$tmp/artifact.sig"
-  http_download "$sig_url" "$tmp/artifact.sig" || { log error "no signature at $sig_url"; return 1; }
-  status=$(GNUPGHOME="$tmp/gnupg" gpgv --status-fd 1 --keyring "$tmp/sigkey.gpg" "$tmp/artifact.sig" "$file" 2>/dev/null) \
-    || { log error "$sig_url does not verify $url under $fpr"; return 1; }
+  if [ "$sig_url" = - ]; then
+    # Inline: one clearsigned message and nothing else. gpgv verifies only the
+    # signed block, so text before it, or a second message after it, would be
+    # read by a parser that took the file as it is; refused instead, and the
+    # caller reads gpgv's own output of what was signed.
+    rm -f "$file.signed" "$file.signed.part"
+    if [ "$(head -1 "$file" 2>/dev/null)" != '-----BEGIN PGP SIGNED MESSAGE-----' ] \
+       || [ "$(grep -c -- '^-----BEGIN PGP SIGNED MESSAGE-----' "$file" 2>/dev/null)" != 1 ]; then
+      log error "$url is not exactly one clearsigned message"
+      return 1
+    fi
+    sig_url=$url inline=1
+    status=$(GNUPGHOME="$tmp/gnupg" gpgv --status-fd 1 --keyring "$tmp/sigkey.gpg" --output "$file.signed.part" "$file" 2>/dev/null) \
+      || { rm -f "$file.signed.part"; log error "$url does not verify under $fpr"; return 1; }
+  else
+    rm -f "$tmp/artifact.sig"
+    http_download "$sig_url" "$tmp/artifact.sig" || { log error "no signature at $sig_url"; return 1; }
+    status=$(GNUPGHOME="$tmp/gnupg" gpgv --status-fd 1 --keyring "$tmp/sigkey.gpg" "$tmp/artifact.sig" "$file" 2>/dev/null) \
+      || { log error "$sig_url does not verify $url under $fpr"; return 1; }
+  fi
   if printf '%s\n' "$status" | grep -qE '^\[GNUPG:\] (REVKEYSIG|BADSIG|ERRSIG)'; then
+    rm -f "$file.signed.part"
     log error "$sig_url: the key is revoked, or the signature is bad"
     return 1
   fi
+  # An apt InRelease is held to what apt itself enforces at build time: a
+  # signature by an expired key or subkey, or an expired signature, is refused
+  # there, so it is refused here rather than opening a bump apt then rejects.
+  # (Detached rows are left as they are: gpgv accepts a signature made while
+  # the key was valid, and AWS's published key has itself lapsed.)
+  if [ -n "$inline" ] && printf '%s\n' "$status" | grep -qE '^\[GNUPG:\] (EXPKEYSIG|EXPSIG)'; then
+    rm -f "$file.signed.part"
+    log error "$sig_url: signed by an expired key, or the signature has expired"
+    return 1
+  fi
   if ! printf '%s\n' "$status" | awk -v f="$fpr" '$2 == "VALIDSIG" && ($3 == f || $NF == f) { ok = 1 } END { exit !ok }'; then
+    rm -f "$file.signed.part"
     log error "$sig_url is not a valid signature by $fpr"
     return 1
   fi
+  if [ -f "$file.signed.part" ]; then mv "$file.signed.part" "$file.signed"; fi
   integrity_urls+=("$sig_url")
   add_note "its GPG signature verified under the vendor's pinned key"
   log info "$unit: $url verifies under $fpr"
@@ -925,9 +1016,109 @@ pypi_hashes() {
     | unique[]' <<<"$body"
 }
 
+# apt_resolve UNIT VERSION REPOSITORY SUITE COMPONENT PACKAGE ARCHES -- the
+# version string of PACKAGE whose unit version (apt_unit_version: upstream
+# version and Debian revision, 29.9.1-2) is exactly VERSION, from the signed
+# index of SUITE (the APT table's comment has the chain), in apt_value; on any
+# broken link sets apt_err to the reason and returns 1. Not run in a command
+# substitution: the URLs and notes it records belong to this unit.
+apt_err="" apt_value=""
+apt_resolve() {
+  local unit="$1" v="$2" repo="$3" suite="$4" comp="$5" pkg="$6" arches="$7"
+  local rel_url f signed arch path want pkgs_url pf got found cand one="" rc
+  apt_err=""; apt_value=""
+  rel_url="$repo/dists/$suite/InRelease"
+  rc=0; f=$(cache_file "$rel_url") || rc=$?
+  [ "$rc" -eq 0 ] || { apt_err="could not fetch $rel_url (exit $rc)"; return 1; }
+  # The signature first. verify_sig passes a file no row covers, so the
+  # signed copy only gpg's inline method writes is what proves a row did.
+  rm -f "$f.signed"
+  verify_sig "$unit" "$rel_url" "$f" || { apt_err="the vendor signature on $rel_url does not verify"; return 1; }
+  [ -s "$f.signed" ] || { apt_err="$rel_url has no inline gpg SIGS row, so nothing in it is read"; return 1; }
+  signed="$f.signed"
+  # A validly signed InRelease of another suite is still Docker's; it must
+  # not stand in for this one.
+  if ! awk -v s="$suite" '($1 == "Suite:" || $1 == "Codename:") && $2 == s { ok = 1 } END { exit !ok }' "$signed"; then
+    apt_err="the signed $rel_url does not name the suite $suite"; return 1
+  fi
+  for arch in $arches; do
+    path="$comp/binary-$arch/Packages"
+    # Exactly one SHA256 line for the file, in the signed SHA256 section.
+    want=$(awk -v p="$path" '
+      /^[^ \t]/ { sec = $1; next }
+      sec == "SHA256:" && $3 == p { print $1; n++ }
+      END { exit n != 1 }' "$signed") || want=""
+    if ! is_sha256 "$want"; then
+      apt_err="the signed $rel_url lists no single SHA-256 for $path: $suite does not carry $arch"; return 1
+    fi
+    pkgs_url="$repo/dists/$suite/$path"
+    rc=0; pf=$(cache_file "$pkgs_url") || rc=$?
+    [ "$rc" -eq 0 ] || { apt_err="could not fetch $pkgs_url (exit $rc)"; return 1; }
+    got=$(sha256_of "$pf")
+    if [ "$got" != "$want" ]; then
+      apt_err="$pkgs_url hashes to $got, not the $want the signed InRelease lists for it"; return 1
+    fi
+    # Only now is it read: the one version string of PACKAGE for ARCH whose
+    # unit version is exactly VERSION. Two (the same upstream version and
+    # revision under two distro suffixes) are ambiguous, and refused.
+    found=""
+    while IFS= read -r cand; do
+      [ "$(apt_unit_version "$cand" || true)" = "$v" ] || continue
+      if [ -n "$found" ] && [ "$cand" != "$found" ]; then
+        apt_err="$pkgs_url has two $pkg version strings for $v on $arch, $found and $cand"; return 1
+      fi
+      found=$cand
+    done < <(awk -v pkg="$pkg" -v a="$arch" '
+      function done_stanza() {
+        if (p == pkg && ar == a && ver != "") print ver
+        p = ""; ar = ""; ver = ""
+      }
+      { sub(/\r$/, "") }
+      /^$/ { done_stanza(); next }
+      /^Package: / { p = $2 } /^Architecture: / { ar = $2 } /^Version: / { ver = $2 }
+      END { done_stanza() }' "$pf")
+    if [ -z "$found" ]; then
+      apt_err="$pkgs_url has no $pkg $v for $arch"; return 1
+    fi
+    if [ -n "$one" ] && [ "$found" != "$one" ]; then
+      apt_err="the architectures disagree: $pkg $v is $one for one and $found for $arch"; return 1
+    fi
+    one=$found
+    integrity_urls+=("$pkgs_url")
+  done
+  [ -n "$one" ] || { apt_err="no architectures to read $pkg from"; return 1; }
+  add_note "each Packages index matched the SHA-256 its signed InRelease lists"
+  apt_value=$one
+}
+
 iso_to_epoch() { jq -rn --arg d "$1" '$d | sub("\\.[0-9]+"; "") | fromdateiso8601'; }
 
 is_version() { printf '%s' "$1" | grep -qxE '[0-9]+(\.[0-9]+)*'; }
+# A Debian version string, [epoch:]upstream-revision, with the revision
+# required (every package in a vendor's repository has one), in the
+# characters Debian allows -- nothing that could break out of an ARG line.
+is_apt_version() { printf '%s' "$1" | grep -qxE '([0-9]+:)?[0-9][A-Za-z0-9.+~]*-[A-Za-z0-9.+~]+'; }
+# Its unit version, the one check-pins reports and the drift and --to ask
+# for: the upstream version and the Debian revision, without the epoch or the
+# distro suffix after the revision's first `~` (5:29.9.0-1~debian.12~bookworm
+# -> 29.9.0-1). The revision is part of it, so a fix Docker ships only as a
+# new revision (29.9.0-2) is a bump like any release. Exactly <dotted
+# upstream>-<dotted revision> (is_apt_unit_version), or nothing and a
+# failure. The same helper is in scripts/check-pins.sh.
+apt_unit_version() {
+  local v="$1" up rev re_num='^[0-9]+(\.[0-9]+)*$'
+  is_apt_version "$v" || return 1
+  v=${v#*:}   # the epoch: the only place a Debian version string has a colon
+  up=${v%-*}; rev=${v##*-}; rev=${rev%%~*}
+  if ! [[ $up =~ $re_num ]] || ! [[ $rev =~ $re_num ]]; then return 1; fi
+  printf '%s-%s\n' "$up" "$rev"
+}
+# An apt unit's version: 29.9.0-1, which sort -V (ver_gt) orders as dpkg
+# does: 29.9.0-1 < 29.9.0-2 < 29.9.0-10 < 29.10.0-1.
+is_apt_unit_version() { printf '%s' "$1" | grep -qxE '[0-9]+(\.[0-9]+)*-[0-9]+(\.[0-9]+)*'; }
+# unit_version_ok INTEGRITY VERSION -- VERSION has the shape of that unit's
+# versions: <upstream>-<revision> for an apt unit, a dotted number otherwise.
+unit_version_ok() { if [ "$1" = apt ]; then is_apt_unit_version "$2"; else is_version "$2"; fi; }
 # 0 when $1 sorts strictly after $2.
 ver_gt() { [ "$1" != "$2" ] && [ "$(printf '%s\n%s\n' "$1" "$2" | sort -V | tail -1)" = "$1" ]; }
 
@@ -1067,7 +1258,11 @@ bump_unit() {
   date_spec=$(unit_field "$unit" 5)
   version_url=$(subst "$(unit_field "$unit" 6)" "$new")
 
-  if ! is_version "$new"; then fail_unit "$unit" "target version '$new' is not a dotted number"; return 0; fi
+  # An apt unit's version is <upstream>-<revision> (apt_unit_version); every
+  # other unit's a dotted number.
+  local version_shape="a dotted number"
+  if [ "$integrity" = apt ]; then version_shape="<upstream>-<revision>, such as 29.9.0-1"; fi
+  if ! unit_version_ok "$integrity" "$new"; then fail_unit "$unit" "target version '$new' is not $version_shape"; return 0; fi
 
   # Every copy of the pin is read. The first is the one check-pins reports.
   for pin in $pins; do
@@ -1075,6 +1270,14 @@ bump_unit() {
     [ -f "$root/$file" ] || { fail_unit "$unit" "$file does not exist"; return 0; }
     cur=$(get_pin "$root/$file" "$key")
     [ -n "$cur" ] || { fail_unit "$unit" "no $key in $file"; return 0; }
+    # An apt pin is the package's whole version string; the unit's version,
+    # the one check-pins reports and the drift asks for, is its upstream
+    # version and Debian revision (apt_unit_version).
+    if [ "$integrity" = apt ]; then
+      is_apt_version "$cur" || { fail_unit "$unit" "$key in $file is '$cur', not a Debian version string"; return 0; }
+      cur=$(apt_unit_version "$cur") \
+        || { fail_unit "$unit" "$key in $file is '$(get_pin "$root/$file" "$key")', not <upstream>-<revision> once its epoch and distro suffix are cut"; return 0; }
+    fi
     [ -n "$old" ] || old=$cur
     [ "$cur" = "$old" ] || note="copies disagreed before this bump ($file had $cur); all now move together. "
     [ "$cur" = "$new" ] || all_new=0
@@ -1085,7 +1288,7 @@ bump_unit() {
     emit "$unit" current "$old" "$new" "" "already at $new" ""
     return 0
   fi
-  if ! is_version "$old"; then fail_unit "$unit" "pinned version '$old' is not a dotted number"; return 0; fi
+  if ! unit_version_ok "$integrity" "$old"; then fail_unit "$unit" "pinned version '$old' is not $version_shape"; return 0; fi
   if [ "$old" != "$new" ] && ! ver_gt "$new" "$old"; then
     fail_unit "$unit" "target $new is older than the pinned $old"; return 0
   fi
@@ -1124,8 +1327,36 @@ bump_unit() {
 
   # --- integrity: collect every edit before making any.
   local edits=() row sfile skey surl sname sum req_hashes=""
-  for pin in $pins; do edits+=("$pin=$new"); done
+  # An apt unit's version pins are its APT rows, written below with the
+  # whole version string; every other unit's are the bare version.
+  if [ "$integrity" != apt ]; then
+    for pin in $pins; do edits+=("$pin=$new"); done
+  fi
   case "$integrity" in
+    apt)
+      local row_repo row_suite row_comp row_pkg row_arches
+      while IFS='|' read -r row_unit row_pin row_repo row_suite row_comp row_pkg row_arches; do
+        [ "$(trim "$row_unit")" = "$unit" ] || continue
+        if ! apt_resolve "$unit" "$new" "$(trim "$row_repo")" "$(trim "$row_suite")" "$(trim "$row_comp")" \
+               "$(trim "$row_pkg")" "$(trim "$row_arches")"; then
+          fail_unit "$unit" "$apt_err"; return 0
+        fi
+        if ! is_apt_version "$apt_value" || [ "$(apt_unit_version "$apt_value" || true)" != "$new" ]; then
+          fail_unit "$unit" "the signed index gave '$apt_value' for $new"; return 0
+        fi
+        for row in $(expand_pins "$(trim "$row_pin")"); do
+          edits+=("$row=$apt_value")
+        done
+      done <<< "$APT"
+      # Every version pin must have been written from the index: one left
+      # out would keep the old version while the unit reported the new one.
+      for pin in $pins; do
+        case " ${edits[*]:-} " in
+          *" $pin="*) ;;
+          *) fail_unit "$unit" "$pin is a version pin of an apt unit, but no APT row writes it"; return 0 ;;
+        esac
+      done
+      ;;
     sums)
       while IFS='|' read -r row_unit row_pin row_url row_name; do
         [ "$(trim "$row_unit")" = "$unit" ] || continue
@@ -1229,9 +1460,11 @@ bump_unit() {
     reason="$reason); merges only once its PR has carried this version for ${cooldown_days} days (first-seen cooldown)"
   elif [ "${old%%.*}" != "${new%%.*}" ]; then
     class=review
-    reason="major version change (${old%%.*} -> ${new%%.*}); released $released; merges only once its PR has carried this version for ${cooldown_days} days (first-seen cooldown)"
+    reason="major version change (${old%%.*} -> ${new%%.*}); ${released:+released $released; }merges only once its PR has carried this version for ${cooldown_days} days (first-seen cooldown)"
     if [ "$integrity" = attested ]; then
       reason="sha256 hashed from our download, pinned only after $signed; $reason"
+    elif [ "$integrity" = apt ]; then
+      reason="version string from the vendor's signed apt index, $signed; $reason"
     elif [ -n "$signed" ]; then
       reason="vendor checksum file, $signed; $reason"
     fi
@@ -1240,11 +1473,20 @@ bump_unit() {
       sums)   reason="checksums from the vendor's published checksum file"
               [ -z "$signed" ] || reason="$reason, $signed" ;;
       attested) reason="sha256 of the vendor's release artifact, hashed from our download and pinned only after $signed" ;;
+      apt)    reason="version string from the vendor's signed apt index, $signed; apt checks the same chain, and every .deb's hash, at build time" ;;
       npm:*)  reason="npm registry sha512 integrity, verified by npm on install" ;;
       pypi:*) reason="sha256 of every linux wheel from PyPI's JSON API, installed with pip --require-hashes" ;;
       *)      reason="registry-published sha256" ;;
     esac
-    reason="$reason; not a major version; released $released"
+    if [ "$date_spec" = first-seen ]; then
+      # Verified like a signed checksum, but with no vendor release date the
+      # cooldown has not been applied yet: an auto PR merges with no
+      # first-seen clock, so this one must carry it (see the header).
+      class=review
+      reason="$reason; not a major version; the vendor publishes no release date, so it merges only once its PR has carried this version for ${cooldown_days} days (first-seen cooldown)"
+    else
+      reason="$reason; not a major version; released $released"
+    fi
   fi
   reason="$note$reason"
 
@@ -1298,6 +1540,13 @@ bump_unit() {
 check_tables() {
   local bad=0 line u p f k n v spec specs integ urow
   complain() { log error "$*"; bad=$((bad + 1)); }
+  apt_pins_of() { # UNIT -- the pins its APT rows write, one per line
+    local au ap
+    while IFS='|' read -r au ap _; do
+      [ "$(trim "$au")" = "$1" ] || continue
+      expand_pins "$(trim "$ap")"
+    done <<< "$APT"
+  }
   one_line() { # FILE:KEY WHAT -- the pin is exactly one line; its value in $v
     f=${1%%:*}; k=${1#*:}
     [ -f "$root/$f" ] || { complain "$2 $1: $f does not exist"; return 1; }
@@ -1311,6 +1560,14 @@ check_tables() {
     # shellcheck disable=SC2086  # one spec per word
     for p in $(expand_pins $specs); do
       one_line "$p" "$u: pin" || continue
+      if [ "$integ" = apt ]; then
+        if ! is_apt_version "$v" || ! apt_unit_version "$v" > /dev/null; then
+          complain "$u: pin $p is '$v', not a Debian version string of <upstream>-<revision>"
+        fi
+        apt_pins_of "$u" > "$tmp/apt.pins"
+        grep -qxF "$p" "$tmp/apt.pins" || complain "$u: pin $p is a version pin of an apt unit, but no APT row writes it"
+        continue
+      fi
       is_version "$v" || complain "$u: pin $p is '$v', not a version"
       case "$p" in
         *.txt:*)
@@ -1343,8 +1600,34 @@ check_tables() {
       is_sha256 "$v" || complain "$u: downloaded checksum $p is '$v', not a sha256"
     done
   done <<< "$DOWNLOADS"
-  # A URL a unit reads: column 3 of its DOWNLOADS rows, column 3 of its SUMS rows.
+  # An APT row: an apt unit's, writing a Debian version string, from an https
+  # repository, for both architectures the images are built for. Each one's
+  # InRelease is a URL the unit reads, and must be signed inline (below).
+  local ar arepo asuite acomp apkg aarches apt_reads=""
+  while IFS='|' read -r u spec arepo asuite acomp apkg aarches; do
+    u=$(trim "$u"); [ -n "$u" ] || continue
+    arepo=$(trim "$arepo"); asuite=$(trim "$asuite"); acomp=$(trim "$acomp"); apkg=$(trim "$apkg"); aarches=$(trim "$aarches")
+    [ "$(unit_field "$u" 4 2>/dev/null || true)" = apt ] || complain "APT row for $u, which is not an apt unit"
+    for p in $(expand_pins "$(trim "$spec")"); do
+      one_line "$p" "$u: apt version" || continue
+      is_apt_version "$v" || complain "$u: apt version $p is '$v', not a Debian version string"
+    done
+    printf '%s' "$arepo" | grep -qxE 'https://[A-Za-z0-9.-]+(/[A-Za-z0-9._-]+)*' || complain "APT row for $u: '$arepo' is not an https repository URL"
+    for ar in "$asuite" "$acomp" "$apkg"; do
+      printf '%s' "$ar" | grep -qxE '[a-z0-9][a-z0-9.+-]*' || complain "APT row for $u: '$ar' is not a suite, component or package name"
+    done
+    for ar in amd64 arm64; do
+      case " $aarches " in *" $ar "*) ;; *) complain "APT row for $u does not read $ar" ;; esac
+    done
+    for ar in $aarches; do
+      case "$ar" in amd64|arm64) ;; *) complain "APT row for $u: '$ar' is not an architecture the images are built for" ;; esac
+    done
+    apt_reads="$apt_reads $u|$arepo/dists/$asuite/InRelease"
+  done <<< "$APT"
+  # A URL a unit reads: column 3 of its DOWNLOADS rows, column 3 of its SUMS
+  # rows, the InRelease of its APT rows.
   reads_url() { # UNIT URL
+    case " $apt_reads " in *" $1|$2 "*) return 0 ;; esac
     printf '%s\n%s\n' "$DOWNLOADS" "$SUMS" | awk -F'|' -v u="$1" -v r="$2" '
       { x = $1; y = $3; gsub(/[[:space:]]/, "", x); gsub(/[[:space:]]/, "", y); if (x == u && y == r) f = 1 } END { exit !f }'
   }
@@ -1365,7 +1648,7 @@ check_tables() {
       *) complain "SIGS row for $1: '$2' is not a known OIDC issuer" ;;
     esac
   }
-  local sm ss sa sb sc signed_units="" digest_rows=""
+  local sm ss sa sb sc signed_units="" digest_rows="" inline_rows=""
   while IFS='|' read -r u urow ss sm sa sb sc; do
     u=$(trim "$u"); [ -n "$u" ] || continue
     urow=$(trim "$urow"); ss=$(trim "$ss"); sm=$(trim "$sm"); sa=$(trim "$sa"); sb=$(trim "$sb"); sc=$(trim "$sc")
@@ -1386,7 +1669,14 @@ check_tables() {
     case "$sm" in
       gpg)
         [ -f "$script_dir/keys/$sa" ] || complain "SIGS row for $u: scripts/keys/$sa does not exist"
-        printf '%s' "$sb" | grep -qxE '[0-9A-F]{40}' || complain "SIGS row for $u: '$sb' is not a full key fingerprint" ;;
+        printf '%s' "$sb" | grep -qxE '[0-9A-F]{40}' || complain "SIGS row for $u: '$sb' is not a full key fingerprint"
+        # Inline exactly when the file is an APT row's InRelease.
+        case " $apt_reads " in
+          *" $u|$urow "*)
+            if [ "$ss" = - ]; then inline_rows="$inline_rows $u|$urow"
+            else complain "SIGS row for $u: $urow is an InRelease, signed inline, but the row names a detached '$ss'"; fi ;;
+          *) [ "$ss" != - ] || complain "SIGS row for $u: an inline signature ('-') is only for an APT row's InRelease, not $urow" ;;
+        esac ;;
       sigstore|sigcert)
         exact_identity "$u" "$sa"
         known_issuer "$u" "$sb"
@@ -1415,6 +1705,14 @@ check_tables() {
       *) complain "SIGS row for $u: unknown method '$sm'" ;;
     esac
   done <<< "$SIGS"
+  # An apt unit reads nothing from an InRelease that is not signed: each APT
+  # row's must have its inline gpg row.
+  for ar in $apt_reads; do
+    case " $inline_rows " in
+      *" $ar "*) ;;
+      *) complain "${ar%%|*} reads ${ar#*|}, which has no inline gpg SIGS row" ;;
+    esac
+  done
   # An attested unit pins what it hashed only on the strength of a digest
   # row: without one for each download it would be trust on first use
   # classified as verified.

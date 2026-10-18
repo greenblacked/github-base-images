@@ -171,8 +171,7 @@ binary, verifying its `.sig`/`.cert` as `krel-staging@k8s-releng-prod.iam.gservi
 comparing its sha256 with the `.sha256` file. The methods (`gpg`, `sigstore`, `slsa`,
 `ghattest`, `sigcert`) are described above the `SIGS` table in `scripts/bump-pins.sh`, which pins
 each identity and key; [docs/security.md](docs/security.md#supply-chain-pins) lists them, and the
-tools whose vendors sign nothing the bump could check (gitleaks, golang-migrate, the Docker static
-client, gcloud). Running it locally needs `cosign` (v3), `gpg`/`gpgv` and `python3` on `PATH`, a
+tools whose vendors sign nothing the bump could check (gitleaks, golang-migrate, gcloud). Running it locally needs `cosign` (v3), `gpg`/`gpgv` and `python3` on `PATH`, a
 `GITHUB_TOKEN` for the attestations API's rate limit, and for kubectl, network access to Rekor. By
 hand, the same checks are:
 
@@ -205,10 +204,33 @@ then pins that sha256. Hashing a download is not trust on first use here: the ve
 very digest, and either check failing fails the bump. Set it with the script
 (`./scripts/bump-pins.sh --unit composer --to <VERSION>`), not by hand.
 
-Three vendors publish **no** checksum: the Docker static tarball (no `.sha256` is published —
-the URL 404s), the AWS CLI installer (a detached GPG signature only), and the gcloud CLI in
-`ci-cloud` (the release bucket carries no `.sha256` companions). Their sums
-(`DOCKER_SHA256_*`, `AWSCLI_SHA256_*`, `GCLOUD_SHA256_*`) are **trust-on-first-use**:
+The Docker CLI in `ci-tools` has no checksum `ARG` at all. It is installed from Docker's signed
+apt repository (`download.docker.com/linux/debian bookworm stable`), and its pin,
+`DOCKER_CLI_VERSION`, is the package's full version string (`5:29.9.0-1~debian.12~bookworm`).
+apt verifies `InRelease` against the keyring the build installs — Docker's key, which must have
+the fingerprint in `DOCKER_KEY_FINGERPRINT` — then `Packages` against `InRelease` and the `.deb`
+against `Packages`. `scripts/bump-pins.sh` reads a new version string only from that signed
+index, checking `InRelease` with `gpgv` against
+[`scripts/keys/docker.asc`](scripts/keys/docker.asc) (primary fingerprint
+`9DC858229FC7DD38854AE2D88D81803C0EBFCD88`) and each architecture's `Packages` against the
+SHA-256 it lists. By hand:
+
+```bash
+gpgv --keyring <(gpg --dearmor < scripts/keys/docker.asc) --output InRelease.signed InRelease
+sed -n '/^SHA256:/,$p' InRelease.signed | grep ' stable/binary-amd64/Packages$'   # = sha256sum Packages
+```
+
+Set it with the script (`./scripts/bump-pins.sh --unit docker --to <VERSION>-<REVISION>`, say
+`--to 29.9.1-1`). The unit's version is the upstream version **and** the Debian revision, without
+the epoch or the distro suffix (`5:29.9.0-1~debian.12~bookworm` is `29.9.0-1`): a fix Docker ships
+only as a new revision (`29.9.0-2`) is drift, and a bump, like any release. `--to` names that exact
+revision, and the full string the signed index lists for it is what is written. Its index carries
+no release date, so a Docker bump is labelled `needs-review` and waits the first-seen clock like
+the two below, though it is not trust on first use.
+
+Two vendors publish **no** checksum: the AWS CLI installer (a detached GPG signature only), and
+the gcloud CLI in `ci-cloud` (the release bucket carries no `.sha256` companions). Their sums
+(`AWSCLI_SHA256_*`, `GCLOUD_SHA256_*`) are **trust-on-first-use**:
 `scripts/bump-pins.sh` downloads each architecture's artifact when it moves the version and
 records the sha256 of what it got, and the build checks every download against it with
 `sha256sum --check --strict`. That detects a later substitution, not an originally bad artifact,
@@ -218,10 +240,10 @@ is recorded, its `.sig` must verify against AWS's "AWS CLI Team" key in
 [`scripts/keys/aws-cli.asc`](scripts/keys/aws-cli.asc), which must be exactly the key with AWS's
 documented fingerprint `FB5DB77FD5C118B80511ADA8A6310ACC4672475C`. A bump signed by any other
 key fails, for a person to check and pin the new key. To set one of these sums by hand, let the
-script do it (`./scripts/bump-pins.sh --unit docker --to <VERSION>`) rather than hashing a
+script do it (`./scripts/bump-pins.sh --unit awscli --to <VERSION>`) rather than hashing a
 download yourself.
 
-These three bumps are always labelled `needs-review`, and with no vendor release date to wait on
+These bumps, and the Docker CLI's, are always labelled `needs-review`, and with no vendor release date to wait on
 they merge only once their PR has carried the version for seven days (the first-seen clock,
 [ADR 0008](docs/adr/0008-self-updating.md#amendment-2026-10-17-the-cooldown-fails-closed-and-has-a-clock-of-its-own)).
 After that they merge themselves when green: the full build, smoke tests and vulnerability gate

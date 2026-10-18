@@ -44,6 +44,7 @@ check "bash is present"            'bash --version'
 check "git is present"             'git --version'
 check "curl is present"            'curl --version'
 check "jq is present"              'jq --version'
+check "gpg is present"             'gpg --version'
 check "ssh client is present"      'ssh -V'
 check "tar is present"             'tar --version'
 check "gzip is present"            'gzip --version'
@@ -57,6 +58,18 @@ check "CA bundle exists"           'test -s /etc/ssl/certs/ca-certificates.crt'
 check "TLS verification works"     'curl -sSf --max-time 15 https://releases.hashicorp.com/ -o /dev/null'
 
 check "workdir is /workspace"      '[ "$PWD" = /workspace ]'
+
+# The Docker CLI comes from Docker's signed apt repository. The package puts
+# it in /usr/bin; /usr/local/bin/docker, where the static binary used to be,
+# must still resolve to it, and be what PATH finds first.
+check "docker cli is the apt package's" 'dpkg-query -W -f="\${Status}" docker-ce-cli | grep -qx "install ok installed" && [ "$(readlink -f /usr/local/bin/docker)" = /usr/bin/docker ] && [ "$(command -v docker)" = /usr/local/bin/docker ]'
+# The Docker keyring must survive into the final image, and hold exactly
+# Docker's release key, the primary fingerprint the Dockerfile pins: a second
+# key beside it would let apt accept packages from this repository signed by
+# that key. The build refuses such a key; this checks what actually shipped.
+check "docker keyring present"     'test -s /usr/share/keyrings/docker.gpg && grep -q "signed-by=/usr/share/keyrings/docker.gpg] https://download.docker.com/linux/debian bookworm stable" /etc/apt/sources.list.d/docker.list'
+check "docker keyring is exactly the pinned key" \
+  'GNUPGHOME="$(mktemp -d)" gpg --batch --show-keys --with-colons /usr/share/keyrings/docker.gpg 2>/dev/null | awk -F: '"'"'$1 == "pub" { p = 1; next } p && $1 == "fpr" { print $10; p = 0 }'"'"' | { read -r a && [ "$a" = 9DC858229FC7DD38854AE2D88D81803C0EBFCD88 ] && ! read -r _; }'
 
 # The image is shared across projects and public: credentials, cluster access,
 # and state must never be baked in.
