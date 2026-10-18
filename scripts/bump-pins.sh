@@ -39,7 +39,12 @@
 # to their checksums files, with `cosign verify-blob` pinned to the vendor's
 # own release identity -- the workflow (or service account) and the OIDC
 # issuer that signed it, so a bundle signed by anyone else, a stranger's
-# workflow included, fails. A signature that is missing, bad, or by another
+# workflow included, fails. Where the vendor signs the artifacts rather than
+# the checksums file, every digest the unit would pin must verify on its own
+# before it is written: osv-scanner's SLSA provenance, GitHub artifact
+# attestations (hadolint, actionlint, Composer), and kubectl's per-binary
+# Sigstore signature, each with `cosign` pinned to the vendor's identity and
+# repository. A signature or attestation that is missing, bad, or by another
 # identity fails the unit: it is an error row, nothing is edited, and nothing
 # is merged.
 #
@@ -56,6 +61,13 @@
 # pin-bump PR's own first-seen clock (scripts/pin-bump-prs.sh records it,
 # scripts/merge-bot-prs.sh enforces it): with no vendor release date to
 # measure from, the clock starts on the day this repository first saw it.
+#
+# Composer is downloaded and hashed too, but it is not trust on first use
+# (integrity "attested"): the hash is pinned only once GitHub's artifact
+# attestation for exactly that digest verifies as Composer's release
+# workflow, and the phar's GPG signature as Composer's key. The digest pinned
+# is then the one the vendor attested, rather than one read from a second
+# server's checksum file.
 #
 # Each bump is classified:
 #   auto    the vendor publishes a checksum (or the registry an integrity
@@ -85,8 +97,10 @@
 # (epoch seconds) fixes "now" for the cooldown. In fixture mode only,
 # BUMP_PINS_KEYS (a directory) and BUMP_PINS_KEY_FPR stand in for scripts/keys
 # and the pinned signing-key fingerprint, so the tests can sign with a
-# throwaway key; the Sigstore rows run whatever `cosign` is first on PATH,
-# which the tests make a fake. See scripts/test-bump-pins.sh.
+# throwaway key; the Sigstore, SLSA, attestation and kubectl rows run
+# whatever `cosign` is first on PATH, which the tests make a fake, and the
+# attestations API is answered from the same fixtures. See
+# scripts/test-bump-pins.sh.
 #
 # `--check` reads the tables below against the tree and touches nothing, with
 # no network: every pin, checksum and tofu row must name exactly one line that
@@ -192,10 +206,14 @@ trap 'rm -rf "$tmp"' EXIT INT TERM
 # unit | check-pins tool names | version pins (file:KEY ...) | integrity | release date | release page
 #
 # integrity:  sums           every checksum is a SUMS row below
-#             tofu           the vendor publishes no checksum: each TOFU row
-#                            below is the sha256 of our own download of that
-#                            artifact (and a SIGS row, where there is one, a
-#                            vendor signature checked first)
+#             tofu           the vendor publishes no checksum: each DOWNLOADS
+#                            row below is the sha256 of our own download of
+#                            that artifact (and a SIGS row, where there is
+#                            one, a vendor signature checked first)
+#             attested       each DOWNLOADS row is downloaded and hashed, and
+#                            the hash pinned only once a digest SIGS row
+#                            (ghattest) verifies exactly that digest as the
+#                            vendor's; classified like sums, not like tofu
 #             npm:<package>  the registry's integrity digest, which the
 #                            npm client itself verifies on install
 #             rubygems:<gem> the registry's sha256 for the .gem
@@ -228,7 +246,7 @@ playwright  | playwright          | */Dockerfile.ci:PLAYWRIGHT_VERSION | npm:pla
 npm         | npm                 | */Dockerfile.ci:NPM_VERSION | npm:npm | npm:npm | https://www.npmjs.com/package/npm/v/{v}
 npm-brace-expansion | npm-brace-expansion | */Dockerfile.ci:NPM_BRACE_EXPANSION_VERSION | npm:brace-expansion | npm:brace-expansion | https://www.npmjs.com/package/brace-expansion/v/{v}
 npm-undici  | npm-undici          | */Dockerfile.ci:NPM_UNDICI_VERSION | npm:undici | npm:undici | https://www.npmjs.com/package/undici/v/{v}
-composer    | composer            | */Dockerfile.ci:COMPOSER_VERSION | sums | github:composer/composer:{v} | https://github.com/composer/composer/releases/tag/{v}
+composer    | composer            | */Dockerfile.ci:COMPOSER_VERSION | attested | github:composer/composer:{v} | https://github.com/composer/composer/releases/tag/{v}
 trivy       | trivy               | ci-security/Dockerfile.ci:TRIVY_VERSION | sums | github:aquasecurity/trivy:v{v} | https://github.com/aquasecurity/trivy/releases/tag/v{v}
 syft        | syft                | ci-security/Dockerfile.ci:SYFT_VERSION | sums | github:anchore/syft:v{v} | https://github.com/anchore/syft/releases/tag/v{v}
 grype       | grype               | ci-security/Dockerfile.ci:GRYPE_VERSION | sums | github:anchore/grype:v{v} | https://github.com/anchore/grype/releases/tag/v{v}
@@ -254,7 +272,6 @@ kubectl     | ci-tools/Dockerfile.ci:KUBECTL_SHA256_AMD64   | https://dl.k8s.io/
 kubectl     | ci-tools/Dockerfile.ci:KUBECTL_SHA256_ARM64   | https://dl.k8s.io/release/v{v}/bin/linux/arm64/kubectl.sha256 | -
 kubectl     | ci-cloud/Dockerfile.ci:KUBECTL_SHA256_AMD64   | https://dl.k8s.io/release/v{v}/bin/linux/amd64/kubectl.sha256 | -
 kubectl     | ci-cloud/Dockerfile.ci:KUBECTL_SHA256_ARM64   | https://dl.k8s.io/release/v{v}/bin/linux/arm64/kubectl.sha256 | -
-composer    | */Dockerfile.ci:COMPOSER_SHA256               | https://getcomposer.org/download/{v}/composer.phar.sha256sum | composer.phar
 trivy       | ci-security/Dockerfile.ci:TRIVY_SHA256_AMD64  | $GH/aquasecurity/trivy/releases/download/v{v}/trivy_{v}_checksums.txt | trivy_{v}_Linux-64bit.tar.gz
 trivy       | ci-security/Dockerfile.ci:TRIVY_SHA256_ARM64  | $GH/aquasecurity/trivy/releases/download/v{v}/trivy_{v}_checksums.txt | trivy_{v}_Linux-ARM64.tar.gz
 syft        | ci-security/Dockerfile.ci:SYFT_SHA256_AMD64   | $GH/anchore/syft/releases/download/v{v}/syft_{v}_checksums.txt | syft_{v}_linux_amd64.tar.gz
@@ -280,29 +297,42 @@ actionlint  | scripts/lint.sh:ACTIONLINT_SHA256_DARWIN_ARM64 | $GH/rhysd/actionl
 "
 
 # unit | file:KEY the hash is written to | the artifact, exactly as the
-# Dockerfile downloads it. For the tools with no vendor checksum: the artifact
-# is downloaded and hashed (trust on first use; see the header). Both
-# architectures, since each is its own download -- which also catches a
-# version the resolver misread, here rather than as a 404 halfway through a
-# multi-arch build.
-readonly TOFU='
-awscli | ci-tools/Dockerfile.ci:AWSCLI_SHA256_AMD64 | https://awscli.amazonaws.com/awscli-exe-linux-x86_64-{v}.zip
-awscli | ci-tools/Dockerfile.ci:AWSCLI_SHA256_ARM64 | https://awscli.amazonaws.com/awscli-exe-linux-aarch64-{v}.zip
-docker | ci-tools/Dockerfile.ci:DOCKER_SHA256_AMD64 | https://download.docker.com/linux/static/stable/x86_64/docker-{v}.tgz
-docker | ci-tools/Dockerfile.ci:DOCKER_SHA256_ARM64 | https://download.docker.com/linux/static/stable/aarch64/docker-{v}.tgz
-gcloud | ci-cloud/Dockerfile.ci:GCLOUD_SHA256_AMD64 | https://storage.googleapis.com/cloud-sdk-release/google-cloud-cli-{v}-linux-x86_64.tar.gz
-gcloud | ci-cloud/Dockerfile.ci:GCLOUD_SHA256_ARM64 | https://storage.googleapis.com/cloud-sdk-release/google-cloud-cli-{v}-linux-arm.tar.gz
-'
+# Dockerfile downloads it. The artifact is downloaded and hashed: for the
+# tools with no vendor checksum, trust on first use (see the header); for an
+# `attested` unit, a hash pinned only once the vendor's attestation for that
+# digest verifies. Both architectures, since each is its own download --
+# which also catches a version the resolver misread, here rather than as a
+# 404 halfway through a multi-arch build.
+readonly DOWNLOADS="
+awscli   | ci-tools/Dockerfile.ci:AWSCLI_SHA256_AMD64 | https://awscli.amazonaws.com/awscli-exe-linux-x86_64-{v}.zip
+awscli   | ci-tools/Dockerfile.ci:AWSCLI_SHA256_ARM64 | https://awscli.amazonaws.com/awscli-exe-linux-aarch64-{v}.zip
+docker   | ci-tools/Dockerfile.ci:DOCKER_SHA256_AMD64 | https://download.docker.com/linux/static/stable/x86_64/docker-{v}.tgz
+docker   | ci-tools/Dockerfile.ci:DOCKER_SHA256_ARM64 | https://download.docker.com/linux/static/stable/aarch64/docker-{v}.tgz
+gcloud   | ci-cloud/Dockerfile.ci:GCLOUD_SHA256_AMD64 | https://storage.googleapis.com/cloud-sdk-release/google-cloud-cli-{v}-linux-x86_64.tar.gz
+gcloud   | ci-cloud/Dockerfile.ci:GCLOUD_SHA256_ARM64 | https://storage.googleapis.com/cloud-sdk-release/google-cloud-cli-{v}-linux-arm.tar.gz
+composer | */Dockerfile.ci:COMPOSER_SHA256            | $GH/composer/composer/releases/download/{v}/composer.phar
+"
 
-# unit | the signed file: a TOFU artifact or a SUMS checksums URL | its signature
-#      | gpg      | key file in scripts/keys | primary key fingerprint
-#      | sigstore | certificate identity     | OIDC issuer
+# unit | the file: a DOWNLOADS artifact or a SUMS checksums URL | its signature
+#      | method | two method-specific values | (digest methods) a binding
 #
-# Checked before the artifact's hash is recorded, or before any checksum is
-# read from the checksums file. A unit with any row here must have one for
-# every TOFU or SUMS URL it reads (--check enforces it): a vendor that signs
-# signs everything we take from it, and an unsigned file beside signed ones
-# is not taken on trust.
+# File methods -- the file itself is signed, and checked before the
+# artifact's hash is recorded, or before any checksum is read from it:
+#      | gpg       | key file in scripts/keys | primary key fingerprint
+#      | sigstore  | certificate identity     | OIDC issuer
+# Digest methods -- the vendor signs the artifacts, so each digest the unit
+# would pin from that file (or hashed from that download) is checked on its
+# own, and none is written until every one verifies:
+#      | slsa      | builder identity | OIDC issuer | owner/repo@ref
+#      | ghattest  | signer identity  | OIDC issuer | owner/repo
+#      | sigcert   | signer identity  | OIDC issuer
+# For slsa the signature column is the provenance bundle; for ghattest the
+# repository's attestations API (`<api>/sha256:<digest>`); for sigcert the
+# signed binary itself, whose `.sig` and `.cert` sit beside it.
+#
+# A unit with any row here must have one for every DOWNLOADS or SUMS URL it
+# reads (--check enforces it): a vendor that signs signs everything we take
+# from it, and an unsigned file beside signed ones is not taken on trust.
 #
 # gpg: `gpgv` must report a valid signature by exactly this key (an expired
 # key still counts -- AWS lets the expiry of its CLI key lapse between
@@ -315,6 +345,9 @@ gcloud | ci-cloud/Dockerfile.ci:GCLOUD_SHA256_ARM64 | https://storage.googleapis
 #   hashicorp.asc  https://www.hashicorp.com/.well-known/pgp-key.txt, the
 #                  fingerprint on https://www.hashicorp.com/security. It signs
 #                  with a subkey; gpgv's VALIDSIG names the primary too.
+#   composer.asc   "Packagist Conductors", the key that signs each release's
+#                  composer.phar.asc; fetched from keyserver.ubuntu.com by
+#                  its fingerprint and checked against 2.10.3's signature.
 #
 # sigstore: `cosign verify-blob --bundle` against the public-good Sigstore
 # instance (Fulcio certificate, Rekor inclusion), with the certificate's
@@ -331,13 +364,47 @@ gcloud | ci-cloud/Dockerfile.ci:GCLOUD_SHA256_ARM64 | https://storage.googleapis
 #            (sigstore/cosign-installer, pinned by SHA), never the release
 #            being bumped: nothing this script verifies is ever executed.
 #
-# Not here, and why (docs/security.md has the full list): kubectl signs each
-# binary, not its .sha256, with a detached .sig/.cert (no bundle), so
-# checking it means downloading every binary and a live Rekor lookup;
-# gitleaks, golang-migrate, hadolint and actionlint sign nothing; osv-scanner
-# publishes SLSA provenance, which needs slsa-verifier, not cosign; Composer's
-# .asc signs the phar, not the sha256sum we read; the Docker static client and
-# gcloud are unsigned tarballs (tofu).
+# slsa: `cosign verify-blob-attestation --type slsaprovenance --digest`, for
+# each pinned digest, against the release's in-toto bundle (a Sigstore
+# bundle holding DSSE SLSA v0.2 provenance whose subjects are the release
+# binaries). The identity is the SLSA generator's reusable workflow, which
+# every user of that generator shares, so the source repository, the ref
+# (the release's own tag) and the push trigger are pinned too -- without
+# them any repository's provenance would pass. The generator version is in
+# the identity: a release built by another one fails, for a person to check.
+#   osv-scanner  slsa-github-generator generator_generic_slsa3.yml v2.1.0,
+#                for google/osv-scanner at refs/tags/v{v}
+#
+# ghattest: GitHub artifact attestations. For each pinned digest, every
+# attestation the repository's API lists for it (`GET <api>/sha256:<d>`,
+# with GITHUB_TOKEN when it is set; public repositories need none) is tried
+# with `cosign verify-blob-attestation --type slsaprovenance1 --digest`, the
+# identity, issuer and repository pinned; the digest is accepted when one
+# verifies. An API error, an empty list, or no bundle that verifies fails
+# the unit. A bundle not inline is fetched from its bundle_url (which GitHub
+# serves snappy-compressed; decoded here with python3).
+#   hadolint    release.yml on refs/heads/master -- hadolint releases from
+#               master, so the ref cannot be the tag
+#   actionlint  release.yaml at refs/tags/v{v}
+#   composer    release.yml at refs/tags/{v} (Composer's tags have no `v`);
+#               the attested digest is of the phar on the GitHub release,
+#               hashed from our download, and its .asc must also verify
+#
+# sigcert: kubectl signs each binary, not its .sha256, as a detached `.sig`
+# and a short-lived Fulcio `.cert` (base64-wrapped PEM; decoded here) with
+# no bundle. Each binary is downloaded, `cosign verify-blob --signature
+# --certificate` checks it under the pinned identity and issuer (cosign
+# finds its Rekor entry online, as the certificate expired ten minutes after
+# signing), and its sha256 must then equal the one the unit would pin.
+#   kubectl     krel-staging@k8s-releng-prod.iam.gserviceaccount.com, issuer
+#               https://accounts.google.com
+#
+# Not here, and why (docs/security.md has the full list): gitleaks and
+# golang-migrate publish no signature asset and no GitHub attestation;
+# Docker's static tarball is unsigned (its signed apt repository carries
+# other bytes); gcloud's tarball has only GCS md5/crc metadata. Those stay
+# checksum-only (gitleaks, golang-migrate) or trust on first use (Docker,
+# gcloud).
 readonly SIGS="
 awscli    | https://awscli.amazonaws.com/awscli-exe-linux-x86_64-{v}.zip  | https://awscli.amazonaws.com/awscli-exe-linux-x86_64-{v}.zip.sig  | gpg | aws-cli.asc | FB5DB77FD5C118B80511ADA8A6310ACC4672475C
 awscli    | https://awscli.amazonaws.com/awscli-exe-linux-aarch64-{v}.zip | https://awscli.amazonaws.com/awscli-exe-linux-aarch64-{v}.zip.sig | gpg | aws-cli.asc | FB5DB77FD5C118B80511ADA8A6310ACC4672475C
@@ -346,6 +413,13 @@ trivy     | $GH/aquasecurity/trivy/releases/download/v{v}/trivy_{v}_checksums.tx
 syft      | $GH/anchore/syft/releases/download/v{v}/syft_{v}_checksums.txt | $GH/anchore/syft/releases/download/v{v}/syft_{v}_checksums.txt.sigstore.json | sigstore | $GH/anchore/syft/.github/workflows/release.yaml@refs/heads/main | https://token.actions.githubusercontent.com
 grype     | $GH/anchore/grype/releases/download/v{v}/grype_{v}_checksums.txt | $GH/anchore/grype/releases/download/v{v}/grype_{v}_checksums.txt.sigstore.json | sigstore | $GH/anchore/grype/.github/workflows/release.yaml@refs/heads/main | https://token.actions.githubusercontent.com
 cosign    | $GH/sigstore/cosign/releases/download/v{v}/cosign_checksums.txt | $GH/sigstore/cosign/releases/download/v{v}/cosign_checksums.txt.sigstore.json | sigstore | keyless@projectsigstore.iam.gserviceaccount.com | https://accounts.google.com
+osv-scanner | $GH/google/osv-scanner/releases/download/v{v}/osv-scanner_SHA256SUMS | $GH/google/osv-scanner/releases/download/v{v}/multiple.intoto.jsonl | slsa | $GH/slsa-framework/slsa-github-generator/.github/workflows/generator_generic_slsa3.yml@refs/tags/v2.1.0 | https://token.actions.githubusercontent.com | google/osv-scanner@refs/tags/v{v}
+hadolint  | $GH/hadolint/hadolint/releases/download/v{v}/checksums.sha256 | https://api.github.com/repos/hadolint/hadolint/attestations | ghattest | $GH/hadolint/hadolint/.github/workflows/release.yml@refs/heads/master | https://token.actions.githubusercontent.com | hadolint/hadolint
+actionlint | $GH/rhysd/actionlint/releases/download/v{v}/actionlint_{v}_checksums.txt | https://api.github.com/repos/rhysd/actionlint/attestations | ghattest | $GH/rhysd/actionlint/.github/workflows/release.yaml@refs/tags/v{v} | https://token.actions.githubusercontent.com | rhysd/actionlint
+composer  | $GH/composer/composer/releases/download/{v}/composer.phar | $GH/composer/composer/releases/download/{v}/composer.phar.asc | gpg | composer.asc | 161DFBE342889F01DDAC4E61CBB3D576F2A0946F
+composer  | $GH/composer/composer/releases/download/{v}/composer.phar | https://api.github.com/repos/composer/composer/attestations | ghattest | $GH/composer/composer/.github/workflows/release.yml@refs/tags/{v} | https://token.actions.githubusercontent.com | composer/composer
+kubectl   | https://dl.k8s.io/release/v{v}/bin/linux/amd64/kubectl.sha256 | https://dl.k8s.io/release/v{v}/bin/linux/amd64/kubectl | sigcert | krel-staging@k8s-releng-prod.iam.gserviceaccount.com | https://accounts.google.com
+kubectl   | https://dl.k8s.io/release/v{v}/bin/linux/arm64/kubectl.sha256 | https://dl.k8s.io/release/v{v}/bin/linux/arm64/kubectl | sigcert | krel-staging@k8s-releng-prod.iam.gserviceaccount.com | https://accounts.google.com
 "
 
 trim() { printf '%s' "$1" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//'; }
@@ -440,22 +514,222 @@ sha256_of() {
   else shasum -a 256 "$1" | cut -d' ' -f1; fi
 }
 
-# verify_sig UNIT URL FILE -- 0 when no SIGS row covers URL, or when its
-# signature verifies under the pinned key or identity; 1, with the reason
-# logged, when not.
+# verify_sig UNIT URL FILE -- the file methods: 0 when no gpg or sigstore
+# SIGS row covers URL, or when its signature verifies under the pinned key or
+# identity; 1, with the reason logged, when not. The digest methods are
+# verify_digest's, once the digests are known.
 verify_sig() {
   local unit="$1" url="$2" file="$3" row_unit row_url row_sig row_method row_a row_b
-  while IFS='|' read -r row_unit row_url row_sig row_method row_a row_b; do
+  while IFS='|' read -r row_unit row_url row_sig row_method row_a row_b _; do
     [ "$(trim "$row_unit")" = "$unit" ] || continue
     [ "$(subst "$(trim "$row_url")" "$new")" = "$url" ] || continue
     case "$(trim "$row_method")" in
       gpg)      verify_gpg "$unit" "$url" "$file" "$(subst "$(trim "$row_sig")" "$new")" "$(trim "$row_a")" "$(trim "$row_b")" || return 1 ;;
       sigstore) verify_sigstore "$unit" "$url" "$file" "$(subst "$(trim "$row_sig")" "$new")" \
                   "$(subst "$(trim "$row_a")" "$new")" "$(trim "$row_b")" || return 1 ;;
+      slsa|ghattest|sigcert) ;;
       *) log error "SIGS row for $unit: unknown method '$(trim "$row_method")'"; return 1 ;;
     esac
   done <<< "$SIGS"
   return 0
+}
+
+# verify_digest UNIT URL SHA256 -- the digest methods, for one digest the unit
+# would pin from URL (a SUMS checksums file, or a DOWNLOADS artifact it
+# hashed): 0 when every slsa, ghattest or sigcert row covering URL verifies
+# it; 3 when no such row covers URL; 1, with the reason logged, when one does
+# not. A verdict is kept for the run, per unit, URL and digest: kubectl's
+# two images read the same two files, and its binaries are 60 MB each.
+verify_digest() {
+  local unit="$1" url="$2" sum="$3" row_unit row_url row_sig row_method row_a row_b row_c n=0 marker sig a b c
+  # The key must be injective: a short checksum of the digest would let a
+  # crafted digest collide with one already verified and skip its check. The
+  # digest goes in verbatim (hex only), the unit and URL as their sha256.
+  case "$sum" in
+    ''|*[!0-9a-f]*) log error "$unit: '$sum' is not a hex digest"; return 1 ;;
+  esac
+  printf '%s %s' "$unit" "$url" > "$tmp/digest.key"
+  marker="$tmp/digest.$(sha256_of "$tmp/digest.key").$sum"
+  [ -f "$marker" ] && return 0
+  while IFS='|' read -r row_unit row_url row_sig row_method row_a row_b row_c; do
+    [ "$(trim "$row_unit")" = "$unit" ] || continue
+    [ "$(subst "$(trim "$row_url")" "$new")" = "$url" ] || continue
+    sig=$(subst "$(trim "$row_sig")" "$new"); a=$(subst "$(trim "$row_a")" "$new")
+    b=$(trim "$row_b"); c=$(subst "$(trim "$row_c")" "$new")
+    case "$(trim "$row_method")" in
+      gpg|sigstore) continue ;;
+      slsa)     verify_slsa "$unit" "$sum" "$sig" "$a" "$b" "$c" || return 1 ;;
+      ghattest) verify_ghattest "$unit" "$sum" "$sig" "$a" "$b" "$c" || return 1 ;;
+      sigcert)  verify_sigcert "$unit" "$sum" "$sig" "$a" "$b" || return 1 ;;
+      *) log error "SIGS row for $unit: unknown method '$(trim "$row_method")'"; return 1 ;;
+    esac
+    n=$((n + 1))
+  done <<< "$SIGS"
+  [ "$n" -gt 0 ] || return 3
+  : > "$marker"
+}
+
+# Each verifier adds the way it verified, once, for the PR's reason line.
+add_note() {
+  case "|$(printf '%s|' "${signed_notes[@]:-}")" in *"|$1|"*) ;; *) signed_notes+=("$1") ;; esac
+}
+
+# verify_slsa UNIT SHA256 BUNDLE_URL IDENTITY ISSUER REPO@REF -- SHA256 is a
+# subject of the SLSA provenance in the bundle at BUNDLE_URL, signed as
+# exactly IDENTITY and ISSUER for a push to REF of REPO.
+verify_slsa() {
+  local unit="$1" sum="$2" sig_url="$3" identity="$4" issuer="$5" binding="$6" repo ref f
+  repo=${binding%%@*}; ref=${binding#*@}
+  if [ -z "$repo" ] || [ "$repo" = "$binding" ] || [ -z "$ref" ]; then
+    log error "SIGS row for $unit: '$binding' is not owner/repo@ref"; return 1
+  fi
+  command -v cosign >/dev/null || { log error "cosign is needed to verify $sig_url"; return 1; }
+  f=$(cache_file "$sig_url") || { log error "no provenance at $sig_url"; return 1; }
+  if ! cosign verify-blob-attestation --bundle "$f" --type slsaprovenance \
+         --certificate-identity "$identity" --certificate-oidc-issuer "$issuer" \
+         --certificate-github-workflow-repository "$repo" --certificate-github-workflow-ref "$ref" \
+         --certificate-github-workflow-trigger push \
+         --digest "$sum" --digestAlg sha256 < /dev/null > "$tmp/cosign.out" 2>&1; then
+    log error "$sig_url does not attest sha256:$sum as $identity for $repo at $ref: $(tail -1 "$tmp/cosign.out")"
+    return 1
+  fi
+  integrity_urls+=("$sig_url")
+  add_note "every pinned digest verified as a subject of the vendor's SLSA provenance (pinned builder, repository and tag)"
+  log info "$unit: sha256:$sum is attested by $sig_url"
+}
+
+# Snappy block decompression, for an attestation bundle fetched from its
+# bundle_url (GitHub stores them compressed). Reads stdin, writes stdout,
+# exits 1 on anything that is not a well-formed block.
+readonly SNAPPY_PY='
+import sys
+d = sys.stdin.buffer.read(); i = 0; n = 0; s = 0
+while True:
+    if i >= len(d) or s > 35: sys.exit(1)
+    c = d[i]; i += 1; n |= (c & 0x7f) << s; s += 7
+    if c < 0x80: break
+if n > 64 << 20: sys.exit(1)
+out = bytearray()
+while i < len(d):
+    t = d[i]; i += 1; k = t & 3
+    if k == 0:
+        l = t >> 2
+        if l >= 60:
+            w = l - 59; l = int.from_bytes(d[i:i + w], "little"); i += w
+        l += 1
+        if i + l > len(d): sys.exit(1)
+        out += d[i:i + l]; i += l
+    else:
+        if k == 1:
+            l = ((t >> 2) & 7) + 4; o = ((t >> 5) << 8) | d[i]; i += 1
+        elif k == 2:
+            l = (t >> 2) + 1; o = int.from_bytes(d[i:i + 2], "little"); i += 2
+        else:
+            l = (t >> 2) + 1; o = int.from_bytes(d[i:i + 4], "little"); i += 4
+        if o == 0 or o > len(out): sys.exit(1)
+        for _ in range(l): out.append(out[-o])
+    if len(out) > n: sys.exit(1)
+if len(out) != n: sys.exit(1)
+sys.stdout.buffer.write(out)
+'
+
+# fetch_bundle URL DEST -- an attestation bundle from its bundle_url: plain
+# JSON, or snappy-compressed JSON. 1 when it is neither.
+fetch_bundle() {
+  local url="$1" dest="$2"
+  case "$url" in https://*) ;; *) log error "bundle_url '$url' is not https"; return 1 ;; esac
+  rm -f "$dest.raw"
+  http_download "$url" "$dest.raw" || { log error "could not fetch $url"; return 1; }
+  if jq -e 'type == "object"' "$dest.raw" >/dev/null 2>&1; then
+    mv "$dest.raw" "$dest"; return 0
+  fi
+  command -v python3 >/dev/null || { log error "python3 is needed to decompress $url"; return 1; }
+  if ! python3 -I -c "$SNAPPY_PY" < "$dest.raw" > "$dest" 2>/dev/null \
+     || ! jq -e 'type == "object"' "$dest" >/dev/null 2>&1; then
+    log error "$url is not a bundle, plain or snappy-compressed"; rm -f "$dest"; return 1
+  fi
+  rm -f "$dest.raw"
+}
+
+# verify_ghattest UNIT SHA256 API IDENTITY ISSUER REPO -- one of the GitHub
+# artifact attestations listed for SHA256 at API verifies as SLSA v1
+# provenance for that digest, signed as exactly IDENTITY and ISSUER from REPO.
+verify_ghattest() {
+  local unit="$1" sum="$2" api="$3" identity="$4" issuer="$5" repo="$6" url body n i b burl rc=0 ok=0
+  url="$api/sha256:$sum?per_page=100"
+  command -v cosign >/dev/null || { log error "cosign is needed to verify $url"; return 1; }
+  body=$(http_get "$url") || rc=$?
+  if [ "$rc" -ne 0 ]; then
+    log error "$unit: no GitHub attestation listed for sha256:$sum at $url (exit $rc)"; return 1
+  fi
+  n=$(jq -r 'if (.attestations | type) == "array" then .attestations | length else "none" end' <<<"$body" 2>/dev/null) || n=""
+  case "$n" in
+    ''|*[!0-9]*) log error "$unit: $url is not an attestations list"; return 1 ;;
+    0) log error "$unit: $url lists no attestation for sha256:$sum"; return 1 ;;
+  esac
+  : > "$tmp/cosign.out"
+  i=0
+  while [ "$i" -lt "$n" ]; do
+    b="$tmp/attestation.$i.json"; rm -f "$b"
+    if jq -e --argjson i "$i" '.attestations[$i].bundle | type == "object"' <<<"$body" >/dev/null 2>&1; then
+      jq -c --argjson i "$i" '.attestations[$i].bundle' <<<"$body" > "$b"
+    else
+      burl=$(jq -r --argjson i "$i" '.attestations[$i].bundle_url // empty | strings' <<<"$body")
+      if [ -z "$burl" ] || ! fetch_bundle "$burl" "$b"; then
+        log info "$unit: attestation $i for sha256:$sum has no bundle that could be read"
+        rm -f "$b"
+      fi
+    fi
+    if [ -s "$b" ] && cosign verify-blob-attestation --bundle "$b" --type slsaprovenance1 \
+         --certificate-identity "$identity" --certificate-oidc-issuer "$issuer" \
+         --certificate-github-workflow-repository "$repo" \
+         --digest "$sum" --digestAlg sha256 < /dev/null > "$tmp/cosign.out" 2>&1; then
+      ok=1; break
+    fi
+    i=$((i + 1))
+  done
+  if [ "$ok" -ne 1 ]; then
+    log error "$unit: none of the $n attestation(s) at $url verifies sha256:$sum as $identity from $repo: $(tail -1 "$tmp/cosign.out")"
+    return 1
+  fi
+  integrity_urls+=("$api")
+  add_note "every pinned digest verified against the vendor's GitHub artifact attestation (pinned workflow identity and repository)"
+  log info "$unit: sha256:$sum is attested by $identity"
+}
+
+# verify_sigcert UNIT SHA256 BLOB_URL IDENTITY ISSUER -- the binary at
+# BLOB_URL carries a valid Sigstore signature (BLOB_URL.sig, certificate
+# BLOB_URL.cert) by exactly IDENTITY and ISSUER, and hashes to SHA256.
+verify_sigcert() {
+  local unit="$1" sum="$2" blob_url="$3" identity="$4" issuer="$5" bin="$tmp/signed.blob" got
+  command -v cosign >/dev/null || { log error "cosign is needed to verify $blob_url"; return 1; }
+  rm -f "$bin" "$bin.sig" "$bin.cert" "$bin.pem"
+  http_download "$blob_url" "$bin" || { log error "could not download $blob_url"; return 1; }
+  http_download "$blob_url.sig" "$bin.sig" || { log error "no signature at $blob_url.sig"; rm -f "$bin"; return 1; }
+  http_download "$blob_url.cert" "$bin.cert" || { log error "no certificate at $blob_url.cert"; rm -f "$bin"; return 1; }
+  # The vendor serves the PEM base64-wrapped. cosign v3 would unwrap it
+  # itself; it is unwrapped here so that what is checked does not depend on
+  # that fallback, and anything else is refused.
+  if head -1 "$bin.cert" | grep -qx -- '-----BEGIN CERTIFICATE-----'; then
+    cp "$bin.cert" "$bin.pem"
+  elif ! tr -d '\r\n' < "$bin.cert" | base64 -d > "$bin.pem" 2>/dev/null \
+       || ! head -1 "$bin.pem" | grep -qx -- '-----BEGIN CERTIFICATE-----'; then
+    log error "$blob_url.cert is not a PEM certificate, plain or base64-wrapped"; rm -f "$bin"; return 1
+  fi
+  if ! cosign verify-blob --signature "$bin.sig" --certificate "$bin.pem" \
+         --certificate-identity "$identity" --certificate-oidc-issuer "$issuer" \
+         "$bin" < /dev/null > "$tmp/cosign.out" 2>&1; then
+    log error "$blob_url.sig does not verify $blob_url as $identity ($issuer): $(tail -1 "$tmp/cosign.out")"
+    rm -f "$bin"; return 1
+  fi
+  got=$(sha256_of "$bin"); rm -f "$bin"
+  if [ "$got" != "$sum" ]; then
+    log error "$blob_url verifies as $identity, but its sha256 is $got, not the $sum the unit would pin"
+    return 1
+  fi
+  integrity_urls+=("$blob_url.sig" "$blob_url.cert")
+  add_note "each binary's Sigstore signature verified under the vendor's pinned identity, and its sha256 matched"
+  log info "$unit: $blob_url verifies as $identity, sha256 $sum"
 }
 
 # verify_sigstore UNIT URL FILE BUNDLE_URL IDENTITY ISSUER -- the vendor's
@@ -475,6 +749,7 @@ verify_sigstore() {
     return 1
   fi
   integrity_urls+=("$sig_url")
+  add_note "its Sigstore signature verified under the vendor's pinned release identity"
   log info "$unit: $url verifies as $identity"
 }
 
@@ -514,6 +789,7 @@ verify_gpg() {
     return 1
   fi
   integrity_urls+=("$sig_url")
+  add_note "its GPG signature verified under the vendor's pinned key"
   log info "$unit: $url verifies under $fpr"
 }
 
@@ -523,7 +799,9 @@ verify_gpg() {
 # bytes verified are the bytes every checksum is then read from.
 cache_file() {
   local url="$1" key
-  key=$(printf '%s' "$url" | cksum | cut -d' ' -f1)
+  # sha256, not a short checksum: two URLs must never share a cached file.
+  printf '%s' "$url" > "$tmp/cache.key"
+  key=$(sha256_of "$tmp/cache.key")
   if [ ! -f "$tmp/cache.$key" ]; then
     local rc=0
     http_get "$url" > "$tmp/cache.$key.part" || rc=$?
@@ -736,7 +1014,7 @@ set_pin() {
 }
 
 # --- one unit ----------------------------------------------------------------
-edited_files=(); integrity_urls=(); pin_values=()
+edited_files=(); integrity_urls=(); pin_values=(); signed_notes=()
 results="$tmp/results.jsonl"
 : > "$results"
 errors=0
@@ -779,7 +1057,7 @@ fail_unit() {
 bump_unit() {
   local unit="$1" new="$2" pins integrity date_spec
   local old="" pin file key cur all_new=1 note=""
-  edited_files=(); integrity_urls=(); pin_values=(); version_url=""; released=""
+  edited_files=(); integrity_urls=(); pin_values=(); signed_notes=(); version_url=""; released=""
 
   pins=$(unit_field "$unit" 3) || { old=""; fail_unit "$unit" "unknown unit"; return 0; }
   # shellcheck disable=SC2086  # one spec per word
@@ -861,6 +1139,14 @@ bump_unit() {
         if ! sum=$(sum_from "$surl" "$sname"); then
           fail_unit "$unit" "no vendor checksum for $sname at $surl"; return 0
         fi
+        # And where the vendor signs the artifacts instead, this digest
+        # itself: it is staged, never written, until that verifies.
+        rc=0; verify_digest "$unit" "$surl" "$sum" || rc=$?
+        if [ "$rc" -ne 0 ] && [ "$rc" -ne 3 ]; then
+          # A bare-hash file names nothing; its URL says what it is for.
+          [ "$sname" != - ] || sname=$(basename "$(dirname "$surl")")/$(basename "$surl" .sha256)
+          fail_unit "$unit" "the vendor attestation for $sname (sha256:$sum, from $surl) does not verify"; return 0
+        fi
         integrity_urls+=("$surl")
         for row in $(expand_pins "$(trim "$row_pin")"); do
           sfile=${row%%:*}; skey=${row#*:}
@@ -869,9 +1155,11 @@ bump_unit() {
       done <<< "$SUMS"
       [ "${#integrity_urls[@]}" -gt 0 ] || { fail_unit "$unit" "integrity is 'sums' but no SUMS rows"; return 0; }
       ;;
-    tofu)
-      # Trust on first use: download each artifact, check its vendor
-      # signature where there is one, and record the sha256 of what came.
+    tofu|attested)
+      # Download each artifact, check its vendor signature where there is
+      # one, and hash what came. tofu records that hash on first use; an
+      # attested unit records it only once the vendor's attestation for
+      # exactly that digest verifies.
       local dl="$tmp/artifact"
       while IFS='|' read -r row_unit row_pin row_url; do
         [ "$(trim "$row_unit")" = "$unit" ] || continue
@@ -886,13 +1174,20 @@ bump_unit() {
         fi
         sum=$(sha256_of "$dl"); rm -f "$dl"
         is_sha256 "$sum" || { fail_unit "$unit" "could not hash $surl"; return 0; }
+        rc=0; verify_digest "$unit" "$surl" "$sum" || rc=$?
+        if [ "$rc" -eq 3 ] && [ "$integrity" = attested ]; then
+          fail_unit "$unit" "integrity is 'attested' but no attestation row covers $surl"; return 0
+        fi
+        if [ "$rc" -ne 0 ] && [ "$rc" -ne 3 ]; then
+          fail_unit "$unit" "the vendor attestation for $surl (sha256:$sum) does not verify"; return 0
+        fi
         integrity_urls+=("$surl")
         for row in $(expand_pins "$(trim "$row_pin")"); do
           sfile=${row%%:*}; skey=${row#*:}
           edits+=("$sfile:$skey=$sum")
         done
-      done <<< "$TOFU"
-      [ "${#integrity_urls[@]}" -gt 0 ] || { fail_unit "$unit" "integrity is 'tofu' but no TOFU rows"; return 0; }
+      done <<< "$DOWNLOADS"
+      [ "${#integrity_urls[@]}" -gt 0 ] || { fail_unit "$unit" "integrity is '$integrity' but no DOWNLOADS rows"; return 0; }
       ;;
     npm:*)
       local pkg=${integrity#npm:} doc_url integ
@@ -922,11 +1217,11 @@ bump_unit() {
   esac
 
   # --- classify
-  local class=auto reason signed=""
-  case " ${integrity_urls[*]} " in
-    *.sigstore.json\ *) signed="its Sigstore signature verified under the vendor's pinned release identity" ;;
-    *.sig\ *)           signed="its GPG signature verified under the vendor's pinned key" ;;
-  esac
+  local class=auto reason signed="" n_note
+  for n_note in "${signed_notes[@]:-}"; do
+    [ -n "$n_note" ] || continue
+    if [ -z "$signed" ]; then signed=$n_note; else signed="$signed; $n_note"; fi
+  done
   if [ "$integrity" = tofu ]; then
     class=review
     reason="the vendor publishes no checksum: sha256 recorded from our own download (trust on first use"
@@ -935,11 +1230,16 @@ bump_unit() {
   elif [ "${old%%.*}" != "${new%%.*}" ]; then
     class=review
     reason="major version change (${old%%.*} -> ${new%%.*}); released $released; merges only once its PR has carried this version for ${cooldown_days} days (first-seen cooldown)"
-    [ -z "$signed" ] || reason="vendor checksum file, $signed; $reason"
+    if [ "$integrity" = attested ]; then
+      reason="sha256 hashed from our download, pinned only after $signed; $reason"
+    elif [ -n "$signed" ]; then
+      reason="vendor checksum file, $signed; $reason"
+    fi
   else
     case "$integrity" in
       sums)   reason="checksums from the vendor's published checksum file"
               [ -z "$signed" ] || reason="$reason, $signed" ;;
+      attested) reason="sha256 of the vendor's release artifact, hashed from our download and pinned only after $signed" ;;
       npm:*)  reason="npm registry sha512 integrity, verified by npm on install" ;;
       pypi:*) reason="sha256 of every linux wheel from PyPI's JSON API, installed with pip --require-hashes" ;;
       *)      reason="registry-published sha256" ;;
@@ -986,10 +1286,13 @@ bump_unit() {
 }
 
 # --- --check: the tables against the tree ------------------------------------
-# Every pin a unit names, every checksum row and every tofu row must be
-# exactly one line in --root, holding a version or a sha256; every tofu unit
-# must have its rows and every row a tofu unit; every signature row must match
-# a tofu row and name a key file that exists. Read-only and offline, so
+# Every pin a unit names, every checksum row and every download row must be
+# exactly one line in --root, holding a version or a sha256; every tofu or
+# attested unit must have its download rows and every download row such a
+# unit; every signature row must match a download or checksum row of its
+# unit, name a key file that exists or an exact identity, a known issuer and
+# (for the digest methods) the repository it binds; and every download an
+# attested unit reads must have a digest row. Read-only and offline, so
 # scripts/test-bump-pins.sh runs it over the real tree on every lint: a
 # renamed ARG fails there, not in a bump that silently skipped a checksum.
 check_tables() {
@@ -1016,10 +1319,11 @@ check_tables() {
             "$root/${p%%:*}" || complain "$u: $p has no --hash=sha256 lines" ;;
       esac
     done
-    if [ "$integ" = tofu ]; then
-      printf '%s\n' "$TOFU" | awk -F'|' -v u="$u" '{ x = $1; gsub(/[[:space:]]/, "", x); if (x == u) f = 1 } END { exit !f }' \
-        || complain "$u: integrity is tofu but there is no TOFU row"
-    fi
+    case "$integ" in
+      tofu|attested)
+        printf '%s\n' "$DOWNLOADS" | awk -F'|' -v u="$u" '{ x = $1; gsub(/[[:space:]]/, "", x); if (x == u) f = 1 } END { exit !f }' \
+          || complain "$u: integrity is $integ but there is no DOWNLOADS row" ;;
+    esac
   done <<< "$UNITS"
   while IFS='|' read -r u spec _; do
     u=$(trim "$u"); [ -n "$u" ] || continue
@@ -1030,43 +1334,99 @@ check_tables() {
   done <<< "$SUMS"
   while IFS='|' read -r u spec _; do
     u=$(trim "$u"); [ -n "$u" ] || continue
-    [ "$(unit_field "$u" 4 2>/dev/null || true)" = tofu ] || complain "TOFU row for $u, which is not a tofu unit"
+    case "$(unit_field "$u" 4 2>/dev/null || true)" in
+      tofu|attested) ;;
+      *) complain "DOWNLOADS row for $u, which is not a tofu or attested unit" ;;
+    esac
     for p in $(expand_pins "$(trim "$spec")"); do
-      one_line "$p" "$u: tofu checksum" || continue
-      is_sha256 "$v" || complain "$u: tofu checksum $p is '$v', not a sha256"
+      one_line "$p" "$u: downloaded checksum" || continue
+      is_sha256 "$v" || complain "$u: downloaded checksum $p is '$v', not a sha256"
     done
-  done <<< "$TOFU"
-  # A URL a unit reads: column 3 of its TOFU rows, column 3 of its SUMS rows.
+  done <<< "$DOWNLOADS"
+  # A URL a unit reads: column 3 of its DOWNLOADS rows, column 3 of its SUMS rows.
   reads_url() { # UNIT URL
-    printf '%s\n%s\n' "$TOFU" "$SUMS" | awk -F'|' -v u="$1" -v r="$2" '
+    printf '%s\n%s\n' "$DOWNLOADS" "$SUMS" | awk -F'|' -v u="$1" -v r="$2" '
       { x = $1; y = $3; gsub(/[[:space:]]/, "", x); gsub(/[[:space:]]/, "", y); if (x == u && y == r) f = 1 } END { exit !f }'
   }
-  local sm sa sb signed_units=""
-  while IFS='|' read -r u urow _ sm sa sb; do
+  # An exact identity: a workflow URL at a ref, or a service account. cosign
+  # compares it exactly, so a pattern character could only ever fail; it
+  # still means the row was written as a regexp.
+  exact_identity() { # UNIT IDENTITY
+    printf '%s' "$2" | grep -qE '^https://github\.com/[^/]+/[^/]+/\.github/workflows/[^@]+@refs/(tags|heads)/[^[:space:]]+$|^[a-z0-9-]+@[a-z0-9-]+\.iam\.gserviceaccount\.com$' \
+      || complain "SIGS row for $1: '$2' is not an exact workflow or service-account identity"
+    if printf '%s' "$2" | grep -qE '[][*?()|\\^$+]'; then
+      complain "SIGS row for $1: '$2' contains a pattern character; identities are exact"
+    fi
+  }
+  known_issuer() { # UNIT ISSUER [ONLY]
+    case "$2" in
+      https://token.actions.githubusercontent.com|https://accounts.google.com)
+        [ -z "${3:-}" ] || [ "$2" = "$3" ] || complain "SIGS row for $1: '$2' is not the issuer this method takes ($3)" ;;
+      *) complain "SIGS row for $1: '$2' is not a known OIDC issuer" ;;
+    esac
+  }
+  local sm ss sa sb sc signed_units="" digest_rows=""
+  while IFS='|' read -r u urow ss sm sa sb sc; do
     u=$(trim "$u"); [ -n "$u" ] || continue
-    urow=$(trim "$urow"); sm=$(trim "$sm"); sa=$(trim "$sa"); sb=$(trim "$sb")
-    reads_url "$u" "$urow" || complain "SIGS row for $u names $urow, which is no TOFU or SUMS row of it"
+    urow=$(trim "$urow"); ss=$(trim "$ss"); sm=$(trim "$sm"); sa=$(trim "$sa"); sb=$(trim "$sb"); sc=$(trim "$sc")
+    reads_url "$u" "$urow" || complain "SIGS row for $u names $urow, which is no DOWNLOADS or SUMS row of it"
     case " $signed_units " in *" $u "*) ;; *) signed_units="$signed_units $u" ;; esac
+    case "$sm" in
+      gpg|sigstore|sigcert)
+        [ -z "$sc" ] || complain "SIGS row for $u: a $sm row takes no binding column ('$sc')" ;;
+    esac
+    case "$sm" in
+      slsa|ghattest|sigcert)
+        digest_rows="$digest_rows $u|$urow"
+        case "$(unit_field "$u" 4 2>/dev/null || true)" in
+          sums|attested) ;;
+          *) complain "SIGS row for $u: a $sm row needs a sums or attested unit" ;;
+        esac ;;
+    esac
     case "$sm" in
       gpg)
         [ -f "$script_dir/keys/$sa" ] || complain "SIGS row for $u: scripts/keys/$sa does not exist"
         printf '%s' "$sb" | grep -qxE '[0-9A-F]{40}' || complain "SIGS row for $u: '$sb' is not a full key fingerprint" ;;
-      sigstore)
-        # An exact identity: a workflow URL at a ref, or a service account.
-        printf '%s' "$sa" | grep -qE '^https://github\.com/[^/]+/[^/]+/\.github/workflows/[^@]+@refs/(tags|heads)/[^[:space:]]+$|^[a-z0-9-]+@[a-z0-9-]+\.iam\.gserviceaccount\.com$' \
-          || complain "SIGS row for $u: '$sa' is not an exact workflow or service-account identity"
-        # cosign compares the identity exactly, so a pattern character could
-        # only ever fail; it still means the row was written as a regexp.
-        if printf '%s' "$sa" | grep -qE '[][*?()|\\^$+]'; then
-          complain "SIGS row for $u: '$sa' contains a pattern character; identities are exact"
-        fi
-        case "$sb" in
-          https://token.actions.githubusercontent.com|https://accounts.google.com) ;;
-          *) complain "SIGS row for $u: '$sb' is not a known OIDC issuer" ;;
-        esac ;;
+      sigstore|sigcert)
+        exact_identity "$u" "$sa"
+        known_issuer "$u" "$sb"
+        printf '%s' "$ss" | grep -qE '^https://[^[:space:]]+$' || complain "SIGS row for $u: '$ss' is not an https URL" ;;
+      slsa)
+        # The builder's identity is shared by every repository that uses it:
+        # the source repository and ref are what make it this vendor's.
+        exact_identity "$u" "$sa"
+        known_issuer "$u" "$sb" https://token.actions.githubusercontent.com
+        printf '%s' "$ss" | grep -qE '^https://[^[:space:]]+$' || complain "SIGS row for $u: '$ss' is not an https URL"
+        printf '%s' "$sc" | grep -qxE '[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+@refs/(tags|heads)/[A-Za-z0-9_.{}/-]+' \
+          || complain "SIGS row for $u: '$sc' is not an exact owner/repo@refs/... binding" ;;
+      ghattest)
+        exact_identity "$u" "$sa"
+        known_issuer "$u" "$sb" https://token.actions.githubusercontent.com
+        if ! printf '%s' "$sc" | grep -qxE '[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+'; then
+          complain "SIGS row for $u: '$sc' is not an owner/repo binding"
+        else
+          [ "$ss" = "https://api.github.com/repos/$sc/attestations" ] \
+            || complain "SIGS row for $u: '$ss' is not the attestations API of $sc"
+          case "$sa" in
+            "https://github.com/$sc/.github/workflows/"*) ;;
+            *) complain "SIGS row for $u: '$sa' is not a workflow of $sc" ;;
+          esac
+        fi ;;
       *) complain "SIGS row for $u: unknown method '$sm'" ;;
     esac
   done <<< "$SIGS"
+  # An attested unit pins what it hashed only on the strength of a digest
+  # row: without one for each download it would be trust on first use
+  # classified as verified.
+  while IFS='|' read -r u _ urow; do
+    u=$(trim "$u"); [ -n "$u" ] || continue
+    [ "$(unit_field "$u" 4 2>/dev/null || true)" = attested ] || continue
+    urow=$(trim "$urow")
+    case " $digest_rows " in
+      *" $u|$urow "*) ;;
+      *) complain "$u is attested, but $urow has no slsa, ghattest or sigcert row" ;;
+    esac
+  done <<< "$DOWNLOADS"
   # A unit that is signed at all is signed everywhere: every URL it reads has
   # its row, so a checksums file added beside a signed one cannot slip in
   # unverified.
@@ -1077,7 +1437,7 @@ check_tables() {
       printf '%s\n' "$SIGS" | awk -F'|' -v u="$u" -v r="$urow" '
         { x = $1; y = $2; gsub(/[[:space:]]/, "", x); gsub(/[[:space:]]/, "", y); if (x == u && y == r) f = 1 } END { exit !f }' \
         || complain "$u is signed, but $urow has no SIGS row"
-    done <<< "$(printf '%s\n%s\n' "$TOFU" "$SUMS")"
+    done <<< "$(printf '%s\n%s\n' "$DOWNLOADS" "$SUMS")"
   done
   [ "$bad" -eq 0 ] || { log error "$bad problem(s) in the tables"; return 1; }
   log info "tables consistent with $root"

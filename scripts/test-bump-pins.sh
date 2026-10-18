@@ -40,32 +40,83 @@ gh_release() { # REPO TAG DATE
 G=https://github.com
 
 # A fake cosign, first on PATH for every case (pin-bump-prs.sh's included), so
-# no test depends on a real one, or on Sigstore being reachable. It does what
-# the real `cosign verify-blob --bundle` decides on: the bundle must be over
-# this file's exact bytes and name exactly the identity and issuer asked for.
-# Its "bundles" are written by sign_sigstore below. Every call is logged.
+# no test depends on a real one, or on Sigstore being reachable. It decides
+# what the real one decides on:
+#   verify-blob --bundle             the bundle is over this file's exact
+#                                    bytes, by exactly the identity and issuer
+#   verify-blob --signature --certificate
+#                                    the certificate is PEM (cosign is handed
+#                                    the decoded file), names exactly the
+#                                    identity and issuer, and the signature is
+#                                    over this file's bytes
+#   verify-blob-attestation          the bundle's predicate is the --type, the
+#                                    --digest is one of its subjects, and the
+#                                    identity, issuer and every GitHub
+#                                    workflow binding asked for match
+# Its "bundles", signatures and certificates are written by the helpers
+# below. Any flag it does not know (--insecure-ignore-tlog, say) is refused.
+# Every call is logged.
 mkdir -p "$work/cosign-bin"
 cat > "$work/cosign-bin/cosign" <<'EOF'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >> "$FAKE_COSIGN_LOG"
-[ "$1" = verify-blob ] || { echo "cosign (fake): only verify-blob" >&2; exit 2; }
-shift
-bundle="" id="" iss="" file=""
+cmd="${1:-}"; shift
+case "$cmd" in
+  verify-blob|verify-blob-attestation) ;;
+  *) echo "cosign (fake): only verify-blob and verify-blob-attestation" >&2; exit 2 ;;
+esac
+bundle="" id="" iss="" file="" sig="" cert="" type="" digest="" alg="" repo="" ref="" trigger=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --bundle) bundle="$2"; shift 2 ;;
     --certificate-identity) id="$2"; shift 2 ;;
     --certificate-oidc-issuer) iss="$2"; shift 2 ;;
+    --signature) sig="$2"; shift 2 ;;
+    --certificate) cert="$2"; shift 2 ;;
+    --type) type="$2"; shift 2 ;;
+    --digest) digest="$2"; shift 2 ;;
+    --digestAlg) alg="$2"; shift 2 ;;
+    --certificate-github-workflow-repository) repo="$2"; shift 2 ;;
+    --certificate-github-workflow-ref) ref="$2"; shift 2 ;;
+    --certificate-github-workflow-trigger) trigger="$2"; shift 2 ;;
     -*) echo "cosign (fake): unexpected flag $1" >&2; exit 2 ;;
     *) file="$1"; shift ;;
   esac
 done
-if [ -z "$bundle" ] || [ -z "$id" ] || [ -z "$iss" ] || [ ! -f "$file" ]; then
-  echo "Error: incomplete verify-blob call" >&2; exit 1
+if [ -z "$id" ] || [ -z "$iss" ]; then echo "Error: no identity to verify against" >&2; exit 1; fi
+if [ "$cmd" = verify-blob-attestation ]; then
+  if [ -z "$bundle" ] || [ -z "$type" ] || [ -z "$digest" ] || [ "$alg" != sha256 ] || [ -n "$file" ]; then
+    echo "Error: incomplete verify-blob-attestation call" >&2; exit 1
+  fi
+  jq -e '.fake == "attestation"' "$bundle" >/dev/null 2>&1 || { echo "Error: not a bundle" >&2; exit 1; }
+  jq -e --arg t "$type" '.type == $t' "$bundle" >/dev/null || { echo "Error: invalid predicate type" >&2; exit 1; }
+  jq -e --arg d "$digest" '.subjects | index($d)' "$bundle" >/dev/null \
+    || { echo "Error: provided artifact digest does not match any digest in statement" >&2; exit 1; }
+  jq -e --arg i "$id" --arg o "$iss" '.identity == $i and .issuer == $o' "$bundle" >/dev/null \
+    || { echo "Error: no matching CertificateIdentity found" >&2; exit 1; }
+  jq -e --arg r "$repo" '$r == "" or .repository == $r' "$bundle" >/dev/null \
+    || { echo "Error: expected GithubWorkflowRepository to be \"$repo\"" >&2; exit 1; }
+  jq -e --arg f "$ref" '$f == "" or .ref == $f' "$bundle" >/dev/null \
+    || { echo "Error: expected GithubWorkflowRef to be \"$ref\"" >&2; exit 1; }
+  jq -e --arg g "$trigger" '$g == "" or .trigger == $g' "$bundle" >/dev/null \
+    || { echo "Error: expected GithubWorkflowTrigger to be \"$trigger\"" >&2; exit 1; }
+  echo "Verified OK" >&2; exit 0
 fi
-jq -e --arg h "$(sha256sum "$file" | cut -d' ' -f1)" '.fake == "sigstore" and .sha256 == $h' "$bundle" >/dev/null 2>&1 \
-  || { echo "Error: failed to verify signature" >&2; exit 1; }
-jq -e --arg i "$id" --arg o "$iss" '.identity == $i and .issuer == $o' "$bundle" >/dev/null \
+[ -f "$file" ] || { echo "Error: no blob" >&2; exit 1; }
+h=$(sha256sum "$file" | cut -d' ' -f1)
+if [ -n "$bundle" ]; then
+  if [ -n "$sig" ] || [ -n "$cert" ]; then echo "Error: bundle and signature both given" >&2; exit 1; fi
+  jq -e --arg h "$h" '.fake == "sigstore" and .sha256 == $h' "$bundle" >/dev/null 2>&1 \
+    || { echo "Error: failed to verify signature" >&2; exit 1; }
+  claims=$(cat "$bundle")
+else
+  if [ -z "$sig" ] || [ -z "$cert" ]; then echo "Error: incomplete verify-blob call" >&2; exit 1; fi
+  head -1 "$cert" | grep -qx -- '-----BEGIN CERTIFICATE-----' \
+    || { echo "Error: loading cert: error during PEM decoding" >&2; exit 1; }
+  claims=$(sed '1d;$d' "$cert" | base64 -d 2>/dev/null)
+  [ "$(cat "$sig")" = "$h" ] || { echo "Error: failed to verify signature" >&2; exit 1; }
+fi
+jq -e --arg i "$id" --arg o "$iss" '.identity == $i and .issuer == $o' <<<"$claims" >/dev/null 2>&1 \
   || { echo "Error: no matching CertificateIdentity found" >&2; exit 1; }
 echo "Verified OK" >&2
 EOF
@@ -79,8 +130,42 @@ sign_sigstore() {
     '{fake: "sigstore", sha256: $h, identity: $i, issuer: $o}' > "$fx/$2.sigstore.json"
   serve "$1.sigstore.json" "$2.sigstore.json"
 }
+# fake_attestation OUT TYPE IDENTITY REPO REF ISSUER DIGEST... -- a fake
+# attestation bundle in fixture OUT: TYPE provenance for those subjects,
+# signed as IDENTITY from REPO at REF (pushed), by ISSUER.
+fake_attestation() {
+  local out="$1" type="$2" id="$3" repo="$4" ref="$5" iss="$6"; shift 6
+  printf '%s\n' "$@" | jq -R . | jq -sc --arg t "$type" --arg i "$id" --arg r "$repo" --arg f "$ref" --arg o "$iss" \
+    '{fake: "attestation", type: $t, identity: $i, issuer: $o, repository: $r, ref: $f, trigger: "push", subjects: .}' > "$fx/$out"
+}
+# gh_attest REPO BUNDLE DIGEST... -- the attestations API of REPO lists
+# fixture BUNDLE, inline, for each DIGEST.
+gh_attest() {
+  local repo="$1" b="$2" d f; shift 2
+  for d in "$@"; do
+    f="att-$(printf '%s' "$repo $d $b" | cksum | cut -d' ' -f1).json"
+    jq -c '{attestations: [{repository_id: 1, bundle: ., bundle_url: null}]}' "$fx/$b" > "$fx/$f"
+    serve "https://api.github.com/repos/$repo/attestations/sha256:$d?per_page=100" "$f"
+  done
+}
+# k8s_signed VERSION ARCH CONTENT IDENTITY ISSUER [plain] -- serve a kubectl
+# binary holding CONTENT, signed as IDENTITY by ISSUER: its .sig and its
+# .cert, base64-wrapped PEM as dl.k8s.io serves it (or plain PEM).
+k8s_signed() {
+  local base="https://dl.k8s.io/release/v$1/bin/linux/$2/kubectl" f="k8s-$1-$2" pem
+  printf '%s' "$3" > "$fx/$f"
+  sha256sum "$fx/$f" | cut -d' ' -f1 > "$fx/$f.sig"
+  pem=$(printf '%s\n%s\n%s\n' '-----BEGIN CERTIFICATE-----' \
+    "$(jq -nc --arg i "$4" --arg o "$5" '{identity: $i, issuer: $o}' | base64 | tr -d '\n')" '-----END CERTIFICATE-----')
+  if [ "${6:-}" = plain ]; then printf '%s\n' "$pem" > "$fx/$f.cert"
+  else printf '%s\n' "$pem" | base64 | tr -d '\n' > "$fx/$f.cert"; fi
+  serve "$base" "$f"; serve "$base.sig" "$f.sig"; serve "$base.cert" "$f.cert"
+}
 TRIVY_ID="$G/aquasecurity/trivy/.github/workflows/reusable-release.yaml@refs/tags/v"   # + the version
 SYFT_ID="$G/anchore/syft/.github/workflows/release.yaml@refs/heads/main"
+HL_ID="$G/hadolint/hadolint/.github/workflows/release.yml@refs/heads/master"
+K8S_ID=krel-staging@k8s-releng-prod.iam.gserviceaccount.com
+GHA=https://token.actions.githubusercontent.com
 
 OLD='2026-09-01T12:00:00Z'      # 27 days before NOW: past the cooldown
 FRESH='2026-09-26T09:30:00.123Z' # 2 days before NOW: inside it
@@ -102,6 +187,9 @@ printf '%s' "$(fake kubectl-amd64)" > "$fx/kubectl-amd64"   # no trailing newlin
 printf '%s\n' "$(fake kubectl-arm64)" > "$fx/kubectl-arm64"
 serve "https://dl.k8s.io/release/v1.38.0/bin/linux/amd64/kubectl.sha256" kubectl-amd64
 serve "https://dl.k8s.io/release/v1.38.0/bin/linux/arm64/kubectl.sha256" kubectl-arm64
+# Each binary signed by Kubernetes' release identity, and hashing to its .sha256.
+k8s_signed 1.38.0 amd64 kubectl-amd64 "$K8S_ID" https://accounts.google.com
+k8s_signed 1.38.0 arm64 kubectl-arm64 "$K8S_ID" https://accounts.google.com
 gh_release kubernetes/kubernetes v1.38.0 "$OLD"
 
 # syft 2.0.0: checksums published, but a major version -> review.
@@ -150,6 +238,11 @@ gh_release sigstore/cosign v3.2.0 "$FRESH"
   printf '%s *hadolint-macos-x86_64\r\n' "$(fake hl-macos-x86_64)"
 } > "$fx/hadolint.txt"
 serve "$G/hadolint/hadolint/releases/download/v2.15.2/checksums.sha256" hadolint.txt
+# GitHub artifact attestations, from hadolint's release workflow on master.
+fake_attestation hadolint-2152.att slsaprovenance1 "$HL_ID" hadolint/hadolint refs/heads/master "$GHA" \
+  "$(fake hl-linux-arm64)" "$(fake hl-linux-x86_64)" "$(fake hl-macos-arm64)" "$(fake hl-macos-x86_64)"
+gh_attest hadolint/hadolint hadolint-2152.att \
+  "$(fake hl-linux-arm64)" "$(fake hl-linux-x86_64)" "$(fake hl-macos-arm64)" "$(fake hl-macos-x86_64)"
 gh_release hadolint/hadolint v2.15.2 "$OLD"
 
 # npm 12.2.0: registry integrity, both node images.
@@ -169,11 +262,6 @@ cat > "$fx/undici.json" <<'EOF'
  "time":{"6.29.0":"2026-09-01T00:00:00.000Z","6.29.1":"2026-09-10T08:00:00.000Z","8.12.1":"2026-09-12T00:00:00.000Z"}}
 EOF
 serve "https://registry.npmjs.org/undici" undici.json
-
-# composer 2.10.4: getcomposer.org's sha256sum file, both PHP images.
-printf '%s  composer.phar\n' "$(fake composer)" > "$fx/composer.txt"
-serve "https://getcomposer.org/download/2.10.4/composer.phar.sha256sum" composer.txt
-gh_release composer/composer 2.10.4 "$OLD"
 
 # osv-scanner 2.6.1: the file exists but lacks the one asset we need.
 printf '%s  osv-scanner_darwin_arm64\n' "$(fake osv-darwin)" > "$fx/osv.txt"
@@ -295,14 +383,13 @@ gitleaks-workflow 8.31.0
 cosign 3.2.0
 hadolint 2.15.2
 npm 12.2.0
-composer 2.10.4
 osv-scanner 2.6.1
 json 2.20.0
 EOF
 rc=0
 "$bump" --root "$t" --drift "$work/drift1.json" --format json --quiet > "$work/r1.json" 2> "$work/r1.err" || rc=$?
 check "exit 1, because grype and osv-scanner failed" [ "$rc" -eq 1 ]
-check "one result per unit, gitleaks rows merged" [ "$(jq length "$work/r1.json")" -eq 13 ]
+check "one result per unit, gitleaks rows merged" [ "$(jq length "$work/r1.json")" -eq 12 ]
 
 echo " normal bump (trivy)"
 expect_field "$work/r1.json" trivy status bumped
@@ -325,12 +412,10 @@ for f in ci-tools/Dockerfile.ci ci-cloud/Dockerfile.ci; do
   expect_pin "$t" "$f" KUBECTL_SHA256_ARM64 "$(fake kubectl-arm64)"
 done
 check "lint.sh kubectl parity holds" parity "$t" ci-tools/Dockerfile.ci ci-cloud/Dockerfile.ci KUBECTL_VERSION KUBECTL_SHA256_AMD64 KUBECTL_SHA256_ARM64
-for f in $PHP_FILES; do
-  expect_pin "$t" "$f" COMPOSER_VERSION 2.10.4
-  expect_pin "$t" "$f" COMPOSER_SHA256 "$(fake composer)"
-done
-check "every PHP image carries Composer, so the parity above is not vacuous" [ "$(printf '%s\n' "$PHP_FILES" | wc -l)" -ge 1 ]
-expect_field "$work/r1.json" composer class auto
+check "  each kubectl binary verified once, though two images pin it" \
+  [ "$(grep -c '^verify-blob --signature .* --certificate-identity krel-staging@k8s-releng-prod.iam.gserviceaccount.com ' "$FAKE_COSIGN_LOG")" -eq 2 ]
+check "  and the reason says so" \
+  bash -c "jq -r '.[] | select(.unit == \"kubectl\") | .reason' '$work/r1.json' | grep -q 'Sigstore signature verified under the vendor.s pinned identity, and its sha256 matched'"
 
 echo " paired bump (gitleaks in ci-security and security.yml)"
 expect_pin "$t" ci-security/Dockerfile.ci GITLEAKS_VERSION 8.31.0
@@ -364,6 +449,8 @@ expect_pin "$t" scripts/lint.sh HADOLINT_SHA256_LINUX_X86_64 "$(fake hl-linux-x8
 expect_pin "$t" scripts/lint.sh HADOLINT_SHA256_MACOS_ARM64 "$(fake hl-macos-arm64)"
 check "lint.sh is still executable" [ -x "$t/scripts/lint.sh" ]
 check "lint.sh still parses" bash -n "$t/scripts/lint.sh"
+check "  each of hadolint's four digests checked against its GitHub attestation, as release.yml on master from hadolint/hadolint" \
+  [ "$(grep -c -- "^verify-blob-attestation --bundle .* --type slsaprovenance1 --certificate-identity $HL_ID --certificate-oidc-issuer $GHA --certificate-github-workflow-repository hadolint/hadolint --digest [0-9a-f]* --digestAlg sha256$" "$FAKE_COSIGN_LOG")" -eq 4 ]
 
 echo " cooldown (cosign released 2 days ago) -> deferred, untouched"
 expect_field "$work/r1.json" cosign status deferred
@@ -383,7 +470,7 @@ check "a checksum file missing the asset leaves build-image.yml byte-identical" 
 echo " nothing outside the expected files changed"
 # shellcheck disable=SC2086  # one path per word
 expected=$(printf '%s\n' .github/workflows/security.yml ci-cloud/Dockerfile.ci ci-db/Dockerfile.ci \
-  $NODE_FILES $PHP_FILES $JSON_FILES ci-security/Dockerfile.ci ci-tools/Dockerfile.ci scripts/lint.sh | sort)
+  $NODE_FILES $JSON_FILES ci-security/Dockerfile.ci ci-tools/Dockerfile.ci scripts/lint.sh | sort)
 check "changed files are exactly the bumped units' files" [ "$(changed_files "$t" "$snap")" = "$expected" ]
 check "every changed line is a pin line" \
   bash -c "cd '$work' && diff -r one.snap one | grep -E '^[<>]' | grep -vE '^[<>] (ARG )?[A-Z0-9_]+=|^[<>] +[A-Z0-9_]+: ' | { ! grep -q .; }"
@@ -400,7 +487,6 @@ migrate 4.20.2
 gitleaks 8.31.0
 hadolint 2.15.2
 npm 12.2.0
-composer 2.10.4
 json 2.20.0
 EOF
 # Without an image that pins json, its unit has nothing to be current at.
@@ -438,7 +524,7 @@ echo "case 4: --plan lists units without editing"
 t=$(new_tree four); cp -a "$t" "$work/four.snap"
 rc=0; "$bump" --root "$t" --plan --drift "$work/drift1.json" > "$work/plan.jsonl" 2>/dev/null || rc=$?
 check "exit 0" [ "$rc" -eq 0 ]
-check "13 units, gitleaks once" [ "$(jq -s length "$work/plan.jsonl")" -eq 13 ]
+check "12 units, gitleaks once" [ "$(jq -s length "$work/plan.jsonl")" -eq 12 ]
 check "no file touched" [ -z "$(changed_files "$t" "$work/four.snap")" ]
 printf '{"drift":1,"failed":0,"tools":[{"tool":"brand-new-tool","pinned":"1","latest":"2","file":"x","key":"x","state":"behind"}]}' > "$work/drift4.json"
 rc=0; "$bump" --root "$t" --plan --drift "$work/drift4.json" > "$work/plan4.jsonl" 2>/dev/null || rc=$?
@@ -682,6 +768,62 @@ if command -v gpg >/dev/null && command -v gpgv >/dev/null; then
   expect_pin "$t" ci-tools/Dockerfile.ci TERRAFORM_SHA256_ARM64 "$(fake tf-1.16.7-arm64)"
   check "  the signature is listed once, beside the SHA256SUMS" \
     [ "$(jq -r '.[0].integrity_urls | join(" ")' "$work/r5t.json")" = "$hc/1.16.7/terraform_1.16.7_SHA256SUMS $hc/1.16.7/terraform_1.16.7_SHA256SUMS.sig" ]
+
+  echo "case 5g3: Composer's phar is pinned only once its attestation and its signature verify"
+  t=$(new_tree fiveg3); cp -a "$t" "$work/fiveg3.snap"
+  gpg --batch --armor --export t@example.com > "$work/keys/composer.asc" 2>/dev/null
+  co=$G/composer/composer/releases/download
+  co_id() { printf '%s' "$G/composer/composer/.github/workflows/release.yml@refs/tags/$1"; }
+  for v in 2.10.5 2.10.6 2.10.7 2.10.8 2.10.9 2.10.10; do
+    printf 'composer phar %s\n' "$v" > "$fx/composer-$v.phar"
+    serve "$co/$v/composer.phar" "composer-$v.phar"
+    gpg --batch --quiet --yes --local-user t@example.com --detach-sign --armor -o "$fx/composer-$v.phar.asc" "$fx/composer-$v.phar" 2>/dev/null
+    gh_release composer/composer "$v" "$OLD"
+  done
+  # 2.10.6 is signed by another key; 2.10.10 not at all.
+  gpg --batch --quiet --yes --local-user x@example.com --detach-sign --armor -o "$fx/composer-2.10.6.phar.asc" "$fx/composer-2.10.6.phar" 2>/dev/null
+  for v in 2.10.5 2.10.6 2.10.7 2.10.8 2.10.9; do serve "$co/$v/composer.phar.asc" "composer-$v.phar.asc"; done
+  serve "$co/2.10.10/composer.phar.asc" @404
+  co_sha() { sha256sum "$fx/composer-$1.phar" | cut -d' ' -f1; }
+  for v in 2.10.5 2.10.6 2.10.10; do
+    fake_attestation "composer-$v.att" slsaprovenance1 "$(co_id "$v")" composer/composer "refs/tags/$v" "$GHA" "$(co_sha "$v")"
+    gh_attest composer/composer "composer-$v.att" "$(co_sha "$v")"
+  done
+  # 2.10.7: the tag spelled with a `v`, which Composer's tags do not have.
+  fake_attestation composer-2.10.7.att slsaprovenance1 "$(co_id v2.10.7)" composer/composer refs/tags/v2.10.7 "$GHA" "$(co_sha 2.10.7)"
+  gh_attest composer/composer composer-2.10.7.att "$(co_sha 2.10.7)"
+  # 2.10.8: GitHub has no attestation for the digest we downloaded.
+  serve "https://api.github.com/repos/composer/composer/attestations/sha256:$(co_sha 2.10.8)?per_page=100" @404
+  # 2.10.9: an attestation is listed for our digest, but its subject is another phar.
+  fake_attestation composer-2.10.9.att slsaprovenance1 "$(co_id 2.10.9)" composer/composer refs/tags/2.10.9 "$GHA" "$(fake other-phar)"
+  gh_attest composer/composer composer-2.10.9.att "$(co_sha 2.10.9)"
+  export BUMP_PINS_KEYS="$work/keys" BUMP_PINS_KEY_FPR="$fpr"
+  co_fail() { # VERSION WHAT LOG-MESSAGE
+    rc=0; "$bump" --root "$t" --unit composer --to "$1" --quiet --format json > "$work/r5v.json" 2> "$work/r5v.err" || rc=$?
+    check "$2: exit 1, error" [ "$rc:$(field "$work/r5v.json" composer status)" = "1:error" ]
+    check "  because: $3" grep -qF -- "$3" "$work/r5v.err"
+  }
+  co_fail 2.10.6 "a phar signed by another key" "does not verify $co/2.10.6/composer.phar under $fpr"
+  co_fail 2.10.7 "an attestation by another workflow ref" "no matching CertificateIdentity found"
+  co_fail 2.10.8 "no attestation for the digest" "no GitHub attestation listed for sha256:$(co_sha 2.10.8)"
+  co_fail 2.10.9 "a digest that is not the attestation's subject" "does not match any digest in statement"
+  co_fail 2.10.10 "no .asc signature" "no signature at $co/2.10.10/composer.phar.asc"
+  unset BUMP_PINS_KEYS BUMP_PINS_KEY_FPR
+  check "  none of them edited anything" [ -z "$(changed_files "$t" "$work/fiveg3.snap")" ]
+  : > "$FAKE_COSIGN_LOG"
+  rc=0; BUMP_PINS_KEYS="$work/keys" BUMP_PINS_KEY_FPR="$fpr" \
+    "$bump" --root "$t" --unit composer --to 2.10.5 --quiet --format json > "$work/r5v.json" 2>/dev/null || rc=$?
+  check "attested and signed: exit 0, bumped, auto" [ "$rc:$(field "$work/r5v.json" composer status):$(field "$work/r5v.json" composer class)" = "0:bumped:auto" ]
+  for f in $PHP_FILES; do
+    expect_pin "$t" "$f" COMPOSER_VERSION 2.10.5
+    expect_pin "$t" "$f" COMPOSER_SHA256 "$(co_sha 2.10.5)"
+  done
+  check "every PHP image carries Composer, so the parity above is not vacuous" [ "$(printf '%s\n' "$PHP_FILES" | wc -l)" -ge 1 ]
+  check "  the attested digest is the one pinned: cosign was asked about exactly it, as release.yml at the bare tag" \
+    grep -qF -- "--certificate-identity $(co_id 2.10.5) --certificate-oidc-issuer $GHA --certificate-github-workflow-repository composer/composer --digest $(co_sha 2.10.5) --digestAlg sha256" "$FAKE_COSIGN_LOG"
+  check "  the phar, its .asc and the attestations API are the integrity sources" \
+    [ "$(jq -r '.[0].integrity_urls | join(" ")' "$work/r5v.json")" = "https://api.github.com/repos/composer/composer/attestations $co/2.10.5/composer.phar $co/2.10.5/composer.phar.asc" ]
+  check "  the integrity kind is attested" [ "$(field "$work/r5v.json" composer integrity)" = attested ]
   unset GNUPGHOME
 else
   ok "gpg/gpgv not installed; signature cases skipped"
@@ -728,6 +870,244 @@ gh_release anchore/syft v2.0.1 "$OLD"
 rc=0; "$bump" --root "$t" --unit syft --to 2.0.1 --quiet --format json > "$work/r5u.json" 2>/dev/null || rc=$?
 check "syft signed as trivy: exit 1, error" [ "$rc:$(field "$work/r5u.json" syft status)" = "1:error" ]
 
+echo "case 5k: osv-scanner -- each pinned digest must be a subject of its SLSA provenance"
+t=$(new_tree fivek); cp -a "$t" "$work/fivek.snap"
+SLSA_ID="$G/slsa-framework/slsa-github-generator/.github/workflows/generator_generic_slsa3.yml@refs/tags/v2.1.0"
+osv_dl=$G/google/osv-scanner/releases/download
+for v in 2.7.0 2.7.1 2.7.2 2.7.3 2.7.4 2.7.5 2.7.6; do
+  printf '%s  osv-scanner_darwin_arm64\n%s  osv-scanner_linux_amd64\n%s  osv-scanner_linux_arm64\n' \
+    "$(fake "osv-$v-d")" "$(fake "osv-$v-a")" "$(fake "osv-$v-r")" > "$fx/osv-$v.txt"
+  serve "$osv_dl/v$v/osv-scanner_SHA256SUMS" "osv-$v.txt"
+  gh_release google/osv-scanner "v$v" "$OLD"
+done
+osv_bundle() { # VERSION IDENTITY REPO REF DIGEST...
+  local v="$1" id="$2" repo="$3" ref="$4"; shift 4
+  fake_attestation "osv-$v.intoto.jsonl" slsaprovenance "$id" "$repo" "$ref" "$GHA" "$@"
+  serve "$osv_dl/v$v/multiple.intoto.jsonl" "osv-$v.intoto.jsonl"
+}
+osv_bundle 2.7.1 "${SLSA_ID%v2.1.0}v2.2.0" google/osv-scanner refs/tags/v2.7.1 "$(fake osv-2.7.1-a)"
+osv_bundle 2.7.2 "$SLSA_ID" attacker/osv-scanner refs/tags/v2.7.2 "$(fake osv-2.7.2-a)"
+osv_bundle 2.7.3 "$SLSA_ID" google/osv-scanner refs/tags/v2.7.2 "$(fake osv-2.7.3-a)"
+serve "$osv_dl/v2.7.4/multiple.intoto.jsonl" @404
+osv_bundle 2.7.5 "$SLSA_ID" google/osv-scanner refs/tags/v2.7.5 "$(fake osv-2.7.5-d)" "$(fake osv-2.7.5-r)"
+fake_attestation osv-2.7.6.intoto.jsonl slsaprovenance1 "$SLSA_ID" google/osv-scanner refs/tags/v2.7.6 "$GHA" "$(fake osv-2.7.6-a)"
+serve "$osv_dl/v2.7.6/multiple.intoto.jsonl" osv-2.7.6.intoto.jsonl
+# expect_fail UNIT VERSION WHAT LOG-MESSAGE -- the bump fails the unit (exit
+# 1, an error row) and its log says why.
+expect_fail() {
+  rc=0; "$bump" --root "$t" --unit "$1" --to "$2" --quiet --format json > "$work/ef.json" 2> "$work/ef.err" || rc=$?
+  check "$3: exit 1, error" [ "$rc:$(field "$work/ef.json" "$1" status)" = "1:error" ]
+  check "  because: $4" grep -qF -- "$4" "$work/ef.err"
+}
+expect_fail osv-scanner 2.7.1 "provenance from another generator release" "no matching CertificateIdentity found"
+expect_fail osv-scanner 2.7.2 "the generator run for another repository" 'expected GithubWorkflowRepository to be "google/osv-scanner"'
+expect_fail osv-scanner 2.7.3 "the generator run for another tag" 'expected GithubWorkflowRef to be "refs/tags/v2.7.3"'
+expect_fail osv-scanner 2.7.4 "no provenance published" "no provenance at $osv_dl/v2.7.4/multiple.intoto.jsonl"
+expect_fail osv-scanner 2.7.5 "a pinned digest that is not among the subjects" "does not match any digest in statement"
+expect_fail osv-scanner 2.7.6 "SLSA v1 provenance, not the v0.2 pinned" "invalid predicate type"
+check "  and the error row blames the attestation" \
+  bash -c "jq -r '.[0].error' '$work/ef.json' | grep -q 'vendor attestation for osv-scanner_linux_amd64 .* does not verify'"
+check "  none of them edited anything" [ -z "$(changed_files "$t" "$work/fivek.snap")" ]
+osv_bundle 2.7.0 "$SLSA_ID" google/osv-scanner refs/tags/v2.7.0 "$(fake osv-2.7.0-d)" "$(fake osv-2.7.0-a)" "$(fake osv-2.7.0-r)"
+: > "$FAKE_COSIGN_LOG"
+rc=0; "$bump" --root "$t" --unit osv-scanner --to 2.7.0 --quiet --format json > "$work/r5w.json" 2>/dev/null || rc=$?
+check "the generator at v2.1.0, for google/osv-scanner at the tag: exit 0, bumped, auto" \
+  [ "$rc:$(field "$work/r5w.json" osv-scanner status):$(field "$work/r5w.json" osv-scanner class)" = "0:bumped:auto" ]
+expect_pin "$t" .github/workflows/build-image.yml OSV_SCANNER_SHA256 "$(fake osv-2.7.0-a)"
+check "  cosign bound the repository, the tag and the trigger, not just the shared generator identity" \
+  grep -qF -- "--type slsaprovenance --certificate-identity $SLSA_ID --certificate-oidc-issuer $GHA --certificate-github-workflow-repository google/osv-scanner --certificate-github-workflow-ref refs/tags/v2.7.0 --certificate-github-workflow-trigger push --digest $(fake osv-2.7.0-a) --digestAlg sha256" "$FAKE_COSIGN_LOG"
+check "  the provenance bundle is listed as an integrity source" \
+  bash -c "jq -e '.[0].integrity_urls | index(\"$osv_dl/v2.7.0/multiple.intoto.jsonl\")' '$work/r5w.json' >/dev/null"
+
+echo "case 5l: hadolint -- every pinned digest needs a GitHub attestation that verifies"
+t=$(new_tree fivel); cp -a "$t" "$work/fivel.snap"
+hl_dl=$G/hadolint/hadolint/releases/download
+hl_api=https://api.github.com/repos/hadolint/hadolint/attestations
+hl_d() { # VERSION -> its four digests, one per line
+  local a; for a in linux-arm64 linux-x86_64 macos-arm64 macos-x86_64; do fake "hl-$1-$a"; printf '\n'; done
+}
+for v in 2.16.0 2.16.1 2.16.2 2.16.3 2.16.4 2.16.5 2.16.6 2.16.7 2.16.8 2.16.9; do
+  for a in linux-arm64 linux-x86_64 macos-arm64 macos-x86_64; do printf '%s *hadolint-%s\n' "$(fake "hl-$v-$a")" "$a"; done > "$fx/hl-$v.txt"
+  serve "$hl_dl/v$v/checksums.sha256" "hl-$v.txt"
+  gh_release hadolint/hadolint "v$v" "$OLD"
+done
+# hl_bundle VERSION IDENTITY REPO [DIGEST...] -- a bundle over the version's
+# four digests (or those given), as IDENTITY from REPO.
+hl_bundle() {
+  local v="$1" id="$2" repo="$3"; shift 3
+  # shellcheck disable=SC2046  # one digest per word
+  [ $# -gt 0 ] || set -- $(hl_d "$v")
+  fake_attestation "hl-$v.att" slsaprovenance1 "$id" "$repo" refs/heads/master "$GHA" "$@"
+}
+# 2.16.1: the tag's run, not master's -- another identity.
+hl_bundle 2.16.1 "${HL_ID%refs/heads/master}refs/tags/v2.16.1" hadolint/hadolint
+# shellcheck disable=SC2046
+gh_attest hadolint/hadolint hl-2.16.1.att $(hl_d 2.16.1)
+# 2.16.2: hadolint's identity, but a certificate from another repository.
+hl_bundle 2.16.2 "$HL_ID" attacker/hadolint
+# shellcheck disable=SC2046
+gh_attest hadolint/hadolint hl-2.16.2.att $(hl_d 2.16.2)
+# 2.16.3: three digests attested, the fourth unknown to the API.
+hl_bundle 2.16.3 "$HL_ID" hadolint/hadolint
+# shellcheck disable=SC2046
+gh_attest hadolint/hadolint hl-2.16.3.att $(hl_d 2.16.3 | head -3)
+serve "$hl_api/sha256:$(hl_d 2.16.3 | tail -1)?per_page=100" @404
+# 2.16.4: the API answers, with an empty list.
+echo '{"attestations":[]}' > "$fx/att-empty.json"
+for d in $(hl_d 2.16.4); do serve "$hl_api/sha256:$d?per_page=100" att-empty.json; done
+# 2.16.5: one bundle served for all four digests, but its subjects lack one.
+# shellcheck disable=SC2046
+hl_bundle 2.16.5 "$HL_ID" hadolint/hadolint $(hl_d 2.16.5 | head -3)
+# shellcheck disable=SC2046
+gh_attest hadolint/hadolint hl-2.16.5.att $(hl_d 2.16.5)
+# 2.16.6: no inline bundle, and its bundle_url 404s; 2.16.7: neither at all.
+for v in 2.16.6 2.16.7; do
+  for d in $(hl_d "$v"); do
+    if [ "$v" = 2.16.6 ]; then u="https://blob.example/$d"; serve "$u" @404; else u=""; fi
+    jq -nc --arg u "$u" '{attestations: [{repository_id: 1, bundle: null, bundle_url: (if $u == "" then null else $u end)}]}' > "$fx/att-$v-$d.json"
+    serve "$hl_api/sha256:$d?per_page=100" "att-$v-$d.json"
+  done
+done
+expect_fail hadolint 2.16.1 "another workflow identity" "no matching CertificateIdentity found"
+expect_fail hadolint 2.16.2 "another repository" 'expected GithubWorkflowRepository to be "hadolint/hadolint"'
+expect_fail hadolint 2.16.3 "one digest the API does not know" "no GitHub attestation listed for sha256:$(hl_d 2.16.3 | tail -1)"
+expect_fail hadolint 2.16.4 "an empty attestations list" "lists no attestation for sha256:"
+expect_fail hadolint 2.16.5 "a digest that is not among the subjects" "does not match any digest in statement"
+expect_fail hadolint 2.16.6 "a bundle_url that 404s" "could not fetch https://blob.example/"
+expect_fail hadolint 2.16.7 "an attestation with no bundle" "none of the 1 attestation(s)"
+check "  none of them edited anything" [ -z "$(changed_files "$t" "$work/fivel.snap")" ]
+# The per-run verdict cache must be keyed by the digest itself: a short hash
+# such as cksum (CRC32) lets a crafted digest collide with a verified one.
+check "the digest verdict cache is keyed by the verbatim digest" \
+  bash -c "grep -qx '  marker=\"\$tmp/digest.\$(sha256_of \"\$tmp/digest.key\").\$sum\"' '$bump' && ! grep -nE '\| *cksum' '$bump'"
+# 2.16.0: each digest lists an SBOM attestation first, then the provenance.
+hl_bundle 2.16.0 "$HL_ID" hadolint/hadolint
+jq -c '.type = "spdxjson"' "$fx/hl-2.16.0.att" > "$fx/hl-2.16.0.sbom"
+for d in $(hl_d 2.16.0); do
+  jq -nc --slurpfile s "$fx/hl-2.16.0.sbom" --slurpfile p "$fx/hl-2.16.0.att" \
+    '{attestations: [{repository_id: 1, bundle: $s[0]}, {repository_id: 1, bundle: $p[0]}]}' > "$fx/att-2.16.0-$d.json"
+  serve "$hl_api/sha256:$d?per_page=100" "att-2.16.0-$d.json"
+done
+rc=0; "$bump" --root "$t" --unit hadolint --to 2.16.0 --quiet --format json > "$work/r5x.json" 2>/dev/null || rc=$?
+check "release.yml on master, from hadolint/hadolint, behind another attestation: exit 0, bumped, auto" \
+  [ "$rc:$(field "$work/r5x.json" hadolint status):$(field "$work/r5x.json" hadolint class)" = "0:bumped:auto" ]
+expect_pin "$t" scripts/lint.sh HADOLINT_SHA256_MACOS_X86_64 "$(fake hl-2.16.0-macos-x86_64)"
+check "  the reason says the attestations verified" \
+  bash -c "jq -r '.[0].reason' '$work/r5x.json' | grep -q 'verified against the vendor.s GitHub artifact attestation'"
+# 2.16.8: the bundles only behind bundle_url, served plain; 2.16.9 snappy-compressed.
+hl_bundle 2.16.8 "$HL_ID" hadolint/hadolint
+for d in $(hl_d 2.16.8); do
+  serve "https://blob.example/plain/$d" hl-2.16.8.att
+  jq -nc --arg u "https://blob.example/plain/$d" '{attestations: [{repository_id: 1, bundle_url: $u}]}' > "$fx/att-2.16.8-$d.json"
+  serve "$hl_api/sha256:$d?per_page=100" "att-2.16.8-$d.json"
+done
+rc=0; "$bump" --root "$t" --unit hadolint --to 2.16.8 --quiet --format json > "$work/r5x.json" 2>/dev/null || rc=$?
+check "a bundle fetched from its bundle_url: exit 0, bumped" [ "$rc:$(field "$work/r5x.json" hadolint status)" = "0:bumped" ]
+if command -v python3 >/dev/null; then
+  hl_bundle 2.16.9 "$HL_ID" hadolint/hadolint
+  # A snappy block: the length, one literal of the bundle and a space, then
+  # a copy of that space seven times -- both kinds of element the decoder reads.
+  python3 -I -c '
+import sys
+d = open(sys.argv[1], "rb").read().rstrip(b"\n") + b" "
+n = len(d) + 7; v = bytearray()
+while True:
+    b = n & 0x7f; n >>= 7
+    v.append(b | (0x80 if n else 0))
+    if not n: break
+l = len(d) - 1
+lit = bytes([l << 2]) if l < 60 else (bytes([61 << 2]) + l.to_bytes(2, "little"))
+sys.stdout.buffer.write(bytes(v) + lit + d + bytes([1 | (3 << 2), 1]))
+' "$fx/hl-2.16.9.att" > "$fx/hl-2.16.9.snappy"
+  for d in $(hl_d 2.16.9); do
+    serve "https://blob.example/snappy/$d" hl-2.16.9.snappy
+    jq -nc --arg u "https://blob.example/snappy/$d" '{attestations: [{repository_id: 1, bundle: null, bundle_url: $u}]}' > "$fx/att-2.16.9-$d.json"
+    serve "$hl_api/sha256:$d?per_page=100" "att-2.16.9-$d.json"
+  done
+  rc=0; "$bump" --root "$t" --unit hadolint --to 2.16.9 --quiet --format json > "$work/r5x.json" 2>/dev/null || rc=$?
+  check "a snappy-compressed bundle from its bundle_url: exit 0, bumped" [ "$rc:$(field "$work/r5x.json" hadolint status)" = "0:bumped" ]
+else
+  ok "python3 not installed; snappy bundle case skipped"
+fi
+
+echo "case 5l2: actionlint -- the same check, as release.yaml at the release's own tag"
+t=$(new_tree fivel2)
+al_dl=$G/rhysd/actionlint/releases/download
+for v in 1.7.13 1.7.14; do
+  for a in darwin_amd64 darwin_arm64 linux_amd64 linux_arm64; do
+    printf '%s  actionlint_%s_%s.tar.gz\n' "$(fake "al-$v-$a")" "$v" "$a"
+  done > "$fx/al-$v.txt"
+  serve "$al_dl/v$v/actionlint_${v}_checksums.txt" "al-$v.txt"
+  gh_release rhysd/actionlint "v$v" "$OLD"
+  # 1.7.14's attestations are 1.7.13's release run.
+  case "$v" in 1.7.14) tag=1.7.13 ;; *) tag=$v ;; esac
+  fake_attestation "al-$v.att" slsaprovenance1 "$G/rhysd/actionlint/.github/workflows/release.yaml@refs/tags/v$tag" \
+    rhysd/actionlint "refs/tags/v$tag" "$GHA" \
+    "$(fake "al-$v-darwin_amd64")" "$(fake "al-$v-darwin_arm64")" "$(fake "al-$v-linux_amd64")" "$(fake "al-$v-linux_arm64")"
+  gh_attest rhysd/actionlint "al-$v.att" \
+    "$(fake "al-$v-darwin_amd64")" "$(fake "al-$v-darwin_arm64")" "$(fake "al-$v-linux_amd64")" "$(fake "al-$v-linux_arm64")"
+done
+expect_fail actionlint 1.7.14 "attested by another tag's release run" "no matching CertificateIdentity found"
+rc=0; "$bump" --root "$t" --unit actionlint --to 1.7.13 --quiet --format json > "$work/r5y.json" 2>/dev/null || rc=$?
+check "attested by its own tag's run: exit 0, bumped, auto" \
+  [ "$rc:$(field "$work/r5y.json" actionlint status):$(field "$work/r5y.json" actionlint class)" = "0:bumped:auto" ]
+expect_pin "$t" scripts/lint.sh ACTIONLINT_SHA256_LINUX_ARM64 "$(fake al-1.7.13-linux_arm64)"
+
+echo "case 5m: kubectl -- each binary's signature verifies, and the binary hashes to the sum pinned"
+t=$(new_tree fivem); cp -a "$t" "$work/fivem.snap"
+k8s_sums() { # VERSION AMD64-SUM ARM64-SUM
+  printf '%s' "$2" > "$fx/k8s-$1-amd64.sha256"; printf '%s\n' "$3" > "$fx/k8s-$1-arm64.sha256"
+  serve "https://dl.k8s.io/release/v$1/bin/linux/amd64/kubectl.sha256" "k8s-$1-amd64.sha256"
+  serve "https://dl.k8s.io/release/v$1/bin/linux/arm64/kubectl.sha256" "k8s-$1-arm64.sha256"
+  gh_release kubernetes/kubernetes "v$1" "$OLD"
+}
+GOOG=https://accounts.google.com
+# 1.39.0: the real thing; arm64's certificate as plain PEM, amd64's base64-wrapped.
+k8s_signed 1.39.0 amd64 k-1.39.0-a "$K8S_ID" "$GOOG"; k8s_signed 1.39.0 arm64 k-1.39.0-r "$K8S_ID" "$GOOG" plain
+k8s_sums 1.39.0 "$(fake k-1.39.0-a)" "$(fake k-1.39.0-r)"
+# 1.39.1: arm64 signed by another service account.
+k8s_signed 1.39.1 amd64 k-1.39.1-a "$K8S_ID" "$GOOG"; k8s_signed 1.39.1 arm64 k-1.39.1-r attacker@evil-proj.iam.gserviceaccount.com "$GOOG"
+k8s_sums 1.39.1 "$(fake k-1.39.1-a)" "$(fake k-1.39.1-r)"
+# 1.39.2: the right account name, through another OIDC issuer.
+k8s_signed 1.39.2 amd64 k-1.39.2-a "$K8S_ID" "$GHA"; k8s_signed 1.39.2 arm64 k-1.39.2-r "$K8S_ID" "$GOOG"
+k8s_sums 1.39.2 "$(fake k-1.39.2-a)" "$(fake k-1.39.2-r)"
+# 1.39.3: no .sig; 1.39.4: a .cert that is not a certificate. (The first
+# fixture listed for a URL answers it, so these go before k8s_signed's.)
+serve "https://dl.k8s.io/release/v1.39.3/bin/linux/arm64/kubectl.sig" @404
+printf 'hello\n' > "$fx/not-a-cert"
+serve "https://dl.k8s.io/release/v1.39.4/bin/linux/arm64/kubectl.cert" not-a-cert
+k8s_signed 1.39.3 amd64 k-1.39.3-a "$K8S_ID" "$GOOG"; k8s_signed 1.39.3 arm64 k-1.39.3-r "$K8S_ID" "$GOOG"
+k8s_sums 1.39.3 "$(fake k-1.39.3-a)" "$(fake k-1.39.3-r)"
+k8s_signed 1.39.4 amd64 k-1.39.4-a "$K8S_ID" "$GOOG"; k8s_signed 1.39.4 arm64 k-1.39.4-r "$K8S_ID" "$GOOG"
+k8s_sums 1.39.4 "$(fake k-1.39.4-a)" "$(fake k-1.39.4-r)"
+# 1.39.5: a validly signed binary, but the .sha256 names another digest.
+k8s_signed 1.39.5 amd64 k-1.39.5-a "$K8S_ID" "$GOOG"; k8s_signed 1.39.5 arm64 k-1.39.5-r "$K8S_ID" "$GOOG"
+k8s_sums 1.39.5 "$(fake k-1.39.5-a)" "$(fake k-1.39.5-other)"
+# 1.39.6: a signature over other bytes than the binary served.
+k8s_signed 1.39.6 amd64 k-1.39.6-a "$K8S_ID" "$GOOG"; k8s_signed 1.39.6 arm64 k-1.39.6-r "$K8S_ID" "$GOOG"
+k8s_sums 1.39.6 "$(fake k-1.39.6-a)" "$(fake k-1.39.6-r)"
+fake k-1.39.6-swapped > "$fx/k8s-1.39.6-arm64.sig"
+expect_fail kubectl 1.39.1 "a binary signed by another account" "no matching CertificateIdentity found"
+expect_fail kubectl 1.39.2 "another OIDC issuer" "no matching CertificateIdentity found"
+expect_fail kubectl 1.39.3 "no .sig" "no signature at https://dl.k8s.io/release/v1.39.3/bin/linux/arm64/kubectl.sig"
+expect_fail kubectl 1.39.4 "a .cert that is not a certificate" "kubectl.cert is not a PEM certificate, plain or base64-wrapped"
+expect_fail kubectl 1.39.5 "a verified binary whose sha256 is not the one pinned" \
+  "verifies as $K8S_ID, but its sha256 is $(fake k-1.39.5-r), not the $(fake k-1.39.5-other) the unit would pin"
+expect_fail kubectl 1.39.6 "a signature over other bytes" "failed to verify signature"
+check "  none of them edited anything" [ -z "$(changed_files "$t" "$work/fivem.snap")" ]
+: > "$FAKE_COSIGN_LOG"
+rc=0; "$bump" --root "$t" --unit kubectl --to 1.39.0 --quiet --format json > "$work/r5z.json" 2>/dev/null || rc=$?
+check "signed by krel-staging through Google: exit 0, bumped, auto" \
+  [ "$rc:$(field "$work/r5z.json" kubectl status):$(field "$work/r5z.json" kubectl class)" = "0:bumped:auto" ]
+for f in ci-tools/Dockerfile.ci ci-cloud/Dockerfile.ci; do
+  expect_pin "$t" "$f" KUBECTL_SHA256_AMD64 "$(fake k-1.39.0-a)"
+  expect_pin "$t" "$f" KUBECTL_SHA256_ARM64 "$(fake k-1.39.0-r)"
+done
+check "  cosign got the decoded certificate, the identity and issuer, and no tlog bypass" \
+  [ "$(grep -c -- "^verify-blob --signature [^ ]*\.sig --certificate [^ ]*\.pem --certificate-identity $K8S_ID --certificate-oidc-issuer $GOOG [^ ]*$" "$FAKE_COSIGN_LOG")" -eq 2 ]
+check "  the .sig and .cert files are listed as integrity sources" \
+  [ "$(jq -r '.[0].integrity_urls | map(select(endswith("/kubectl.sig") or endswith("/kubectl.cert"))) | length' "$work/r5z.json")" -eq 4 ]
+
 echo "case 5j: --check -- a signed unit must have a signature row for every file it reads"
 t=$(new_tree fivej); mkdir -p "$t/scripts/keys"; cp -p "$here"/keys/*.asc "$t/scripts/keys/"
 cp -p "$bump" "$t/scripts/bp.sh"
@@ -744,6 +1124,33 @@ sed 's|reusable-release.yaml@refs/tags/v{v} |reusable-release.yaml@refs/tags/v.*
 rc=0; "$t/scripts/bp.sh" --root "$t" --check > /dev/null 2> "$work/c5j.err" || rc=$?
 check "a pattern inside the ref fails --check" [ "$rc" -eq 1 ]
 check "  and names the pattern character" grep -q 'contains a pattern character' "$work/c5j.err"
+# bad_tables WHAT EXPECTED-MESSAGE SED-SCRIPT -- the tables with that edit fail --check, saying so.
+bad_tables() {
+  sed "$3" "$bump" > "$t/scripts/bp.sh"
+  if cmp -s "$bump" "$t/scripts/bp.sh"; then bad "$1: (the edit did not apply)"; return; fi
+  rc=0; "$t/scripts/bp.sh" --root "$t" --check > /dev/null 2> "$work/c5j.err" || rc=$?
+  check "$1 fails --check" [ "$rc" -eq 1 ]
+  check "  and says '$2'" grep -qF -- "$2" "$work/c5j.err"
+}
+bad_tables "a ghattest identity that is a pattern" "contains a pattern character" \
+  's|release.yml@refs/heads/master |release.yml@refs/heads/.* |'
+bad_tables "a ghattest repository binding that is not the API's" "is not the attestations API of hadolint/other" \
+  's/| hadolint\/hadolint$/| hadolint\/other/'
+# shellcheck disable=SC2016  # $GH is the table's own text, not this shell's
+bad_tables "a ghattest identity outside the bound repository" "is not a workflow of composer/composer" \
+  's|\$GH/composer/composer/.github/workflows/release.yml@|$GH/attacker/composer/.github/workflows/release.yml@|'
+bad_tables "a ghattest row with Google as the issuer" "is not the issuer this method takes" \
+  '/^actionlint .* ghattest /s/| https:\/\/token.actions.githubusercontent.com |/| https:\/\/accounts.google.com |/'
+bad_tables "an slsa row with no repository and ref binding" "is not an exact owner/repo@refs/... binding" \
+  's/ | google\/osv-scanner@refs\/tags\/v{v}$//'
+bad_tables "an slsa row bound to a repository but no ref" "is not an exact owner/repo@refs/... binding" \
+  's/| google\/osv-scanner@refs\/tags\/v{v}$/| google\/osv-scanner/'
+bad_tables "an attested unit whose download has no digest row" "composer is attested, but" \
+  '/^composer .* ghattest /d'
+bad_tables "a kubectl row signed as a pattern" "is not an exact workflow or service-account identity" \
+  '/^kubectl .*arm64.* sigcert /s/krel-staging@/.*@/'
+bad_tables "a kubectl arch with no signature row" "kubectl is signed, but https://dl.k8s.io/release/v{v}/bin/linux/arm64/kubectl.sha256 has no SIGS row" \
+  '/^kubectl .*arm64.* sigcert /d'
 
 echo "case 5h: --check over the real tree"
 check "every pin, checksum, tofu and signature row names exactly one line" "$bump" --check --quiet

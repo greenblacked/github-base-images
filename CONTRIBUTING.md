@@ -162,10 +162,19 @@ HashiCorp's key in [`scripts/keys/hashicorp.asc`](scripts/keys/hashicorp.asc), p
 fingerprint `C874011F0AB405110D02105534365D9472D7468F`; the Sigstore bundles on trivy's, syft's,
 grype's and cosign's checksums files must verify with `cosign verify-blob` as exactly that
 vendor's release workflow (trivy's at the release's own tag) or, for cosign, its
-`keyless@projectsigstore.iam.gserviceaccount.com` release identity. The `SIGS` table in
-`scripts/bump-pins.sh` pins each identity and key; [docs/security.md](docs/security.md#supply-chain-pins)
-lists them, and the tools whose vendors sign nothing the bump could check. Running it locally needs
-`cosign` and `gpg`/`gpgv` on `PATH`. By hand, the same checks are:
+`keyless@projectsigstore.iam.gserviceaccount.com` release identity. Where the vendor signs the
+artifacts rather than the checksums file, each digest the script would pin is verified on its own
+first: osv-scanner's against its SLSA provenance (the generator's identity, bound to
+`google/osv-scanner` at the release tag), hadolint's, actionlint's and Composer's against their
+GitHub artifact attestations (identity and repository pinned), and kubectl's by downloading each
+binary, verifying its `.sig`/`.cert` as `krel-staging@k8s-releng-prod.iam.gserviceaccount.com` and
+comparing its sha256 with the `.sha256` file. The methods (`gpg`, `sigstore`, `slsa`,
+`ghattest`, `sigcert`) are described above the `SIGS` table in `scripts/bump-pins.sh`, which pins
+each identity and key; [docs/security.md](docs/security.md#supply-chain-pins) lists them, and the
+tools whose vendors sign nothing the bump could check (gitleaks, golang-migrate, the Docker static
+client, gcloud). Running it locally needs `cosign` (v3), `gpg`/`gpgv` and `python3` on `PATH`, a
+`GITHUB_TOKEN` for the attestations API's rate limit, and for kubectl, network access to Rekor. By
+hand, the same checks are:
 
 ```bash
 gpgv --keyring <(gpg --dearmor < scripts/keys/hashicorp.asc) \
@@ -173,21 +182,28 @@ gpgv --keyring <(gpg --dearmor < scripts/keys/hashicorp.asc) \
 cosign verify-blob --bundle trivy_<VERSION>_checksums.txt.sigstore.json \
   --certificate-identity https://github.com/aquasecurity/trivy/.github/workflows/reusable-release.yaml@refs/tags/v<VERSION> \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com trivy_<VERSION>_checksums.txt
+cosign verify-blob-attestation --bundle multiple.intoto.jsonl --type slsaprovenance \
+  --certificate-identity https://github.com/slsa-framework/slsa-github-generator/.github/workflows/generator_generic_slsa3.yml@refs/tags/v2.1.0 \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+  --certificate-github-workflow-repository google/osv-scanner \
+  --certificate-github-workflow-ref refs/tags/v<VERSION> --certificate-github-workflow-trigger push \
+  --digest <SHA256> --digestAlg sha256
+gh attestation verify hadolint-linux-x86_64 --repo hadolint/hadolint \
+  --cert-identity https://github.com/hadolint/hadolint/.github/workflows/release.yml@refs/heads/master
+cosign verify-blob kubectl --signature kubectl.sig --certificate <(base64 -d < kubectl.cert) \
+  --certificate-identity krel-staging@k8s-releng-prod.iam.gserviceaccount.com \
+  --certificate-oidc-issuer https://accounts.google.com
 ```
 
-Composer is the exception. Its GitHub release carries no `.sha256` asset, so the `ARG` here
-records a hash computed from the release artifact itself — trust-on-first-use rather than vendor
-attestation. It detects a later substitution, not an originally bad artifact.
-
-**`getcomposer.org` does publish a per-release digest** at
-`https://getcomposer.org/download/<VERSION>/composer.phar.sha256sum`, which is strictly better than
-a computed hash. It is unreachable from some restricted build and development networks — the same
-reason the binary itself is fetched from GitHub rather than from there — so it could not be used
-when this pin was last set. `scripts/bump-pins.sh` now takes the Composer checksum from there and
-nowhere else: where it is unreachable the bump fails rather than falling back to hashing the
-download. So the next Composer bump, automated or by hand with the script, upgrades this pin from
-trust-on-first-use to vendor-attested, and the caveat above can go with it. The build's
-`sha256sum --check` confirms the getcomposer.org digest matches the GitHub release asset.
+Composer's checksum is the digest its release attests. The phar is fetched from the GitHub
+release (`getcomposer.org` is unreachable from some build networks), so `scripts/bump-pins.sh`
+downloads that same phar, verifies its `.asc` under Composer's key in
+[`scripts/keys/composer.asc`](scripts/keys/composer.asc) (fingerprint
+`161DFBE342889F01DDAC4E61CBB3D576F2A0946F`) and GitHub's attestation for exactly its sha256, as
+`https://github.com/composer/composer/.github/workflows/release.yml@refs/tags/<VERSION>`, and only
+then pins that sha256. Hashing a download is not trust on first use here: the vendor attests that
+very digest, and either check failing fails the bump. Set it with the script
+(`./scripts/bump-pins.sh --unit composer --to <VERSION>`), not by hand.
 
 Three vendors publish **no** checksum: the Docker static tarball (no `.sha256` is published —
 the URL 404s), the AWS CLI installer (a detached GPG signature only), and the gcloud CLI in

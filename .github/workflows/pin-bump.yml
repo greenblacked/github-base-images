@@ -65,6 +65,7 @@ jobs:
       pull-requests: write  # open and edit the PRs, label them
       actions: write        # `gh workflow run` on each bump branch
       checks: read          # whether CI ever reported on an existing bump PR
+      attestations: read    # vendors' GitHub artifact attestations (bump-pins.sh ghattest)
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -93,7 +94,10 @@ jobs:
 
       # bump-pins.sh verifies the Sigstore bundle on each vendor checksums
       # file that has one (trivy, syft, grype, cosign) before reading a
-      # checksum from it, and fails the unit without cosign. The same action,
+      # checksum from it, and each digest it would pin against the vendor's
+      # SLSA provenance (osv-scanner), GitHub artifact attestation (hadolint,
+      # actionlint, Composer) or per-binary signature (kubectl); it fails the
+      # unit without cosign. The same action,
       # at the same SHA and default cosign release, that build-image.yml signs
       # with -- the installer checks that cosign against its own pinned
       # digests. It is never the cosign release a bump is moving to.
@@ -103,7 +107,12 @@ jobs:
       - name: Open or refresh pull requests
         env:
           GH_TOKEN: ${{ github.token }}
-          # Read by bump-pins.sh for release dates on api.github.com.
+          # Read by bump-pins.sh on api.github.com: release dates, and the
+          # attestations API (GET /repos/<vendor>/attestations/sha256:<d>).
+          # Both are reads of public repositories; the attestations endpoint
+          # wants `attestations: read` on the token (granted above), and the
+          # token also lifts the unauthenticated rate limit. A failed call
+          # fails the unit.
           GITHUB_TOKEN: ${{ github.token }}
           DRIFT_FILE: drift.json
           DRY_RUN: ${{ inputs.dry_run && '1' || '' }}
@@ -134,6 +143,7 @@ jobs:
       contents: read        # checkout, and fetch main and pin-bump/*
       pull-requests: read   # gh pr list / pr view
       checks: read          # check runs on existing bump branches
+      attestations: read    # vendors' GitHub artifact attestations (bump-pins.sh ghattest)
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -160,6 +170,8 @@ jobs:
       - name: Preview pull requests
         env:
           GH_TOKEN: ${{ github.token }}
+          # As in the bump job: release dates, and attestations under
+          # `attestations: read`.
           GITHUB_TOKEN: ${{ github.token }}
           DRIFT_FILE: drift.json
           # Set here, not from the input: this job is a dry run by definition,
