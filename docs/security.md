@@ -656,12 +656,18 @@ the vendor publishes a checksum, that is the one. The three that publish none (t
 Docker static client, gcloud) carry a trust-on-first-use sha256 that `scripts/bump-pins.sh`
 records from its own download, after verifying AWS's signature for the AWS CLI; they are labelled
 as such, and listed in [CONTRIBUTING.md](../CONTRIBUTING.md#what-does-not-belong-in-an-image).
+Composer's sha256 is also hashed from the bump's own download of the phar on the GitHub release,
+but it is not trust on first use: it is pinned only once GitHub's attestation for exactly that
+digest, and the phar's GPG signature, verify (below).
 
 A checksums file taken from the same release as the artifact only proves the two were published
 together, so wherever the vendor signs it, `bump-pins.sh` verifies that signature before it reads
-a single checksum, and a missing, bad or wrong-identity signature fails the bump (an error row:
-nothing is edited, no pull request is opened). The identities and keys are pinned in its `SIGS`
-table; each was read from a real release and verified end to end before it was pinned:
+a single checksum. Where the vendor signs the artifacts instead, every digest the bump would pin is
+verified on its own — against the vendor's SLSA provenance, its GitHub artifact attestation, or
+the binary's own signature — before any is written. A missing, bad or wrong-identity signature or
+attestation, for any one digest, fails the bump (an error row: nothing is edited, no pull request
+is opened). The identities and keys are pinned in its `SIGS` table; each was read from a real
+release, and those marked below were verified end to end, before it was pinned:
 
 | Tool | What is signed | Verified with | Pinned identity or key |
 |---|---|---|---|
@@ -671,19 +677,53 @@ table; each was read from a real release and verified end to end before it was p
 | syft | `syft_<v>_checksums.txt` (`.sigstore.json`) | `cosign verify-blob` | `https://github.com/anchore/syft/.github/workflows/release.yaml@refs/heads/main`, issuer `https://token.actions.githubusercontent.com` (anchore releases from `main`) |
 | grype | `grype_<v>_checksums.txt` (`.sigstore.json`) | `cosign verify-blob` | `https://github.com/anchore/grype/.github/workflows/release.yaml@refs/heads/main`, issuer `https://token.actions.githubusercontent.com` |
 | cosign | `cosign_checksums.txt` (`.sigstore.json`) | `cosign verify-blob` | `keyless@projectsigstore.iam.gserviceaccount.com`, issuer `https://accounts.google.com` |
+| osv-scanner | each pinned digest, as a subject of the release's SLSA v0.2 provenance (`multiple.intoto.jsonl`) | `cosign verify-blob-attestation --type slsaprovenance --digest` | `https://github.com/slsa-framework/slsa-github-generator/.github/workflows/generator_generic_slsa3.yml@refs/tags/v2.1.0`, issuer `https://token.actions.githubusercontent.com`, **and** workflow repository `google/osv-scanner`, ref `refs/tags/v<v>`, trigger `push` |
+| hadolint | each `checksums.sha256` digest, by its GitHub artifact attestation (SLSA v1) | `cosign verify-blob-attestation --type slsaprovenance1 --digest` | `https://github.com/hadolint/hadolint/.github/workflows/release.yml@refs/heads/master` (hadolint releases from `master`), repository `hadolint/hadolint` |
+| actionlint | each archive digest in `actionlint_<v>_checksums.txt`, by its GitHub attestation | as hadolint | `https://github.com/rhysd/actionlint/.github/workflows/release.yaml@refs/tags/v<v>`, repository `rhysd/actionlint` |
+| Composer | `composer.phar` on the GitHub release: its digest by GitHub attestation, and the file by its `.asc` | as hadolint, then `gpgv` | `https://github.com/composer/composer/.github/workflows/release.yml@refs/tags/<v>` (no `v`), repository `composer/composer`; key `scripts/keys/composer.asc` (from keyserver.ubuntu.com), fingerprint `161DFBE342889F01DDAC4E61CBB3D576F2A0946F` |
+| kubectl | each binary (`kubectl.sig`, `kubectl.cert`) | `cosign verify-blob --signature --certificate`, then sha256 of the binary = the `.sha256` sum | `krel-staging@k8s-releng-prod.iam.gserviceaccount.com`, issuer `https://accounts.google.com` |
 
 The identities are exact, not patterns, and `bump-pins.sh --check` (run by lint) refuses a
-pattern, and refuses a signed tool with any file it reads that has no signature row. The cosign
-that verifies is the one `sigstore/cosign-installer` installs in the pin-bump workflow — the same
-action, pinned by the same SHA, that signs the images — never the cosign release being bumped.
+pattern, an unknown issuer, a digest row without the repository it binds (and, for the SLSA
+generator, the ref), and a signed tool with any file it reads that has no signature row. The
+cosign that verifies is the one `sigstore/cosign-installer` installs in the pin-bump workflow —
+the same action, pinned by the same SHA, that signs the images — never the cosign release being
+bumped.
 
-Not signature-checked, and why: kubectl signs each binary rather than its `.sha256` file, as a
-detached `.sig` and `.cert` with no Sigstore bundle, so checking it would mean downloading every
-binary and an online Rekor lookup (not yet done); gitleaks, golang-migrate, hadolint and
-actionlint publish no signature; osv-scanner publishes SLSA provenance, which needs
-`slsa-verifier` rather than cosign; Composer's `.asc` signs the phar, not the `sha256sum` file the
-bump reads; the Docker static client and gcloud publish neither a checksum nor a signature (trust
-on first use, above).
+How the newer rows work, and what each binds:
+
+- **osv-scanner.** The SLSA generator's identity is shared by every repository that uses that
+  reusable workflow, so the identity alone would accept anyone's provenance: the source
+  repository, the tag and the `push` trigger are what make it Google's release. The generator
+  version is part of the identity, so a release built by another one fails the bump, for a person
+  to check and update the row. Verified live against v2.6.0's real bundle (with Sigstore's
+  trusted root): the pinned digests verify; another repository, ref, generator version or digest
+  does not.
+- **GitHub attestations (hadolint, actionlint, Composer).** For each digest, `bump-pins.sh` reads
+  `GET https://api.github.com/repos/<owner>/<repo>/attestations/sha256:<digest>` (with the
+  workflow's `GITHUB_TOKEN` when set; public repositories need no permission for it, so the bump
+  job's `contents` permission is enough) and tries each listed bundle — inline, or from its
+  `bundle_url`, which GitHub serves snappy-compressed and the script decodes with `python3` — until
+  one verifies. An API error, an empty list, or no bundle that verifies fails the bump. Only the
+  digests are checked: nothing is downloaded, except Composer's phar, whose hash is what gets
+  pinned. hadolint's signer is its workflow on `master`, so its attestation cannot be tied to the
+  tag the way actionlint's and Composer's are.
+- **kubectl.** The `.sha256` files are unsigned; the binaries carry a detached signature and a
+  ten-minute Fulcio certificate (served base64-wrapped; the script unwraps it to PEM). Each binary
+  (about 60 MB) is downloaded, verified with cosign, which finds its Rekor entry online (the
+  certificate has long expired, so the transparency log's timestamp is what proves it was valid
+  when it signed), and its sha256 must then equal the sum read from the `.sha256` file. Rekor and
+  Sigstore's TUF root were not reachable from the environment this was written in; the signature
+  was checked there against the certificate's key, whose identity and issuer are the pinned ones,
+  and the cosign invocation is the one cosign v3 takes for a signature and certificate without a
+  bundle (`--insecure-ignore-tlog` is never used).
+
+Not signature-checked, and why: **gitleaks** and **golang-migrate** publish no signature asset and
+have no GitHub attestations (`gh attestation verify` reports none), so they are checked against
+their checksums files only. The **Docker static client** tarball is unsigned — Docker's signed apt
+repository carries different bytes, so its signature says nothing about the tarball — and
+**gcloud**'s tarball has only Google Cloud Storage's md5/crc metadata; both stay trust on first
+use (above). npm, PyPI and RubyGems packages are pinned by their registries' digests (below).
 
 The
 Python packages installed outside an image's base — the Azure CLI's swapped-in libraries

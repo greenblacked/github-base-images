@@ -379,3 +379,55 @@ three: move it to `sums` and its vendor date, and drop the trust-on-first-use ro
 **Revisit if** kubectl ships Sigstore bundles for its `.sha256` files, or another pinned vendor
 starts signing its checksums: add its `SIGS` row. Or if Trivy reports a path for pip's vendored
 packages: replace `no_path` with it.
+
+## Amendment (2026-10-18): every vendor signature that exists is checked, per digest where that is what is signed
+
+**Context.** The previous amendment left seven tools taken on their checksums file alone, on the
+belief that their vendors signed nothing the bump could check. For four of them that was wrong,
+and for a fifth the check was only expensive: osv-scanner publishes SLSA provenance as a Sigstore
+bundle (`multiple.intoto.jsonl`) that cosign v3 verifies directly; hadolint, actionlint and
+Composer publish GitHub artifact attestations for their release assets; and kubectl signs every
+binary (a detached `.sig` and a Fulcio `.cert`), just not its `.sha256` file. What these sign is
+the artifact's digest, not the checksums file, so a file-signature check cannot use them.
+
+**Decision.**
+
+- **Digest methods beside the file methods.** The `SIGS` table gains three methods whose check
+  runs on each digest the unit would pin, after it is read and before anything is written:
+  `slsa` (`cosign verify-blob-attestation --type slsaprovenance --digest`, the SLSA generator's
+  identity pinned with the source repository, the tag and the push trigger, since every user of
+  the generator shares its identity), `ghattest` (each attestation GitHub's API lists for the
+  digest, tried with `cosign verify-blob-attestation --type slsaprovenance1 --digest` under the
+  pinned identity and repository; one must verify), and `sigcert` (the binary downloaded,
+  `cosign verify-blob --signature --certificate` under the pinned identity, and its sha256 equal
+  to the pinned sum). Any digest that fails, an empty or failed API answer, or a missing bundle
+  fails the whole unit: an error row, nothing edited.
+- **Composer's sum is the attested one.** It was read from getcomposer.org's `sha256sum`, a
+  second server's file, while the build downloads the phar from the GitHub release. The bump
+  now downloads that phar, verifies its `.asc` under Composer's key (pinned by fingerprint
+  `161DFBE342889F01DDAC4E61CBB3D576F2A0946F` in `scripts/keys/composer.asc`) and GitHub's
+  attestation for exactly its digest, and pins that digest. This is a new integrity kind,
+  `attested`: downloaded and hashed like trust on first use, but classified like `sums`, and
+  `--check` refuses an `attested` download that has no digest row.
+- **No new secret or permission.** The attestations API is read with the workflow's existing
+  `GITHUB_TOKEN`, already in the bump step's environment for release dates; for public
+  repositories it needs no permission, so the jobs keep theirs.
+
+**Consequences.**
+
+- Of the pinned release binaries, only gitleaks and golang-migrate are still taken on their
+  checksums file alone (no signature asset, no attestation), and the Docker static client and
+  gcloud stay trust on first use (no signature over those bytes at all). docs/security.md,
+  *Supply-chain pins*, has each reason; the previous amendment's list is superseded.
+- A kubectl bump downloads both binaries (about 120 MB) and needs Rekor and Sigstore's TUF root
+  online, as the GitHub runners have; elsewhere it fails closed.
+- A vendor that moves to another release workflow, another SLSA generator version or another
+  signing key fails its bumps, for a person to check and update the row. hadolint's identity is
+  its workflow on `master`, so its attestations prove the build came from that branch, not from
+  the release tag.
+- The `bundle_url` form of an attestation is snappy-compressed; it is decoded with `python3`, so
+  a runner without it can still use inline bundles but not those.
+
+**Revisit if** gitleaks or golang-migrate start attesting their releases (add `ghattest` rows),
+kubectl ships bundles for its binaries or `.sha256` files, or GitHub stops returning inline
+bundles and python3 is not on the runner.

@@ -308,8 +308,12 @@ libraries in `ci-cloud/az-overrides.txt` and the zizmor in `.github/zizmor-requi
 PyPI's sha256 for every linux wheel, installed with `pip --require-hashes`). Where the vendor signs
 that checksums file — terraform (HashiCorp's GPG key), trivy, syft, grype and cosign (Sigstore
 bundles, verified with cosign against each vendor's pinned release identity) — the signature is
-verified first, and a missing or wrong one fails the bump
-([Supply-chain pins](security.md#supply-chain-pins)). The three vendors that
+verified first. Where the vendor signs the artifacts instead, each digest is verified before it is
+written: osv-scanner's against its SLSA provenance, hadolint's, actionlint's and Composer's
+against their GitHub artifact attestations (Composer's sha256 is hashed from the release phar and
+pinned only once its attestation and GPG signature verify), and kubectl's by verifying each
+binary's signature and matching its sha256. A missing or wrong signature or attestation fails the
+bump ([Supply-chain pins](security.md#supply-chain-pins)). The three vendors that
 publish none — the AWS CLI, the Docker static client and gcloud — get a **trust-on-first-use**
 sha256 instead: `bump-pins.sh` downloads each architecture's artifact and records the hash of what
 it got, after checking AWS's detached signature against AWS's key, pinned by fingerprint in

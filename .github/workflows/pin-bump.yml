@@ -93,7 +93,10 @@ jobs:
 
       # bump-pins.sh verifies the Sigstore bundle on each vendor checksums
       # file that has one (trivy, syft, grype, cosign) before reading a
-      # checksum from it, and fails the unit without cosign. The same action,
+      # checksum from it, and each digest it would pin against the vendor's
+      # SLSA provenance (osv-scanner), GitHub artifact attestation (hadolint,
+      # actionlint, Composer) or per-binary signature (kubectl); it fails the
+      # unit without cosign. The same action,
       # at the same SHA and default cosign release, that build-image.yml signs
       # with -- the installer checks that cosign against its own pinned
       # digests. It is never the cosign release a bump is moving to.
@@ -103,7 +106,11 @@ jobs:
       - name: Open or refresh pull requests
         env:
           GH_TOKEN: ${{ github.token }}
-          # Read by bump-pins.sh for release dates on api.github.com.
+          # Read by bump-pins.sh on api.github.com: release dates, and the
+          # attestations API (GET /repos/<vendor>/attestations/sha256:<d>).
+          # Both are public reads of public repositories, which need no
+          # permission beyond what this job has; the token only lifts the
+          # unauthenticated rate limit. A failed call fails the unit.
           GITHUB_TOKEN: ${{ github.token }}
           DRIFT_FILE: drift.json
           DRY_RUN: ${{ inputs.dry_run && '1' || '' }}
@@ -160,6 +167,8 @@ jobs:
       - name: Preview pull requests
         env:
           GH_TOKEN: ${{ github.token }}
+          # As in the bump job: release dates and attestations. `contents:
+          # read` is enough for both on public repositories.
           GITHUB_TOKEN: ${{ github.token }}
           DRIFT_FILE: drift.json
           # Set here, not from the input: this job is a dry run by definition,
