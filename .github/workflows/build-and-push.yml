@@ -524,6 +524,8 @@ jobs:
       # For the merge job's GitHub build provenance attestation, on the same
       # intersection rule.
       attestations: write
+      # For the osv job's lookup of this run's newest SBOM artifact.
+      actions: read
     # zizmor's self-repository audit suggests GitHub's `$/` self-repository
     # syntax for a local reusable workflow. `./` is the same file at the same
     # commit as this workflow -- the design of docs/adr/0002 -- so the finding
