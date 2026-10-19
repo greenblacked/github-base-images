@@ -252,7 +252,7 @@ trap 'rm -rf "$tmp"' EXIT INT TERM
 #                            row, then Packages, verified by the hash in it).
 #                            The unit's version is that string's upstream
 #                            version and Debian revision, without the epoch
-#                            or distro suffix (5:29.9.0-1~debian.12~bookworm
+#                            or distro suffix (5:29.9.0-1~debian.13~trixie
 #                            is 29.9.0-1; --to 29.9.0-2 asks for exactly
 #                            that revision), and every version pin of the
 #                            unit must be an APT
@@ -376,12 +376,12 @@ composer | */Dockerfile.ci:COMPOSER_SHA256            | $GH/composer/composer/re
 # component's binary-<arch>/Packages file must hash to exactly the SHA-256 the
 # signed InRelease lists for it, and only then is it read: the newest version
 # string of the package whose unit version -- upstream version and Debian
-# revision, 29.9.1-2 for 5:29.9.1-2~debian.12~bookworm -- is exactly the
+# revision, 29.9.1-2 for 5:29.9.1-2~debian.13~trixie -- is exactly the
 # target version. Every
 # architecture must have one, and the same one. Both architectures the images
 # are built for are listed (--check enforces it).
 readonly APT="
-docker   | ci-tools/Dockerfile.ci:DOCKER_CLI_VERSION | https://download.docker.com/linux/debian | bookworm | stable | docker-ce-cli | amd64 arm64
+docker   | ci-tools/Dockerfile.ci:DOCKER_CLI_VERSION | https://download.docker.com/linux/debian | trixie | stable | docker-ce-cli | amd64 arm64
 "
 
 # unit | the file: a DOWNLOADS artifact, a SUMS checksums URL or an APT
@@ -433,7 +433,7 @@ docker   | ci-tools/Dockerfile.ci:DOCKER_CLI_VERSION | https://download.docker.c
 #                  repositories: https://download.docker.com/linux/debian/gpg,
 #                  the fingerprint Docker's install documentation gives, and
 #                  the one ci-tools/Dockerfile.ci pins as
-#                  DOCKER_KEY_FINGERPRINT; checked against bookworm's
+#                  DOCKER_KEY_FINGERPRINT; checked against trixie's
 #                  InRelease. It signs with a subkey (D3306A01...F273FCD8);
 #                  gpgv's VALIDSIG names the primary too.
 #
@@ -506,7 +506,7 @@ osv-scanner | $GH/google/osv-scanner/releases/download/v{v}/osv-scanner_SHA256SU
 hadolint  | $GH/hadolint/hadolint/releases/download/v{v}/checksums.sha256 | https://api.github.com/repos/hadolint/hadolint/attestations | ghattest | $GH/hadolint/hadolint/.github/workflows/release.yml@refs/heads/master | https://token.actions.githubusercontent.com | hadolint/hadolint
 actionlint | $GH/rhysd/actionlint/releases/download/v{v}/actionlint_{v}_checksums.txt | https://api.github.com/repos/rhysd/actionlint/attestations | ghattest | $GH/rhysd/actionlint/.github/workflows/release.yaml@refs/tags/v{v} | https://token.actions.githubusercontent.com | rhysd/actionlint
 composer  | $GH/composer/composer/releases/download/{v}/composer.phar | $GH/composer/composer/releases/download/{v}/composer.phar.asc | gpg | composer.asc | 161DFBE342889F01DDAC4E61CBB3D576F2A0946F
-docker    | https://download.docker.com/linux/debian/dists/bookworm/InRelease | - | gpg | docker.asc | 9DC858229FC7DD38854AE2D88D81803C0EBFCD88
+docker    | https://download.docker.com/linux/debian/dists/trixie/InRelease | - | gpg | docker.asc | 9DC858229FC7DD38854AE2D88D81803C0EBFCD88
 composer  | $GH/composer/composer/releases/download/{v}/composer.phar | https://api.github.com/repos/composer/composer/attestations | ghattest | $GH/composer/composer/.github/workflows/release.yml@refs/tags/{v} | https://token.actions.githubusercontent.com | composer/composer
 kubectl   | https://dl.k8s.io/release/v{v}/bin/linux/amd64/kubectl.sha256 | https://dl.k8s.io/release/v{v}/bin/linux/amd64/kubectl | sigcert | krel-staging@k8s-releng-prod.iam.gserviceaccount.com | https://accounts.google.com
 kubectl   | https://dl.k8s.io/release/v{v}/bin/linux/arm64/kubectl.sha256 | https://dl.k8s.io/release/v{v}/bin/linux/arm64/kubectl | sigcert | krel-staging@k8s-releng-prod.iam.gserviceaccount.com | https://accounts.google.com
@@ -1364,7 +1364,7 @@ is_version() { printf '%s' "$1" | grep -qxE '[0-9]+(\.[0-9]+)*'; }
 is_apt_version() { printf '%s' "$1" | grep -qxE '([0-9]+:)?[0-9][A-Za-z0-9.+~]*-[A-Za-z0-9.+~]+'; }
 # Its unit version, the one check-pins reports and the drift and --to ask
 # for: the upstream version and the Debian revision, without the epoch or the
-# distro suffix after the revision's first `~` (5:29.9.0-1~debian.12~bookworm
+# distro suffix after the revision's first `~` (5:29.9.0-1~debian.13~trixie
 # -> 29.9.0-1). The revision is part of it, so a fix Docker ships only as a
 # new revision (29.9.0-2) is a bump like any release. Exactly <dotted
 # upstream>-<dotted revision> (is_apt_unit_version), or nothing and a

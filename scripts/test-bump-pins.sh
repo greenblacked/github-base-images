@@ -320,7 +320,7 @@ new_tree() {
   force "$t/.github/tool-pins.env" GITLEAKS_VERSION 8.30.1
   force "$t/ci-tools/Dockerfile.ci" KUBECTL_VERSION 1.37.0
   force "$t/ci-cloud/Dockerfile.ci" KUBECTL_VERSION 1.37.0
-  force "$t/ci-tools/Dockerfile.ci" DOCKER_CLI_VERSION '5:29.8.1-1~debian.12~bookworm'
+  force "$t/ci-tools/Dockerfile.ci" DOCKER_CLI_VERSION '5:29.8.1-1~debian.13~trixie'
   force "$t/ci-cloud/Dockerfile.ci" GCLOUD_VERSION 588.0.0
   force "$t/ci-db/Dockerfile.ci" MIGRATE_VERSION 4.20.1
   force "$t/scripts/lint.sh" HADOLINT_VERSION 2.15.1
@@ -619,7 +619,7 @@ mkdir -p "$work/curl-bin"
 cat > "$work/curl-bin/curl" <<'EOF2'
 #!/usr/bin/env bash
 for url in "$@"; do :; done
-[ "$url" = https://download.docker.com/linux/debian/dists/bookworm/stable/binary-amd64/Packages ] || exit 22
+[ "$url" = https://download.docker.com/linux/debian/dists/trixie/stable/binary-amd64/Packages ] || exit 22
 cat "$FAKE_CURL_PACKAGES"
 EOF2
 chmod +x "$work/curl-bin/curl"
@@ -627,30 +627,30 @@ cp_packages() { # OUT VERSION... -- docker-ce-cli at each, and a newer docker-ce
   local out="$1" v; shift
   : > "$out"
   for v in "$@"; do printf 'Package: docker-ce-cli\r\nArchitecture: amd64\r\nVersion: %s\r\n\r\n' "$v" >> "$out"; done
-  printf 'Package: docker-ce\nArchitecture: amd64\nVersion: 5:29.99.0-1~debian.12~bookworm\n\n' >> "$out"
+  printf 'Package: docker-ce\nArchitecture: amd64\nVersion: 5:29.99.0-1~debian.13~trixie\n\n' >> "$out"
 }
 # What check-pins does not parse is left out, never guessed at: a prerelease
 # upstream (~rc1) and a revision empty once its distro suffix is cut.
-cp_packages "$work/cp-rev.txt" 5:29.8.1-1~debian.12~bookworm 5:29.9.1-1~debian.12~bookworm 5:29.9.1-2~debian.12~bookworm \
-  5:29.99.0~rc1-1~debian.12~bookworm 5:29.99.1-~debian.12~bookworm
-cp_packages "$work/cp-minor.txt" 5:29.9.1-2~debian.12~bookworm 5:29.9.1-10~debian.12~bookworm 5:29.10.0-1~debian.12~bookworm
+cp_packages "$work/cp-rev.txt" 5:29.8.1-1~debian.13~trixie 5:29.9.1-1~debian.13~trixie 5:29.9.1-2~debian.13~trixie \
+  5:29.99.0~rc1-1~debian.13~trixie 5:29.99.1-~debian.13~trixie
+cp_packages "$work/cp-minor.txt" 5:29.9.1-2~debian.13~trixie 5:29.9.1-10~debian.13~trixie 5:29.10.0-1~debian.13~trixie
 check_docker() { # PIN PACKAGES -- check-pins --only docker in the scratch tree; sets rc
   force "$t/ci-tools/Dockerfile.ci" DOCKER_CLI_VERSION "$1"
   rc=0; PATH="$work/curl-bin:$PATH" FAKE_CURL_PACKAGES="$2" "$t/scripts/check-pins.sh" --only docker --format json \
     > "$work/c5c2.json" 2> "$work/c5c2.err" || rc=$?
 }
 cp_state() { jq -r '.tools[0] | "\(.pinned) \(.latest) \(.state)"' "$work/c5c2.json"; }
-check_docker '5:29.9.1-1~debian.12~bookworm' "$work/cp-rev.txt"
+check_docker '5:29.9.1-1~debian.13~trixie' "$work/cp-rev.txt"
 check "a revision-only drift, 29.9.1-1 behind 29.9.1-2: exit 3, behind" [ "$rc:$(cp_state)" = "3:29.9.1-1 29.9.1-2 behind" ]
-check_docker '5:29.9.1-2~debian.12~bookworm' "$work/cp-rev.txt"
+check_docker '5:29.9.1-2~debian.13~trixie' "$work/cp-rev.txt"
 check "the newest revision pinned is current" [ "$rc:$(cp_state)" = "0:29.9.1-2 29.9.1-2 current" ]
-check_docker '5:29.9.1-2~debian.12~bookworm' "$work/cp-minor.txt"
+check_docker '5:29.9.1-2~debian.13~trixie' "$work/cp-minor.txt"
 check "  29.9.1-2 < 29.9.1-10 < 29.10.0-1, so the latest is 29.10.0-1" [ "$rc:$(cp_state)" = "3:29.9.1-2 29.10.0-1 behind" ]
-check_docker '5:29.9.1-3~debian.12~bookworm' "$work/cp-rev.txt"
+check_docker '5:29.9.1-3~debian.13~trixie' "$work/cp-rev.txt"
 check "a pinned revision newer than the index's is ahead, not behind" [ "$rc:$(cp_state)" = "0:29.9.1-3 29.9.1-2 ahead" ]
-check_docker '5:29.9.1-~debian.12~bookworm' "$work/cp-rev.txt"
+check_docker '5:29.9.1-~debian.13~trixie' "$work/cp-rev.txt"
 check "a pin whose revision is empty once its distro suffix is cut: exit 1" [ "$rc" -eq 1 ]
-check "  and the log says why" grep -qF "is '5:29.9.1-~debian.12~bookworm', not <upstream>-<revision>" "$work/c5c2.err"
+check "  and the log says why" grep -qF "is '5:29.9.1-~debian.13~trixie', not <upstream>-<revision>" "$work/c5c2.err"
 check_docker '29.9.1' "$work/cp-rev.txt"
 check "a bare upstream version is no Debian version string: exit 1" [ "$rc" -eq 1 ]
 check "the coreutils sort -V here orders unit versions as dpkg does" \
@@ -874,7 +874,7 @@ if command -v gpg >/dev/null && command -v gpgv >/dev/null; then
   echo "case 5g4: the Docker CLI's version is read only from its signed apt index"
   t=$(new_tree fiveg4); cp -a "$t" "$work/fiveg4.snap"
   gpg --batch --armor --export t@example.com > "$work/keys/docker.asc" 2>/dev/null
-  dk=https://download.docker.com/linux/debian/dists/bookworm
+  dk=https://download.docker.com/linux/debian/dists/trixie
   # deb_packages OUT ARCH VERSION... -- a Packages file for ARCH in the
   # repository's format: docker-ce-cli at each VERSION, and docker-ce at a
   # newer one, which is never the package read.
@@ -882,10 +882,10 @@ if command -v gpg >/dev/null && command -v gpgv >/dev/null; then
     local out="$1" arch="$2" v; shift 2
     : > "$fx/$out"
     for v in "$@"; do
-      printf 'Package: docker-ce-cli\nArchitecture: %s\nVersion: %s\nDepends: libc6 (>= 2.34)\nFilename: dists/bookworm/pool/stable/%s/docker-ce-cli_%s_%s.deb\nSHA256: %s\n\n' \
+      printf 'Package: docker-ce-cli\nArchitecture: %s\nVersion: %s\nDepends: libc6 (>= 2.34)\nFilename: dists/trixie/pool/stable/%s/docker-ce-cli_%s_%s.deb\nSHA256: %s\n\n' \
         "$arch" "$v" "$arch" "${v#*:}" "$arch" "$(fake "deb-$arch-$v")" >> "$fx/$out"
     done
-    printf 'Package: docker-ce\nArchitecture: %s\nVersion: 5:29.99.0-1~debian.12~bookworm\n\n' "$arch" >> "$fx/$out"
+    printf 'Package: docker-ce\nArchitecture: %s\nVersion: 5:29.99.0-1~debian.13~trixie\n\n' "$arch" >> "$fx/$out"
   }
   # in_release OUT SIGNER SUITE PATH=FIXTURE... -- an InRelease for SUITE
   # listing each fixture under PATH, clearsigned by SIGNER. Its MD5Sum section
@@ -900,26 +900,26 @@ if command -v gpg >/dev/null && command -v gpgv >/dev/null; then
     } > "$fx/$out.txt"
     gpg --batch --quiet --yes --local-user "$signer" --digest-algo SHA512 --clearsign -o "$fx/$out" "$fx/$out.txt" 2>/dev/null
   }
-  D() { printf '5:%s~debian.12~bookworm' "$1"; }
+  D() { printf '5:%s~debian.13~trixie' "$1"; }
   deb_packages dk-amd64 amd64 "$(D 29.8.1-1)" "$(D 29.9.1-1)" "$(D 29.9.1-2)" "$(D 29.10.0-1)"
   deb_packages dk-arm64 arm64 "$(D 29.8.1-1)" "$(D 29.9.1-1)" "$(D 29.9.1-2)" "$(D 29.10.0-1)"
   deb_packages dk-arm64-old arm64 "$(D 29.8.1-1)"
   deb_packages dk-arm64-rev1 arm64 "$(D 29.8.1-1)" "$(D 29.9.1-1)"
   # 29.9.1-2 on arm64 too, but under another distro suffix: the same unit
   # version, a different version string.
-  deb_packages dk-arm64-suffix arm64 "$(D 29.8.1-1)" "$(D 29.9.1-1)" "5:29.9.1-2~debian.12.1~bookworm"
+  deb_packages dk-arm64-suffix arm64 "$(D 29.8.1-1)" "$(D 29.9.1-1)" "5:29.9.1-2~debian.13.1~trixie"
   # And amd64 listing 29.9.1-2 under two suffixes at once: ambiguous.
-  deb_packages dk-amd64-twice amd64 "$(D 29.8.1-1)" "$(D 29.9.1-1)" "$(D 29.9.1-2)" "5:29.9.1-2~debian.12.1~bookworm"
+  deb_packages dk-amd64-twice amd64 "$(D 29.8.1-1)" "$(D 29.9.1-1)" "$(D 29.9.1-2)" "5:29.9.1-2~debian.13.1~trixie"
   cp "$fx/dk-amd64" "$fx/dk-amd64-tampered"
   printf 'Package: docker-ce-cli\nArchitecture: amd64\nVersion: %s\n\n' "$(D 29.9.1-9)" >> "$fx/dk-amd64-tampered"
-  in_release dk-good t@example.com bookworm stable/binary-amd64/Packages=dk-amd64 stable/binary-arm64/Packages=dk-arm64
-  in_release dk-otherkey x@example.com bookworm stable/binary-amd64/Packages=dk-amd64 stable/binary-arm64/Packages=dk-arm64
-  in_release dk-noarm t@example.com bookworm stable/binary-amd64/Packages=dk-amd64
-  in_release dk-trixie t@example.com trixie stable/binary-amd64/Packages=dk-amd64 stable/binary-arm64/Packages=dk-arm64
-  in_release dk-old t@example.com bookworm stable/binary-amd64/Packages=dk-amd64 stable/binary-arm64/Packages=dk-arm64-old
-  in_release dk-rev1 t@example.com bookworm stable/binary-amd64/Packages=dk-amd64 stable/binary-arm64/Packages=dk-arm64-rev1
-  in_release dk-suffix t@example.com bookworm stable/binary-amd64/Packages=dk-amd64 stable/binary-arm64/Packages=dk-arm64-suffix
-  in_release dk-twice t@example.com bookworm stable/binary-amd64/Packages=dk-amd64-twice stable/binary-arm64/Packages=dk-arm64
+  in_release dk-good t@example.com trixie stable/binary-amd64/Packages=dk-amd64 stable/binary-arm64/Packages=dk-arm64
+  in_release dk-otherkey x@example.com trixie stable/binary-amd64/Packages=dk-amd64 stable/binary-arm64/Packages=dk-arm64
+  in_release dk-noarm t@example.com trixie stable/binary-amd64/Packages=dk-amd64
+  in_release dk-bookworm t@example.com bookworm stable/binary-amd64/Packages=dk-amd64 stable/binary-arm64/Packages=dk-arm64
+  in_release dk-old t@example.com trixie stable/binary-amd64/Packages=dk-amd64 stable/binary-arm64/Packages=dk-arm64-old
+  in_release dk-rev1 t@example.com trixie stable/binary-amd64/Packages=dk-amd64 stable/binary-arm64/Packages=dk-arm64-rev1
+  in_release dk-suffix t@example.com trixie stable/binary-amd64/Packages=dk-amd64 stable/binary-arm64/Packages=dk-arm64-suffix
+  in_release dk-twice t@example.com trixie stable/binary-amd64/Packages=dk-amd64-twice stable/binary-arm64/Packages=dk-arm64
   # Text before the signed block, listing the tampered file's hash: gpgv
   # would verify the block after it, and a parser of the whole file would
   # read the planted line first.
@@ -950,20 +950,20 @@ if command -v gpg >/dev/null && command -v gpgv >/dev/null; then
   dk_serve dk-good dk-amd64-tampered dk-arm64
   dk_fail "a Packages file whose hash is not the signed one" "$dk/stable/binary-amd64/Packages hashes to $(sha256sum "$fx/dk-amd64-tampered" | cut -d' ' -f1), not the $(sha256sum "$fx/dk-amd64" | cut -d' ' -f1)"
   dk_serve dk-noarm dk-amd64 dk-arm64
-  dk_fail "an index with no arm64 Packages" "lists no single SHA-256 for stable/binary-arm64/Packages: bookworm does not carry arm64"
+  dk_fail "an index with no arm64 Packages" "lists no single SHA-256 for stable/binary-arm64/Packages: trixie does not carry arm64"
   dk_serve dk-old dk-amd64 dk-arm64-old
   dk_fail "arm64 Packages without the version" "$dk/stable/binary-arm64/Packages has no docker-ce-cli 29.9.1-2 for arm64"
   dk_serve dk-rev1 dk-amd64 dk-arm64-rev1
   dk_fail "arm64 Packages without that revision, only an older one" "$dk/stable/binary-arm64/Packages has no docker-ce-cli 29.9.1-2 for arm64"
   dk_serve dk-suffix dk-amd64 dk-arm64-suffix
-  dk_fail "the architectures on different version strings of one revision" "the architectures disagree: docker-ce-cli 29.9.1-2 is $(D 29.9.1-2) for one and 5:29.9.1-2~debian.12.1~bookworm for arm64"
+  dk_fail "the architectures on different version strings of one revision" "the architectures disagree: docker-ce-cli 29.9.1-2 is $(D 29.9.1-2) for one and 5:29.9.1-2~debian.13.1~trixie for arm64"
   dk_serve dk-twice dk-amd64-twice dk-arm64
   dk_fail "one architecture with two version strings of the revision" "$dk/stable/binary-amd64/Packages has two docker-ce-cli version strings for 29.9.1-2 on amd64"
   dk_serve dk-good dk-amd64 dk-arm64
   dk_fail "a revision the index does not have" "$dk/stable/binary-amd64/Packages has no docker-ce-cli 29.9.1-3 for amd64" 29.9.1-3
   dk_fail "a bare upstream version, with no revision" "target version '29.9.1' is not <upstream>-<revision>" 29.9.1
-  dk_serve dk-trixie dk-amd64 dk-arm64
-  dk_fail "a validly signed InRelease of another suite" "the signed $dk/InRelease does not name the suite bookworm"
+  dk_serve dk-bookworm dk-amd64 dk-arm64
+  dk_fail "a validly signed InRelease of another suite" "the signed $dk/InRelease does not name the suite trixie"
   dk_serve dk-prefixed dk-amd64-tampered dk-arm64
   dk_fail "unsigned text before the signed block" "$dk/InRelease is not exactly one clearsigned message"
   dk_serve dk-expired dk-amd64 dk-arm64
@@ -1578,10 +1578,10 @@ bad_tables "a kubectl row signed as a pattern" "is not an exact workflow or serv
 bad_tables "a kubectl arch with no signature row" "kubectl is signed, but https://dl.k8s.io/release/v{v}/bin/linux/arm64/kubectl.sha256 has no SIGS row" \
   '/^kubectl .*arm64.* sigcert /d'
 bad_tables "an apt InRelease with no signature row" \
-  "docker reads https://download.docker.com/linux/debian/dists/bookworm/InRelease, which has no inline gpg SIGS row" \
+  "docker reads https://download.docker.com/linux/debian/dists/trixie/InRelease, which has no inline gpg SIGS row" \
   '/^docker .*InRelease | - | gpg /d'
 bad_tables "an apt InRelease given a detached signature" "is an InRelease, signed inline, but the row names a detached" \
-  's#InRelease | - | gpg #InRelease | https://download.docker.com/linux/debian/dists/bookworm/Release.gpg | gpg #'
+  's#InRelease | - | gpg #InRelease | https://download.docker.com/linux/debian/dists/trixie/Release.gpg | gpg #'
 bad_tables "an inline signature on a file that is not an InRelease" "an inline signature ('-') is only for an APT row's InRelease" \
   's#| https://releases.hashicorp.com/terraform/{v}/terraform_{v}_SHA256SUMS.sig | gpg #| - | gpg #'
 bad_tables "an APT row that does not read arm64" "APT row for docker does not read arm64" \
@@ -1625,10 +1625,10 @@ force "$t/ci-tools/Dockerfile.ci" DOCKER_CLI_VERSION 29.9.0
 rc=0; "$t/scripts/bp.sh" --root "$t" --check > /dev/null 2> "$work/c5j.err" || rc=$?
 check "an apt pin that is a bare version, not the package's version string, fails --check" [ "$rc" -eq 1 ]
 check "  and says so" grep -qF "is '29.9.0', not a Debian version string" "$work/c5j.err"
-force "$t/ci-tools/Dockerfile.ci" DOCKER_CLI_VERSION '5:29.9.0-~debian.12~bookworm'
+force "$t/ci-tools/Dockerfile.ci" DOCKER_CLI_VERSION '5:29.9.0-~debian.13~trixie'
 rc=0; "$t/scripts/bp.sh" --root "$t" --check > /dev/null 2> "$work/c5j.err" || rc=$?
 check "an apt pin whose revision is empty once its distro suffix is cut fails --check" [ "$rc" -eq 1 ]
-check "  and says so" grep -qF "is '5:29.9.0-~debian.12~bookworm', not a Debian version string of <upstream>-<revision>" "$work/c5j.err"
+check "  and says so" grep -qF "is '5:29.9.0-~debian.13~trixie', not a Debian version string of <upstream>-<revision>" "$work/c5j.err"
 
 echo "case 5h: --check over the real tree"
 check "every pin, checksum, tofu and signature row names exactly one line" "$bump" --check --quiet
@@ -1640,9 +1640,9 @@ check "the Docker key file holds exactly one primary key, the pinned one" \
   bash -c "GNUPGHOME=\$(mktemp -d) gpg --batch --show-keys --with-colons '$here/keys/docker.asc' 2>/dev/null | awk -F: '\$1 == \"pub\" { p = 1; next } p && \$1 == \"fpr\" { print \$10; p = 0 }' | { read -r a && [ \"\$a\" = 9DC858229FC7DD38854AE2D88D81803C0EBFCD88 ] && ! read -r _; }"
 check "  and the Dockerfile pins the same fingerprint" \
   grep -qx 'ARG DOCKER_KEY_FINGERPRINT=9DC858229FC7DD38854AE2D88D81803C0EBFCD88' "$repo/ci-tools/Dockerfile.ci"
-check "  as does the InRelease signature row" grep -qE '^docker +\| https://download.docker.com/linux/debian/dists/bookworm/InRelease \| - \| gpg \| docker.asc \| 9DC858229FC7DD38854AE2D88D81803C0EBFCD88$' "$bump"
+check "  as does the InRelease signature row" grep -qE '^docker +\| https://download.docker.com/linux/debian/dists/trixie/InRelease \| - \| gpg \| docker.asc \| 9DC858229FC7DD38854AE2D88D81803C0EBFCD88$' "$bump"
 check "  and the bump reads the suite and component the Dockerfile installs from" \
-  bash -c "grep -qF 'https://download.docker.com/linux/debian bookworm stable\" \\' '$repo/ci-tools/Dockerfile.ci' && grep -qE '^docker +\| ci-tools/Dockerfile.ci:DOCKER_CLI_VERSION \| https://download.docker.com/linux/debian \| bookworm \| stable \| docker-ce-cli \| amd64 arm64$' '$bump'"
+  bash -c "grep -qF 'https://download.docker.com/linux/debian trixie stable\" \\' '$repo/ci-tools/Dockerfile.ci' && grep -qE '^docker +\| ci-tools/Dockerfile.ci:DOCKER_CLI_VERSION \| https://download.docker.com/linux/debian \| trixie \| stable \| docker-ce-cli \| amd64 arm64$' '$bump'"
 
 # --- scripts/pin-bump-prs.sh ---------------------------------------------------
 # Real git against a local bare repository as origin, so pushes, leases and
@@ -2016,7 +2016,7 @@ if [ -n "${fpr:-}" ] && command -v gpgv >/dev/null; then
   check "  the title names the unit versions, upstream and revision" \
     bash -c "grep -q -- '^pr create .* --title Bump docker from 29.8.1-1 to 29.9.1-2 --body-file ' '$log'"
   check "  the branch pins the full version string" \
-    bash -c "git -C '$origin' show pin-bump/docker:ci-tools/Dockerfile.ci | grep -qx 'ARG DOCKER_CLI_VERSION=5:29.9.1-2~debian.12~bookworm'"
+    bash -c "git -C '$origin' show pin-bump/docker:ci-tools/Dockerfile.ci | grep -qx 'ARG DOCKER_CLI_VERSION=5:29.9.1-2~debian.13~trixie'"
 else
   ok "gpg/gpgv not installed; the Docker apt PR case skipped"
 fi

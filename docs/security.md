@@ -34,8 +34,10 @@ in.
 
 Trivy runs five scans on every build, per architecture. All reports are printed to the log and
 uploaded as a **`security-report-<image>-<arch>` artifact** (retained 90 days), including on failed
-builds. The job summary lists them and carries the gate's own table; the full tables are too large
-for it (a step summary is capped at 1 MiB):
+builds. The job summary lists them, carries the gate's own table, and has one line of the full
+vulnerability report's counts per severity, split into fixable and unfixed (fixable: Trivy lists a
+fixed version), computed from its JSON with `jq`. The full tables are too large for it (a step
+summary is capped at 1 MiB):
 
 - **Vulnerability scan** — full report at every severity, and **a gate that blocks the push** when
   the build **adds** a **fixable** HIGH/CRITICAL finding, in OS packages *and* in libraries and
@@ -55,7 +57,7 @@ for it (a step summary is capped at 1 MiB):
     gate. It is never read as "no findings".
   - It also scans the **base image the build is FROM**, for the same architecture and with the
     same flags: the mirror on `main`, the upstream ref from `images.json` elsewhere (so
-    `debian:bookworm-slim` for `ci-tools`, `ci-cloud`, `ci-security` and `ci-db`, the .NET SDK
+    `debian:trixie-slim` for `ci-tools`, `ci-cloud`, `ci-security` and `ci-db`, the .NET SDK
     image for the `ci-dotnet*` images, and so on). A finding the published image lacks but the
     base image carries is **inherited from the base image**: listed, never blocking. So what blocks
     is the candidate minus the published image minus the base image. This repository cannot fix
@@ -295,7 +297,7 @@ cosign verify \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com \
   --certificate-identity-regexp \
     '^https://github\.com/greenblacked/github-base-images/\.github/workflows/build-image\.yml@refs/heads/main$' \
-  ghcr.io/greenblacked/ci-tools:bookworm-v1
+  ghcr.io/greenblacked/ci-tools:trixie-v1
 ```
 
 **Do not drop the identity flags.** `cosign verify` without them checks only that *somebody*
@@ -311,7 +313,7 @@ rather than guessing:
 cosign verify --insecure-ignore-tlog=false \
   --certificate-identity-regexp '.*' \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com \
-  ghcr.io/greenblacked/ci-tools:bookworm-v1 2>&1 | head
+  ghcr.io/greenblacked/ci-tools:trixie-v1 2>&1 | head
 ```
 
 That accepts any identity, so it is a diagnostic, **not** a verification — never leave it in a
@@ -350,7 +352,7 @@ same job that runs cosign. It is independent of the cosign signature — a secon
 path, not a replacement:
 
 ```bash
-gh attestation verify oci://ghcr.io/greenblacked/ci-tools:bookworm-v1 \
+gh attestation verify oci://ghcr.io/greenblacked/ci-tools:trixie-v1 \
   --repo greenblacked/github-base-images \
   --cert-identity https://github.com/greenblacked/github-base-images/.github/workflows/build-image.yml@refs/heads/main
 ```
@@ -366,7 +368,7 @@ Published images carry an **SBOM and provenance attestation** attached to the ar
 just to a build artifact that expires after 90 days. These are the `unknown/unknown` entries in:
 
 ```bash
-docker buildx imagetools inspect ghcr.io/greenblacked/ci-ruby34:bookworm-v1
+docker buildx imagetools inspect ghcr.io/greenblacked/ci-ruby34:trixie-v1
 ```
 
 `sbom: true` and `provenance: mode=max` are set on the push step only — the test build uses the
@@ -695,7 +697,7 @@ release, and those marked below were verified end to end, before it was pinned:
 | actionlint | each archive digest in `actionlint_<v>_checksums.txt`, by its GitHub attestation | as hadolint | `https://github.com/rhysd/actionlint/.github/workflows/release.yaml@refs/tags/v<v>`, repository `rhysd/actionlint` |
 | Composer | `composer.phar` on the GitHub release: its digest by GitHub attestation, and the file by its `.asc` | as hadolint, then `gpgv` | `https://github.com/composer/composer/.github/workflows/release.yml@refs/tags/<v>` (no `v`), repository `composer/composer`; key `scripts/keys/composer.asc` (from keyserver.ubuntu.com: Composer publishes no official copy, so it is not refreshed), fingerprint `161DFBE342889F01DDAC4E61CBB3D576F2A0946F` |
 | kubectl | each binary (`kubectl.sig`, `kubectl.cert`) | `cosign verify-blob --signature --certificate`, then sha256 of the binary = the `.sha256` sum | `krel-staging@k8s-releng-prod.iam.gserviceaccount.com`, issuer `https://accounts.google.com` |
-| Docker CLI | the bookworm `InRelease` of `download.docker.com/linux/debian` (clearsigned), then each `stable/binary-<arch>/Packages` by the SHA-256 that signed file lists | `gpgv`, then sha256 of each Packages file = the signed sum | Docker's "Docker Release (CE deb)" key, `scripts/keys/docker.asc` (from `download.docker.com/linux/debian/gpg`), primary fingerprint `9DC858229FC7DD38854AE2D88D81803C0EBFCD88` (it signs with subkey `D3306A018370199E527AE7997EA0A9C3F273FCD8`) |
+| Docker CLI | the trixie `InRelease` of `download.docker.com/linux/debian` (clearsigned), then each `stable/binary-<arch>/Packages` by the SHA-256 that signed file lists | `gpgv`, then sha256 of each Packages file = the signed sum | Docker's "Docker Release (CE deb)" key, `scripts/keys/docker.asc` (from `download.docker.com/linux/debian/gpg`), primary fingerprint `9DC858229FC7DD38854AE2D88D81803C0EBFCD88` (it signs with subkey `D3306A018370199E527AE7997EA0A9C3F273FCD8`) |
 
 The identities are exact, not patterns, and `bump-pins.sh --check` (run by lint) refuses a
 pattern, an unknown issuer, a digest row without the repository it binds (and, for the SLSA
@@ -760,17 +762,18 @@ How the newer rows work, and what each binds:
   and the cosign invocation is the one cosign v3 takes for a signature and certificate without a
   bundle (`--insecure-ignore-tlog` is never used).
 - **Docker CLI.** The pin is `DOCKER_CLI_VERSION` in `ci-tools/Dockerfile.ci`, the package's full
-  version string (`5:29.9.0-1~debian.12~bookworm`), and no checksum: apt verifies `InRelease`
+  version string (`5:29.9.0-1~debian.13~trixie`), and no checksum: apt verifies `InRelease`
   against the keyring the build installs (`signed-by`, the key's fingerprint checked first against
   `DOCKER_KEY_FINGERPRINT`, as Microsoft's is for the Azure CLI), `Packages` against `InRelease`,
   and the `.deb` against `Packages`. The bump walks the same chain before it writes a version:
   the `InRelease` must be one clearsigned message (nothing outside the signed block is read; what
   is read is `gpgv`'s own output of what was signed) by the pinned key, and name the suite;
   each architecture's `Packages` must hash to the sum the signed file lists; and amd64 and arm64
-  must carry the same version string. Any failure is an error row. Verified live on 2026-10-18:
-  bookworm's `InRelease` gives `VALIDSIG` by the subkey for the pinned primary, both
-  architectures' `Packages` and `Packages.gz` match its SHA-256 lines, and both list
-  `docker-ce-cli` up to `5:29.9.1-1~debian.12~bookworm`. The unit's version, which `check-pins.sh`
+  must carry the same version string. Any failure is an error row. Verified live on 2026-10-18
+  against bookworm, and again on 2026-10-19 against trixie, the suite since the
+  [Trixie migration](images.md#the-trixie-migration): trixie's `InRelease` gives a good signature
+  by the subkey for the pinned primary, and both architectures list `docker-ce-cli` up to
+  `5:29.9.1-1~debian.13~trixie`. The unit's version, which `check-pins.sh`
   reports and a bump asks for, is the upstream version and the Debian revision without the epoch
   or the distro suffix (`29.9.1-1`), so a packaging or security fix Docker ships only as a new
   revision is drift too; the bump takes exactly that revision from the signed index, never the

@@ -1,15 +1,15 @@
 [
   {
     "image": "ci-cloud",
-    "version": "bookworm-v1",
-    "mirror": "mirror-debian:bookworm-slim",
-    "upstream": "debian:bookworm-slim"
+    "version": "trixie-v1",
+    "mirror": "mirror-debian:trixie-slim",
+    "upstream": "debian:trixie-slim"
   },
   {
     "image": "ci-db",
-    "version": "bookworm-v1",
-    "mirror": "mirror-debian:bookworm-slim",
-    "upstream": "debian:bookworm-slim"
+    "version": "trixie-v1",
+    "mirror": "mirror-debian:trixie-slim",
+    "upstream": "debian:trixie-slim"
   },
   {
     "image": "ci-dotnet8",
@@ -31,9 +31,9 @@
   },
   {
     "image": "ci-go",
-    "version": "bookworm-v1",
-    "mirror": "mirror-golang:1-bookworm",
-    "upstream": "golang:1-bookworm"
+    "version": "trixie-v1",
+    "mirror": "mirror-golang:1-trixie",
+    "upstream": "golang:1-trixie"
   },
   {
     "image": "ci-java17",
@@ -55,21 +55,21 @@
   },
   {
     "image": "ci-node22",
-    "version": "bookworm-v1",
-    "mirror": "mirror-node:22-bookworm-slim",
-    "upstream": "node:22-bookworm-slim"
+    "version": "trixie-v1",
+    "mirror": "mirror-node:22-trixie-slim",
+    "upstream": "node:22-trixie-slim"
   },
   {
     "image": "ci-node24",
-    "version": "bookworm-v1",
-    "mirror": "mirror-node:24-bookworm-slim",
-    "upstream": "node:24-bookworm-slim"
+    "version": "trixie-v1",
+    "mirror": "mirror-node:24-trixie-slim",
+    "upstream": "node:24-trixie-slim"
   },
   {
     "image": "ci-php84",
-    "version": "bookworm-v1",
-    "mirror": "mirror-php:8.4-cli-bookworm",
-    "upstream": "php:8.4-cli-bookworm"
+    "version": "trixie-v1",
+    "mirror": "mirror-php:8.4-cli-trixie",
+    "upstream": "php:8.4-cli-trixie"
   },
   {
     "image": "ci-php85",
@@ -79,15 +79,15 @@
   },
   {
     "image": "ci-python312",
-    "version": "bookworm-v1",
-    "mirror": "mirror-python:3.12-slim-bookworm",
-    "upstream": "python:3.12-slim-bookworm"
+    "version": "trixie-v1",
+    "mirror": "mirror-python:3.12-slim-trixie",
+    "upstream": "python:3.12-slim-trixie"
   },
   {
     "image": "ci-python313",
-    "version": "bookworm-v1",
-    "mirror": "mirror-python:3.13-slim-bookworm",
-    "upstream": "python:3.13-slim-bookworm"
+    "version": "trixie-v1",
+    "mirror": "mirror-python:3.13-slim-trixie",
+    "upstream": "python:3.13-slim-trixie"
   },
   {
     "image": "ci-python314",
@@ -103,9 +103,9 @@
   },
   {
     "image": "ci-ruby34",
-    "version": "bookworm-v1",
-    "mirror": "mirror-ruby:3.4-slim-bookworm",
-    "upstream": "ruby:3.4-slim-bookworm"
+    "version": "trixie-v1",
+    "mirror": "mirror-ruby:3.4-slim-trixie",
+    "upstream": "ruby:3.4-slim-trixie"
   },
   {
     "image": "ci-ruby40",
@@ -115,20 +115,20 @@
   },
   {
     "image": "ci-rust",
-    "version": "bookworm-v1",
-    "mirror": "mirror-rust:1-bookworm",
-    "upstream": "rust:1-bookworm"
+    "version": "trixie-v1",
+    "mirror": "mirror-rust:1-trixie",
+    "upstream": "rust:1-trixie"
   },
   {
     "image": "ci-security",
-    "version": "bookworm-v1",
-    "mirror": "mirror-debian:bookworm-slim",
-    "upstream": "debian:bookworm-slim"
+    "version": "trixie-v1",
+    "mirror": "mirror-debian:trixie-slim",
+    "upstream": "debian:trixie-slim"
   },
   {
     "image": "ci-tools",
-    "version": "bookworm-v1",
-    "mirror": "mirror-debian:bookworm-slim",
-    "upstream": "debian:bookworm-slim"
+    "version": "trixie-v1",
+    "mirror": "mirror-debian:trixie-slim",
+    "upstream": "debian:trixie-slim"
   }
 ]

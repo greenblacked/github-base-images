@@ -25,15 +25,15 @@ on:
         required: true
         type: string
       version:
-        description: "Rolling contract tag, e.g. bookworm-v1"
+        description: "Rolling contract tag, e.g. trixie-v1"
         required: true
         type: string
       mirror:
-        description: "Mirror ref under ghcr.io/<owner>/, e.g. mirror-node:22-bookworm-slim"
+        description: "Mirror ref under ghcr.io/<owner>/, e.g. mirror-node:22-trixie-slim"
         required: true
         type: string
       upstream:
-        description: "Upstream base ref, e.g. node:22-bookworm-slim"
+        description: "Upstream base ref, e.g. node:22-trixie-slim"
         required: true
         type: string
 
@@ -135,7 +135,7 @@ jobs:
       # --upstream mode (the same index read, the same retries and the same
       # one-linux/<arch>-manifest rule as the "Published baseline" step
       # below) resolves BUILD_BASE_IMAGE to its per-arch manifest. For
-      # ci-tools, ci-cloud, ci-security and ci-db that is debian:bookworm-slim
+      # ci-tools, ci-cloud, ci-security and ci-db that is debian:trixie-slim
       # (or its mirror); for ci-dotnet8 the .NET SDK image; and so on --
       # whatever images.json names.
       #
@@ -328,6 +328,15 @@ jobs:
             echo "::endgroup::"
             echo "| \`$report\` | $(wc -l < "$report") |" >> "$GITHUB_STEP_SUMMARY"
           done
+          # One line of counts from the JSON report: every finding, per
+          # severity, as fixable/unfixed (fixable = Trivy lists a fixed
+          # version). A finding is counted once per package it is in.
+          jq -r '[.Results[]?.Vulnerabilities[]?] as $v
+            | ["CRITICAL", "HIGH", "MEDIUM", "LOW", "UNKNOWN"]
+            | map(. as $s | [$v[] | select(.Severity == $s)]
+                | "\($s) \(map(select((.FixedVersion // "") != "")) | length)/\(map(select((.FixedVersion // "") == "")) | length)")
+            | "\n**Trivy findings, fixable/unfixed:** " + join(", ")' \
+            "trivy-$IMAGE-$ARCH.json" >> "$GITHUB_STEP_SUMMARY"
 
       # Upload before the gates, so the reports survive even when a gate fails
       # -- that is exactly the build you most want the reports for.

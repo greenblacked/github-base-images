@@ -10,7 +10,7 @@
 # it falls out of support six weeks later, which is exactly what happened: it
 # sat on 1.85 while stable reached 1.97.
 #
-# Rust's own stability guarantee makes the rolling `1-bookworm` tag safe FOR
+# Rust's own stability guarantee makes the rolling `1-trixie` tag safe FOR
 # COMPILATION: code that compiles on one 1.x compiles on later 1.x.
 #
 # It is NOT safe for linting, and that is the real cost of this choice. clippy
@@ -23,13 +23,13 @@
 # this image and which holds clippy along with rustc. Consumers who genuinely need
 # an exact toolchain pin it per project with a rust-toolchain.toml, which is
 # the mechanism Rust provides for that and which this image respects.
-ARG BASE_IMAGE=rust:1-bookworm
+ARG BASE_IMAGE=rust:1-trixie
 # DL3006: the default above is tagged; hadolint just can't see through the ARG.
 # hadolint ignore=DL3006
 FROM ${BASE_IMAGE}
 
 LABEL org.opencontainers.image.source=https://github.com/greenblacked/github-base-images
-LABEL org.opencontainers.image.description="Shared CI image: current stable Rust on Debian Bookworm"
+LABEL org.opencontainers.image.description="Shared CI image: current stable Rust on Debian Trixie"
 LABEL org.opencontainers.image.licenses=MIT
 
 ENV DEBIAN_FRONTEND=noninteractive \

@@ -1,13 +1,13 @@
 # Defaults to upstream so local builds work without authenticating to ghcr.io.
 # CI overrides this with our mirrored copy, so builds do not depend on Docker
 # Hub availability or rate limits.
-ARG BASE_IMAGE=node:24-bookworm-slim
+ARG BASE_IMAGE=node:24-trixie-slim
 # DL3006: the default above is tagged; hadolint just can't see through the ARG.
 # hadolint ignore=DL3006
 FROM ${BASE_IMAGE}
 
 LABEL org.opencontainers.image.source=https://github.com/greenblacked/github-base-images
-LABEL org.opencontainers.image.description="Shared CI image: Node.js 24 on Debian Bookworm slim"
+LABEL org.opencontainers.image.description="Shared CI image: Node.js 24 on Debian Trixie slim"
 LABEL org.opencontainers.image.licenses=MIT
 
 ENV DEBIAN_FRONTEND=noninteractive \

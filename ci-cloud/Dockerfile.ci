@@ -1,13 +1,13 @@
 # Defaults to upstream so local builds work without authenticating to ghcr.io.
 # CI overrides this with our mirrored copy, so builds do not depend on Docker
 # Hub availability or rate limits.
-ARG BASE_IMAGE=debian:bookworm-slim
+ARG BASE_IMAGE=debian:trixie-slim
 # DL3006: the default above is tagged; hadolint just can't see through the ARG.
 # hadolint ignore=DL3006
 FROM ${BASE_IMAGE}
 
 LABEL org.opencontainers.image.source=https://github.com/greenblacked/github-base-images
-LABEL org.opencontainers.image.description="Shared CI image: GCP and Azure deploy tooling (gcloud, az, kubectl) on Debian Bookworm slim"
+LABEL org.opencontainers.image.description="Shared CI image: GCP and Azure deploy tooling (gcloud, az, kubectl) on Debian Trixie slim"
 LABEL org.opencontainers.image.licenses=MIT
 
 ENV DEBIAN_FRONTEND=noninteractive \
@@ -75,6 +75,22 @@ RUN apt-get update \
 #
 # DL3008: see above. Version pinning azure-cli would freeze it against a
 # repository that only carries recent versions, breaking the weekly rebuild.
+#
+# The suite is bookworm although this image is on Trixie. Microsoft's
+# azure-cli repository has no trixie suite (packages.microsoft.com/repos/
+# azure-cli/dists/ lists bookworm as its newest Debian release, and
+# azure-cli's own release pipeline builds Debian packages for bookworm only),
+# and the general Debian 13 repository (packages.microsoft.com/debian/13/prod)
+# does not carry azure-cli. The bookworm package is the supported Debian
+# build: it bundles its own Python under /opt/az, and its few system
+# dependencies all resolve on Trixie -- libssl3t64 provides libssl3, and
+# libffi8, libbz2-1.0, libuuid1, zlib1g and libgcc-s1 are Trixie packages.
+# The alternatives were worse: a pip install of azure-cli replaces Microsoft's
+# signed apt repository with several hundred PyPI wheels to hash and pin, and
+# the Ubuntu builds are linked against Ubuntu's libraries. `pip check` and
+# `az version` below, and ci-cloud/test.sh, prove the CLI starts on this base.
+# Once Microsoft publishes a trixie suite, set it here.
+ARG AZURE_CLI_SUITE=bookworm
 ARG MICROSOFT_KEY_FINGERPRINT=BC528686B50D79E339D3721CEB3E94ADBE1229CF
 # hadolint ignore=DL3008
 RUN GNUPGHOME="$(mktemp -d)" \
@@ -88,7 +104,7 @@ RUN GNUPGHOME="$(mktemp -d)" \
     fi \
     && gpg --batch --dearmor -o /usr/share/keyrings/microsoft.gpg /tmp/microsoft.asc \
     && rm -rf /tmp/microsoft.asc /tmp/microsoft.keys "${GNUPGHOME}" \
-    && echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/microsoft.gpg] https://packages.microsoft.com/repos/azure-cli/ bookworm main" \
+    && echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/microsoft.gpg] https://packages.microsoft.com/repos/azure-cli/ ${AZURE_CLI_SUITE} main" \
         > /etc/apt/sources.list.d/azure-cli.list \
     && apt-get update \
     && apt-get install --yes --no-install-recommends azure-cli \

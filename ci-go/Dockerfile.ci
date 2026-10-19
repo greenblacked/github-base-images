@@ -14,13 +14,13 @@
 # project that must build on an OLDER Go than this image ships is not served by
 # the directive and needs GOTOOLCHAIN=go1.x set explicitly, or its own image.
 # That is the honest limit of this approach.
-ARG BASE_IMAGE=golang:1-bookworm
+ARG BASE_IMAGE=golang:1-trixie
 # DL3006: the default above is tagged; hadolint just can't see through the ARG.
 # hadolint ignore=DL3006
 FROM ${BASE_IMAGE}
 
 LABEL org.opencontainers.image.source=https://github.com/greenblacked/github-base-images
-LABEL org.opencontainers.image.description="Shared CI image: current stable Go on Debian Bookworm"
+LABEL org.opencontainers.image.description="Shared CI image: current stable Go on Debian Trixie"
 LABEL org.opencontainers.image.licenses=MIT
 
 ENV DEBIAN_FRONTEND=noninteractive \

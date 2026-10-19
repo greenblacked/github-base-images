@@ -294,7 +294,7 @@ jobs:
       # buildx imagetools create --tag mirror "$upstream"` asks the registry to
       # resolve a floating tag and copies whatever it hands back, with no record
       # of which bytes crossed. If Docker Hub ever served a compromised
-      # `debian:bookworm-slim` during some window, this step would mirror it
+      # `debian:trixie-slim` during some window, this step would mirror it
       # faithfully, every image based on it would be built from it, and nothing
       # here could later answer "were we affected" -- the exact question the SBOMs
       # (README, "Security scanning") exist to answer for everything upstream
@@ -357,7 +357,7 @@ jobs:
           }
 
           # sort -u because several images share one base: ci-tools, ci-cloud,
-          # ci-security and ci-db all build FROM debian:bookworm-slim, and
+          # ci-security and ci-db all build FROM debian:trixie-slim, and
           # without this the identical base would be resolved, copied and
           # verified once per image instead of once per distinct base, on every
           # publish run.
