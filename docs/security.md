@@ -436,7 +436,7 @@ daily, on every push and pull request, and on a dispatch.
   language worth analysing here — the repo is shell, YAML and Dockerfiles, none of which CodeQL
   supports.
 - **Git history secret scan** — `gitleaks` over the full history, which the working-tree scan
-  cannot see. A credential committed and removed in a later commit is still fetchable by anyone
+  cannot see (a pinned, checksum-verified release binary, its pins in `.github/tool-pins.env`). A credential committed and removed in a later commit is still fetchable by anyone
   who clones. **Reported, not gating**, and deliberately so: a history finding cannot be fixed by
   a commit — it needs a history rewrite *plus* rotation — so failing the build would block every
   unrelated change until that happened. Treat a hit as an incident, not a broken build.
@@ -662,6 +662,16 @@ Docker's signature (below).
 Composer's sha256 is also hashed from the bump's own download of the phar on the GitHub release,
 but it is not trust on first use: it is pinned only once GitHub's attestation for exactly that
 digest, and the phar's GPG signature, verify (below).
+
+The pins live in the Dockerfiles, in `scripts/lint.sh` (the lint engines), in the pip
+requirements files, and, for the two binaries a workflow step downloads itself (gitleaks for the
+git history scan in `security.yml`, osv-scanner in `build-image.yml`), in
+[.github/tool-pins.env](../.github/tool-pins.env). None is in a workflow file: the pin-bump bot
+pushes with `GITHUB_TOKEN`, which GitHub refuses for any change under `.github/workflows/`, and
+`bump-pins.sh --check` (run by lint) fails a pin there. `tool-pins.env` is data, never sourced:
+each step takes exactly one `KEY=value` line per key, the value a dotted version or a 64-hex
+sha256, and fails before downloading anything otherwise
+([ADR 0008](adr/0008-self-updating.md#amendment-2026-10-19-no-bump-managed-pin-lives-in-a-workflow-file)).
 
 A checksums file taken from the same release as the artifact only proves the two were published
 together, so wherever the vendor signs it, `bump-pins.sh` verifies that signature before it reads

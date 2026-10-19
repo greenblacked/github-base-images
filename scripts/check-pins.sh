@@ -114,8 +114,13 @@ trap 'rm -rf "$tmp"' EXIT INT TERM
 # npm's tree have to stay on the major npm itself depends on.
 #
 # gitleaks is the exception, listed twice: the copy security.yml runs over the
-# git history is a separate pin that nothing forces to agree with the image's,
-# so it is checked in its own right rather than assumed to follow.
+# git history (pinned in .github/tool-pins.env) is a separate pin that nothing
+# forces to agree with the image's, so it is checked in its own right rather
+# than assumed to follow.
+#
+# A tool a workflow step downloads itself (that gitleaks, osv-scanner) is
+# pinned in .github/tool-pins.env, never in the workflow file: the pin-bump
+# bot cannot push a change under .github/workflows/ (scripts/bump-pins.sh).
 #
 # A `.txt` file is a pip requirements file, and its key the project name as
 # written there (`cryptography==50.0.2`): the libraries ci-cloud swaps into
@@ -135,14 +140,14 @@ grype      | ci-security/Dockerfile.ci            | GRYPE_VERSION      | github 
 cosign     | ci-security/Dockerfile.ci            | COSIGN_VERSION     | github    | sigstore/cosign
 gitleaks   | ci-security/Dockerfile.ci            | GITLEAKS_VERSION   | github    | gitleaks/gitleaks
 migrate    | ci-db/Dockerfile.ci                  | MIGRATE_VERSION    | github    | golang-migrate/migrate
-osv-scanner | .github/workflows/build-image.yml   | OSV_SCANNER_VERSION | github   | google/osv-scanner
+osv-scanner | .github/tool-pins.env               | OSV_SCANNER_VERSION | github   | google/osv-scanner
 npm        | */Dockerfile.ci                      | NPM_VERSION        | npm       | npm
 npm-brace-expansion | *?/Dockerfile.ci            | NPM_BRACE_EXPANSION_VERSION | npm | brace-expansion@5
 npm-undici | *?/Dockerfile.ci                     | NPM_UNDICI_VERSION | npm       | undici@6
 json       | *?/Dockerfile.ci                     | JSON_VERSION       | rubygems  | json
 hadolint   | scripts/lint.sh                      | HADOLINT_VERSION   | github    | hadolint/hadolint
 actionlint | scripts/lint.sh                      | ACTIONLINT_VERSION | github    | rhysd/actionlint
-gitleaks-workflow | .github/workflows/security.yml | GITLEAKS_VERSION  | github    | gitleaks/gitleaks
+gitleaks-workflow | .github/tool-pins.env          | GITLEAKS_VERSION  | github    | gitleaks/gitleaks
 az-pyjwt   | ci-cloud/az-overrides.txt            | pyjwt              | pypi      | PyJWT
 az-cryptography | ci-cloud/az-overrides.txt       | cryptography       | pypi      | cryptography
 az-pyopenssl | ci-cloud/az-overrides.txt          | pyopenssl          | pypi      | pyOpenSSL
@@ -265,10 +270,10 @@ resolve_gcs() {
     | sed 's/.*google-cloud-cli-//;s/-linux-x86_64.*//' | sort -V | tail -1
 }
 
-# Three spellings of a pin: a Dockerfile `ARG KEY=v`, a shell `KEY=v`, and a
-# workflow step's `env:` entry, `    KEY: v` (osv-scanner, pinned where it
-# runs in build-image.yml). The YAML form must be indented, which keeps a
-# `${KEY}` reference or a comment mentioning the key from matching first.
+# Three spellings of a pin: a Dockerfile `ARG KEY=v`, a shell or env-file
+# `KEY=v` (.github/tool-pins.env), and an indented YAML entry, `    KEY: v`.
+# The YAML form must be indented, which keeps a `${KEY}` reference or a
+# comment mentioning the key from matching first.
 #
 # And a fourth, for a pip requirements file (`.txt`): `KEY==v`.
 current_pin() {

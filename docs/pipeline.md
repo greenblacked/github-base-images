@@ -252,7 +252,8 @@ as a third of a change.
 The tools installed as pinned release binaries — Terraform, kubectl, the AWS CLI, the Docker
 client, gcloud, Composer, Playwright, npm, the json gem in `ci-ruby40`, the five scanners in
 `ci-security` (and the second gitleaks in `security.yml`), the osv-scanner binary the pipeline
-itself runs, and the hadolint and actionlint engines in `scripts/lint.sh` — were the gap: nothing
+itself runs (those two pinned in `.github/tool-pins.env`, which the workflows read), and the
+hadolint and actionlint engines in `scripts/lint.sh` — were the gap: nothing
 read them, so they moved only when a human remembered. An audit found six behind at once.
 
 [pin-drift.yml](../.github/workflows/pin-drift.yml) closes that gap. Daily, it compares every
@@ -300,7 +301,13 @@ and a new line is a new image. Dependabot, daily, keeps the action pins current.
 For each tool that is behind, it opens (or refreshes) one PR on a `pin-bump/<tool>` branch, with
 the version and its checksums rewritten by `scripts/bump-pins.sh`. Pins kept in more than one
 place move together: kubectl in `ci-tools` and `ci-cloud`, Composer in every PHP image, gitleaks
-in `ci-security` and `security.yml`, npm and Playwright in every Node image. Which images carry a
+in `ci-security` and `.github/tool-pins.env` (the copy `security.yml` runs), npm and Playwright in
+every Node image. No bump-managed pin lives under `.github/workflows/`: the bot pushes with the
+workflow token, which GitHub refuses for any change to a workflow file, so a tool a workflow step
+downloads itself (gitleaks in `security.yml`, osv-scanner in `build-image.yml`) is pinned in
+`.github/tool-pins.env` as plain `KEY=value` lines, and the step reads it from its checkout: exactly
+one line per key, a value of the right shape, or the step fails. `bump-pins.sh --check` (run by
+lint) refuses a pin under `.github/workflows/`. Which images carry a
 pin is read from the Dockerfiles of the images in `images.json`, so an image the lifecycle adds or
 retires needs no change to the pin tooling. Wherever the vendor publishes one, every checksum is
 read from the vendor's own checksums file or registry record for that version (for the Python
@@ -403,8 +410,9 @@ run red.
 
 One limit is expected but unverified until the first action bump: the workflow token can never
 hold the `workflows` permission, and GitHub may refuse to merge a PR that changes
-`.github/workflows/*` without it. That covers Dependabot's action bumps and the gitleaks and
-osv-scanner pin bumps. GitHub's documented Dependabot recipe merges action bumps with this token,
+`.github/workflows/*` without it. That covers Dependabot's action bumps; no pin bump changes a
+workflow file (their pins are in `.github/tool-pins.env`, since the bot could not even push one
+that did). GitHub's documented Dependabot recipe merges action bumps with this token,
 so it is expected to work. If GitHub refuses, the PR is reported as skipped with a warning, and the
 run stays green. Merge it by hand, or give the workflow a token with `workflows: write`.
 

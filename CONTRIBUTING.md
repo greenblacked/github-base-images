@@ -137,10 +137,19 @@ checksum by hand ([ADR 0007](docs/adr/0007-automatic-updates.md),
 ```
 
 Paired pins move as one unit, which keeps the lint parity checks green: kubectl in `ci-tools`
-and `ci-cloud`, Composer in every PHP image, gitleaks in `ci-security` and `security.yml`, npm and
-Playwright in every Node image. hadolint and actionlint are
+and `ci-cloud`, Composer in every PHP image, gitleaks in `ci-security` and `.github/tool-pins.env`,
+npm and Playwright in every Node image. hadolint and actionlint are
 pinned in `scripts/lint.sh` with their per-platform checksums as named variables, so they move the
 same way.
+
+A tool a workflow step downloads itself (gitleaks in `security.yml`, osv-scanner in
+`build-image.yml`) is pinned in `.github/tool-pins.env`, never in the workflow: the pin-bump bot
+pushes with the workflow token, and GitHub refuses that token any change under
+`.github/workflows/`. The file is plain `KEY=value` lines; each step reads its keys from the
+checkout with a strict grep (exactly one line, a dotted version or a 64-hex sha256) and fails
+otherwise. To pin a new one, add its lines there, read them the same way in the step, and point
+the `bump-pins.sh` and `check-pins.sh` rows at `.github/tool-pins.env`; `bump-pins.sh --check`
+fails for any row that names a file under `.github/workflows/`.
 
 Where the vendor publishes a per-file SHA-256, the download is checked against it, and the
 checksum is an `ARG` alongside the version. Bumping one of those is a **three**-line change —

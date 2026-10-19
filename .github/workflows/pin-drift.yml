@@ -32,6 +32,7 @@ on:
     paths:
       - 'scripts/check-pins.sh'
       - '.github/workflows/pin-drift.yml'
+      - '.github/tool-pins.env'
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
