@@ -39,7 +39,7 @@ echo "Testing $IMAGE"
 check "rustc is present"           'rustc --version'
 check "rustc is 1.x stable"        'rustc --version | grep -qE "^rustc 1\.[0-9]+\.[0-9]+"'
 # A rolling tag has its own failure mode: if upstream ever stops republishing
-# `1-bookworm`, this pipeline keeps rebuilding a frozen toolchain and every
+# `1-trixie`, this pipeline keeps rebuilding a frozen toolchain and every
 # "is 1.x" assertion still passes -- the exact staleness this image was renamed
 # to prevent, but now invisible. The floor below turns that into a red build.
 # It is not a pin: it only has to stay at or below current stable, so it never

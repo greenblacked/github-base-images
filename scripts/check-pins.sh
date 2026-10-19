@@ -201,7 +201,7 @@ resolve_hashicorp() {
 # An apt pin is a package's whole version string; it is compared, and
 # reported, as its unit version: the upstream version and the Debian revision,
 # without the epoch or the distro suffix the revision carries after its first
-# `~` (5:29.9.0-1~debian.12~bookworm is 29.9.0-1). The revision is kept: a
+# `~` (5:29.9.0-1~debian.13~trixie is 29.9.0-1). The revision is kept: a
 # packaging or security fix Docker ships only as a new revision (29.9.0-2) is
 # drift like any release. Exactly <dotted upstream>-<dotted revision>, or
 # nothing and a failure: sort -V orders those as dpkg does (29.9.0-1 <
@@ -217,14 +217,14 @@ apt_unit_version() {
 }
 
 # The Docker CLI is installed from Docker's apt repository, so the newest
-# docker-ce-cli in the bookworm stable index is what counts, as its unit
-# version (5:29.9.1-2~debian.12~bookworm is 29.9.1-2). Read unverified: this
+# docker-ce-cli in the trixie stable index is what counts, as its unit
+# version (5:29.9.1-2~debian.13~trixie is 29.9.1-2). Read unverified: this
 # is a drift report. scripts/bump-pins.sh reads it again only from the signed
 # index (InRelease's signature, then each Packages file's hash) before it
 # writes anything.
 resolve_dockerapt() {
   local v
-  fetch https://download.docker.com/linux/debian/dists/bookworm/stable/binary-amd64/Packages \
+  fetch https://download.docker.com/linux/debian/dists/trixie/stable/binary-amd64/Packages \
     | awk '{ sub(/\r$/, "") } /^Package: / { p = $2 } /^Version: / && p == "docker-ce-cli" { print $2 }' \
     | while IFS= read -r v; do apt_unit_version "$v" || true; done \
     | sort -V | tail -1

@@ -75,7 +75,7 @@ run --
 check "exit 0" [ "$rc" -eq 0 ]
 check "all $n_images rows public_state=ok" [ "$(count '.public_state == "ok"')" -eq "$n_images" ]
 check "one token request per image" [ "$(grep -c '/token?' "$calls")" -eq "$n_images" ]
-check "  for the image:version a consumer pulls" grep -qF "https://ghcr.io/v2/o/ci-node22/manifests/bookworm-v1" "$calls"
+check "  for the image:version a consumer pulls" grep -qF "https://ghcr.io/v2/o/ci-node22/manifests/trixie-v1" "$calls"
 
 echo "case 2: one package private -> an issue, exit 3, with the fix"
 run FAKE_PRIVATE=ci-node22 --

@@ -39,8 +39,8 @@ repository with the upstream tag unchanged. For example:
 
 | Mirror | Upstream |
 |---|---|
-| `ghcr.io/greenblacked/mirror-node:22-bookworm-slim` | `node:22-bookworm-slim` (Docker Hub) |
-| `ghcr.io/greenblacked/mirror-debian:bookworm-slim` | `debian:bookworm-slim` (Docker Hub) |
+| `ghcr.io/greenblacked/mirror-node:22-trixie-slim` | `node:22-trixie-slim` (Docker Hub) |
+| `ghcr.io/greenblacked/mirror-debian:trixie-slim` | `debian:trixie-slim` (Docker Hub) |
 | `ghcr.io/greenblacked/mirror-dotnet:10.0-noble` | `mcr.microsoft.com/dotnet/sdk:10.0-noble` (MCR) |
 
 `scripts/image-lifecycle.sh check` (run by `scripts/lint.sh`) fails if a mirror does not carry its
@@ -171,8 +171,12 @@ stays correct on both architectures.
   upstream runtime base picked up. It is bumped to `v2` only when the *contents* of the image
   change — a tool added or removed. Determinism in production comes from pinning a digest, not
   from the tag.
+  - A **distribution migration** moves an image to a new line instead of changing the old one
+    under it. The old line is then frozen at its last digest: it stays pullable, and nothing
+    rebuilds, re-scans or re-tags it. The images that moved from Bookworm to Trixie in October
+    2026 left `bookworm-v1` that way ([The Trixie migration](images.md#the-trixie-migration)).
   - For `ci-rust` and `ci-go` the line is rolling in one extra respect: the **language toolchain
-    minor moves too**, because those images track `rust:1-bookworm` and `golang:1-bookworm`
+    minor moves too**, because those images track `rust:1-trixie` and `golang:1-trixie`
     ([why](images.md#go-and-rust)). That is a deliberate exception to "contents change ⇒ bump to
     v2" — under the strict reading every upstream Rust release would need a new tag, which would
     make the contract line meaningless for exactly the two images whose upstreams have no support
@@ -291,7 +295,7 @@ pipeline and the four [required checks](security.md#required-checks). It merges 
 four are green, and is published the same hour. Nothing merges red.
 
 **Where the updates come from.** Base images come from the daily rebuild, not from Dependabot.
-Each `ARG BASE_IMAGE` is a floating tag (`python:3.13-slim-bookworm`, `golang:1-bookworm`), and
+Each `ARG BASE_IMAGE` is a floating tag (`python:3.13-slim-trixie`, `golang:1-trixie`), and
 the rebuild re-resolves it through the [mirror](#mirrored-upstream-base) every day, so upstream's
 patch releases arrive that way. On tags of that shape the only versions Dependabot could propose
 are a different runtime line (Python 3.14, Node 25, Go 2), which its docker entries ignore, so in
@@ -322,7 +326,7 @@ pinned only once its attestation and GPG signature verify), and kubectl's by ver
 binary's signature and matching its sha256. A missing or wrong signature or attestation fails the
 bump ([Supply-chain pins](security.md#supply-chain-pins)). The Docker CLI is pinned by its
 exact package version in Docker's signed apt repository — drift and bumps compare its upstream
-version and Debian revision (`29.9.0-1` for `5:29.9.0-1~debian.12~bookworm`), so a fix shipped only
+version and Debian revision (`29.9.0-1` for `5:29.9.0-1~debian.13~trixie`), so a fix shipped only
 as a new revision is not missed — which the bump reads only from the
 signed index: `InRelease` verified with `gpgv` under Docker's key, pinned by fingerprint, then each
 architecture's `Packages` against the hash the signed file lists. apt checks the same chain, and

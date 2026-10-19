@@ -74,7 +74,8 @@ The lint job cross-checks the rest: every entry has a directory and every `ci-*`
 entry, and `scripts/image-lifecycle.sh check` fails when the Dependabot entries, the README rows
 and count, the `docs/images.md` bullets or an `ARG BASE_IMAGE` default disagree with
 `images.json`. The `version` field is per image, which is how the Noble-based
-images carry `noble-v1` and the Trixie-based ones `trixie-v1` while the rest are `bookworm-v1`.
+images carry `noble-v1` and the Trixie-based ones `trixie-v1`, while `ci-dotnet8` and `ci-dotnet9`,
+the last on Bookworm until they retire, are `bookworm-v1`.
 A new image starts on the newest Debian stable if upstream publishes it there, else on the newest
 Ubuntu LTS, never an older release of either ([ADR 0005](docs/adr/0005-new-images-current-distro-retire-at-eol.md),
 [ADR 0009](docs/adr/0009-image-lifecycle.md)), and the bar for adding a new kind of image at all
@@ -214,8 +215,8 @@ very digest, and either check failing fails the bump. Set it with the script
 (`./scripts/bump-pins.sh --unit composer --to <VERSION>`), not by hand.
 
 The Docker CLI in `ci-tools` has no checksum `ARG` at all. It is installed from Docker's signed
-apt repository (`download.docker.com/linux/debian bookworm stable`), and its pin,
-`DOCKER_CLI_VERSION`, is the package's full version string (`5:29.9.0-1~debian.12~bookworm`).
+apt repository (`download.docker.com/linux/debian trixie stable`), and its pin,
+`DOCKER_CLI_VERSION`, is the package's full version string (`5:29.9.0-1~debian.13~trixie`).
 apt verifies `InRelease` against the keyring the build installs — Docker's key, which must have
 the fingerprint in `DOCKER_KEY_FINGERPRINT` — then `Packages` against `InRelease` and the `.deb`
 against `Packages`. `scripts/bump-pins.sh` reads a new version string only from that signed
@@ -231,7 +232,7 @@ sed -n '/^SHA256:/,$p' InRelease.signed | grep ' stable/binary-amd64/Packages$' 
 
 Set it with the script (`./scripts/bump-pins.sh --unit docker --to <VERSION>-<REVISION>`, say
 `--to 29.9.1-1`). The unit's version is the upstream version **and** the Debian revision, without
-the epoch or the distro suffix (`5:29.9.0-1~debian.12~bookworm` is `29.9.0-1`): a fix Docker ships
+the epoch or the distro suffix (`5:29.9.0-1~debian.13~trixie` is `29.9.0-1`): a fix Docker ships
 only as a new revision (`29.9.0-2`) is drift, and a bump, like any release. `--to` names that exact
 revision, and the full string the signed index lists for it is what is written. Its index carries
 no release date, so a Docker bump is labelled `needs-review` and waits the first-seen clock like

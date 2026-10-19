@@ -1,13 +1,13 @@
 # Defaults to upstream so local builds work without authenticating to ghcr.io.
 # CI overrides this with our mirrored copy, so builds do not depend on Docker
 # Hub availability or rate limits.
-ARG BASE_IMAGE=debian:bookworm-slim
+ARG BASE_IMAGE=debian:trixie-slim
 # DL3006: the default above is tagged; hadolint just can't see through the ARG.
 # hadolint ignore=DL3006
 FROM ${BASE_IMAGE}
 
 LABEL org.opencontainers.image.source=https://github.com/greenblacked/github-base-images
-LABEL org.opencontainers.image.description="Shared CI image: supply-chain scanning toolbox (trivy, syft, grype, cosign, gitleaks) on Debian Bookworm slim"
+LABEL org.opencontainers.image.description="Shared CI image: supply-chain scanning toolbox (trivy, syft, grype, cosign, gitleaks) on Debian Trixie slim"
 LABEL org.opencontainers.image.licenses=MIT
 
 ENV DEBIAN_FRONTEND=noninteractive \

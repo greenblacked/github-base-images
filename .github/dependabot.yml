@@ -23,15 +23,15 @@ version: 2
 #
 # Docker entries: in practice these propose nothing, and that is expected.
 # Base images do NOT reach the images through Dependabot. Each `ARG
-# BASE_IMAGE` default is a floating tag (python:3.13-slim-bookworm,
-# node:22-bookworm-slim, golang:1-bookworm, debian:bookworm-slim), and the
+# BASE_IMAGE` default is a floating tag (python:3.13-slim-trixie,
+# node:22-trixie-slim, golang:1-trixie, debian:trixie-slim), and the
 # daily rebuild re-resolves it through the mirror (build-and-push.yml's
 # `mirror` job), which is how upstream's patch releases arrive. Dependabot
-# compares a tag only with tags of the same shape: for 3.13-slim-bookworm
-# that is 3.14-, 3.15-slim-bookworm; for 22-bookworm-slim, 24- and 25-; for
-# 1-bookworm, 2-bookworm; for a bare codename, nothing at all. Every one of
+# compares a tag only with tags of the same shape: for 3.13-slim-trixie
+# that is 3.14-, 3.15-slim-trixie; for 22-trixie-slim, 24- and 25-; for
+# 1-trixie, 2-trixie; for a bare codename, nothing at all. Every one of
 # those is a different runtime line -- a different image under the same name
-# and tag (`ci-python313:bookworm-v1` is Python 3.13 on Bookworm, and
+# and tag (`ci-python313:trixie-v1` is Python 3.13 on Trixie, and
 # consumers chose it for that) -- and is a semver-minor or semver-major
 # update, which every entry ignores. The ignore rules are the safety net
 # that keeps it so if a tag ever changes shape; the entries stay so that
@@ -83,17 +83,17 @@ updates:
   # tags it finds nothing it is allowed to propose; the entries are the safety
   # net, and base images move with the daily rebuild. What each shape could
   # propose, all ignored:
-  #   - python:3.13-slim-bookworm, ruby:3.4-slim-bookworm, php:8.4-cli-bookworm:
+  #   - python:3.13-slim-trixie, ruby:3.4-slim-trixie, php:8.4-cli-trixie:
   #     another runtime line (3.14, 4.0, 8.5), a semver-minor or -major;
-  #   - node:22-bookworm-slim: another Node major (24, 25);
+  #   - node:22-trixie-slim: another Node major (24, 25);
   #   - eclipse-temurin:21-jdk-noble, mcr.microsoft.com/dotnet/sdk:9.0-bookworm-slim:
   #     another major (25; 10.0). The .NET bases live on mcr.microsoft.com,
   #     which Dependabot reads like Docker Hub;
-  #   - golang:1-bookworm, rust:1-bookworm: `1` IS the line -- these two track
+  #   - golang:1-trixie, rust:1-trixie: `1` IS the line -- these two track
   #     current stable on purpose (docs/images.md, "Go and Rust") -- and the
-  #     only same-shape tag is 2-bookworm, a major;
-  #   - debian:bookworm-slim (the tool images): only a codename, which
-  #     Dependabot does not read as a version, so it proposes nothing, trixie
+  #     only same-shape tag is 2-trixie, a major;
+  #   - debian:trixie-slim (the tool images): only a codename, which
+  #     Dependabot does not read as a version, so it proposes nothing, forky
   #     included. The ignore is there so that stays true if it ever starts to.
   #
   # Nor does this track the pinned tool versions (Terraform, kubectl, the AWS

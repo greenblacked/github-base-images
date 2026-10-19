@@ -24,7 +24,7 @@ jobs:
   build:
     runs-on: ubuntu-24.04
     container:
-      image: ghcr.io/greenblacked/ci-node22:bookworm-v1
+      image: ghcr.io/greenblacked/ci-node22:trixie-v1
     defaults:
       run:
         shell: bash        # GitHub defaults container commands to sh
@@ -71,7 +71,7 @@ To reproduce a CI failure locally with the same toolchain, run the image directl
 both Apple Silicon and x86:
 
 ```bash
-docker run --rm -it -v "$PWD:/workspace" ghcr.io/greenblacked/ci-node22:bookworm-v1 bash
+docker run --rm -it -v "$PWD:/workspace" ghcr.io/greenblacked/ci-node22:trixie-v1 bash
 ```
 
 ## Image catalog
@@ -82,28 +82,28 @@ and the OpenSSH client. Follow an image name for what it leaves out and why.
 
 | Image | What's in it | Base | Tag |
 |---|---|---|---|
-| [`ci-node24`](docs/images.md#nodejs) | Node.js 24, npm, Playwright's Chromium libraries | `node:24-bookworm-slim` | `bookworm-v1` |
-| [`ci-node22`](docs/images.md#nodejs) | Node.js 22, npm, Playwright's Chromium libraries | `node:22-bookworm-slim` | `bookworm-v1` |
+| [`ci-node24`](docs/images.md#nodejs) | Node.js 24, npm, Playwright's Chromium libraries | `node:24-trixie-slim` | `trixie-v1` |
+| [`ci-node22`](docs/images.md#nodejs) | Node.js 22, npm, Playwright's Chromium libraries | `node:22-trixie-slim` | `trixie-v1` |
 | [`ci-python315`](docs/images.md#python) | Python 3.15, pip | `python:3.15-slim-trixie` | `trixie-v1` |
 | [`ci-python314`](docs/images.md#python) | Python 3.14, pip | `python:3.14-slim-trixie` | `trixie-v1` |
-| [`ci-python313`](docs/images.md#python) | Python 3.13, pip | `python:3.13-slim-bookworm` | `bookworm-v1` |
-| [`ci-python312`](docs/images.md#python) | Python 3.12, pip | `python:3.12-slim-bookworm` | `bookworm-v1` |
-| [`ci-go`](docs/images.md#go-and-rust) | current stable Go, C toolchain | `golang:1-bookworm` | `bookworm-v1` |
-| [`ci-rust`](docs/images.md#go-and-rust) | current stable Rust, rustfmt, clippy, C toolchain | `rust:1-bookworm` | `bookworm-v1` |
+| [`ci-python313`](docs/images.md#python) | Python 3.13, pip | `python:3.13-slim-trixie` | `trixie-v1` |
+| [`ci-python312`](docs/images.md#python) | Python 3.12, pip | `python:3.12-slim-trixie` | `trixie-v1` |
+| [`ci-go`](docs/images.md#go-and-rust) | current stable Go, C toolchain | `golang:1-trixie` | `trixie-v1` |
+| [`ci-rust`](docs/images.md#go-and-rust) | current stable Rust, rustfmt, clippy, C toolchain | `rust:1-trixie` | `trixie-v1` |
 | [`ci-ruby40`](docs/images.md#ruby) | Ruby 4.0, RubyGems, Bundler | `ruby:4.0-slim-trixie` | `trixie-v1` |
-| [`ci-ruby34`](docs/images.md#ruby) | Ruby 3.4, RubyGems, Bundler | `ruby:3.4-slim-bookworm` | `bookworm-v1` |
+| [`ci-ruby34`](docs/images.md#ruby) | Ruby 3.4, RubyGems, Bundler | `ruby:3.4-slim-trixie` | `trixie-v1` |
 | [`ci-java25`](docs/images.md#java) | Temurin JDK 25 | `eclipse-temurin:25-jdk-noble` | `noble-v1` |
 | [`ci-java21`](docs/images.md#java) | Temurin JDK 21 | `eclipse-temurin:21-jdk-noble` | `noble-v1` |
 | [`ci-java17`](docs/images.md#java) | Temurin JDK 17 | `eclipse-temurin:17-jdk-noble` | `noble-v1` |
 | [`ci-php85`](docs/images.md#php) | PHP 8.5 CLI, Composer | `php:8.5-cli-trixie` | `trixie-v1` |
-| [`ci-php84`](docs/images.md#php) | PHP 8.4 CLI, Composer | `php:8.4-cli-bookworm` | `bookworm-v1` |
+| [`ci-php84`](docs/images.md#php) | PHP 8.4 CLI, Composer | `php:8.4-cli-trixie` | `trixie-v1` |
 | [`ci-dotnet10`](docs/images.md#net-sdk) | .NET SDK 10.0 (LTS) | `mcr.microsoft.com/dotnet/sdk:10.0-noble` | `noble-v1` |
 | [`ci-dotnet9`](docs/images.md#net-sdk) **(deprecated: retires after 2026-11-10)** | .NET SDK 9.0 (STS) | `mcr.microsoft.com/dotnet/sdk:9.0-bookworm-slim` | `bookworm-v1` |
 | [`ci-dotnet8`](docs/images.md#net-sdk) **(deprecated: retires after 2026-11-10)** | .NET SDK 8.0 (LTS) | `mcr.microsoft.com/dotnet/sdk:8.0-bookworm-slim` | `bookworm-v1` |
-| [`ci-tools`](docs/images.md#tool-images) | Terraform, kubectl, AWS CLI v2, Docker client | `debian:bookworm-slim` | `bookworm-v1` |
-| [`ci-cloud`](docs/images.md#tool-images) | gcloud CLI, Azure CLI, kubectl | `debian:bookworm-slim` | `bookworm-v1` |
-| [`ci-security`](docs/images.md#tool-images) | trivy, syft, grype, cosign, gitleaks | `debian:bookworm-slim` | `bookworm-v1` |
-| [`ci-db`](docs/images.md#tool-images) | psql, mysql, redis-cli, golang-migrate | `debian:bookworm-slim` | `bookworm-v1` |
+| [`ci-tools`](docs/images.md#tool-images) | Terraform, kubectl, AWS CLI v2, Docker client | `debian:trixie-slim` | `trixie-v1` |
+| [`ci-cloud`](docs/images.md#tool-images) | gcloud CLI, Azure CLI, kubectl | `debian:trixie-slim` | `trixie-v1` |
+| [`ci-security`](docs/images.md#tool-images) | trivy, syft, grype, cosign, gitleaks | `debian:trixie-slim` | `trixie-v1` |
+| [`ci-db`](docs/images.md#tool-images) | psql, mysql, redis-cli, golang-migrate | `debian:trixie-slim` | `trixie-v1` |
 
 <!-- lifecycle:notices:begin -->
 **Deprecated: `ci-dotnet8` and `ci-dotnet9`.** .NET 8 and .NET 9 reach end of support on
@@ -124,8 +124,13 @@ A few things the table does not say:
   [Running Playwright tests](docs/images.md#running-playwright-tests).
 - **One distribution line per image**, named for it: `bookworm-v1`, `trixie-v1`, `noble-v1`, and
   so on (the Tag column). A new image starts on the newest Debian stable if upstream publishes
-  it there, else on the newest Ubuntu LTS, never an older release; an existing image never moves.
+  it there, else on the newest Ubuntu LTS, never an older release. An existing image moves only
+  by a deliberate migration under a new tag, never under its old one.
   [Why](docs/images.md#patterns-worth-naming).
+- **Every Debian image except `ci-dotnet8` and `ci-dotnet9` moved from Bookworm to Trixie** in
+  October 2026, from `bookworm-v1` to `trixie-v1`. Their `bookworm-v1` tags are **frozen**: they
+  still pull, but they are no longer rebuilt, re-scanned or patched, so switch your `container:`
+  lines to `trixie-v1`. [Details](docs/images.md#the-trixie-migration).
 - **`ci-go` and `ci-rust` carry no version** because Go and Rust have no parallel supported lines;
   they track current stable. [Why](docs/images.md#go-and-rust).
 - **The catalog keeps itself current.** When upstream ships a new supported line of a runtime
@@ -183,13 +188,13 @@ cosign verify \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com \
   --certificate-identity-regexp \
     '^https://github\.com/greenblacked/github-base-images/\.github/workflows/build-image\.yml@refs/heads/main$' \
-  ghcr.io/greenblacked/ci-tools:bookworm-v1
+  ghcr.io/greenblacked/ci-tools:trixie-v1
 ```
 
 Or, independently, the GitHub build provenance attestation:
 
 ```bash
-gh attestation verify oci://ghcr.io/greenblacked/ci-tools:bookworm-v1 \
+gh attestation verify oci://ghcr.io/greenblacked/ci-tools:trixie-v1 \
   --repo greenblacked/github-base-images \
   --cert-identity https://github.com/greenblacked/github-base-images/.github/workflows/build-image.yml@refs/heads/main
 ```
@@ -203,7 +208,8 @@ to every index.
 ## Tags and rebuilds
 
 - **`<codename>-v1`** (`bookworm-v1`, `trixie-v1`, `noble-v1`, ...) are rolling lines; each image
-  carries exactly one (see the catalog). The rebuild moves the tag to a fresh digest with
+  carries exactly one (see the catalog). A line an image has migrated off is frozen at its last
+  digest, as `bookworm-v1` is for the images that moved to `trixie-v1`. The rebuild moves the tag to a fresh digest with
   distribution security updates and whatever the upstream base picked up. It goes to `v2` only when the image's *contents*
   change, a tool added or removed. `ci-go` and `ci-rust` also move to each new toolchain minor.
 - **`latest`** exists for testing. Never use it in a protected deployment job.

@@ -7,7 +7,7 @@ Please report suspected vulnerabilities privately via
 rather than opening a public issue.
 
 Include the image and tag (ideally the digest — `docker buildx imagetools inspect
-ghcr.io/greenblacked/<image>:bookworm-v1`), the architecture, and how to reproduce.
+ghcr.io/greenblacked/<image>:trixie-v1`), the architecture, and how to reproduce.
 
 ## Scope
 
@@ -51,10 +51,15 @@ Out of scope:
 
 ## Supported versions
 
-Only each image's current rolling tag (`<codename>-v1`, such as `bookworm-v1` — see the
+Only each image's current rolling tag (`<codename>-v1`, such as `trixie-v1` — see the
 [image catalog](README.md#image-catalog) in the README) is supported. It is rebuilt daily,
 picking up distribution security updates; older digests are never patched in place. Pin a digest
 for reproducibility, but expect to move it forward to receive fixes.
+
+A tag an image has migrated off is not supported. The images that moved from Debian Bookworm to
+Trixie in October 2026 left their `bookworm-v1` tags frozen at their last digest: still pullable,
+never rebuilt, re-scanned or patched again. Move to `trixie-v1`
+([The Trixie migration](docs/images.md#the-trixie-migration)).
 
 An image is supported until its runtime's upstream end of support, and retired after it
 ([ADR 0009](docs/adr/0009-image-lifecycle.md)); the deprecation is announced here, and in the

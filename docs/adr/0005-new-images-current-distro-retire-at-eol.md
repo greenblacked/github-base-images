@@ -1,6 +1,6 @@
 # 0005 — New images start on the current distro; images retire at upstream end of support
 
-**Status:** accepted
+**Status:** accepted; "existing images are not migrated" is superseded by [0010](0010-migrate-bookworm-images-to-trixie.md), which moved the Bookworm images to Trixie
 
 ## Decision
 

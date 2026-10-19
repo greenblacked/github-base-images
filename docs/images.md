@@ -81,8 +81,8 @@ backports. Go patches only the two newest minors. Both promise that code buildin
 on later 1.x. So a minor in the name offers a choice upstream does not provide, and guarantees the
 image falls out of support on a fixed schedule. This repository proved that the hard way: the image
 formerly called `ci-rust185` sat on Rust 1.85 while stable reached 1.97 — twelve unsupported
-releases behind — because the name made the staleness look intentional. Tracking `rust:1-bookworm`
-and `golang:1-bookworm` fixes it permanently rather than restarting the same countdown.
+releases behind — because the name made the staleness look intentional. Tracking `rust:1-trixie`
+and `golang:1-trixie` (`1-bookworm` before the [Trixie migration](#the-trixie-migration)) fixes it permanently rather than restarting the same countdown.
 
 Projects that genuinely need an exact toolchain already have the right mechanism: a
 `rust-toolchain.toml`, or the `toolchain` directive in `go.mod`. Both work inside these images.
@@ -164,7 +164,8 @@ Some of these images break a pattern worth naming explicitly:
   never used. Temurin publishes no Debian tag at all (only Ubuntu and Alpine), and Microsoft has
   published no Debian SDK image since .NET 10, so those lines land on Ubuntu unless that changes. Installing a JDK or an SDK onto a Debian
   slim image instead would replace an official, upstream-maintained build with one this
-  repository maintains. Existing images never move, so `bookworm-v1`, `trixie-v1` and `noble-v1`
+  repository maintains. An existing image moves only by a deliberate migration to a new tag
+  (see [The Trixie migration](#the-trixie-migration)), so `bookworm-v1`, `trixie-v1` and `noble-v1`
   coexist, and Ubuntu 26.04 adds `resolute-v1` with the first image built on it. The version tag
   is per image, so this costs nothing structurally.
 - **Starting a new image on an older distribution would be migration debt from day one.** Debian
@@ -176,6 +177,47 @@ Some of these images break a pattern worth naming explicitly:
 
 [ADR 0005](adr/0005-new-images-current-distro-retire-at-eol.md) records the rule behind the first
 two, and [ADR 0009](adr/0009-image-lifecycle.md) the newest-Ubuntu-LTS amendment.
+
+## The Trixie migration
+
+In October 2026 every image built on Debian 12 Bookworm moved to Debian 13 Trixie, except the two
+.NET images that retire on 2026-11-10. Bookworm's regular security support has ended, and the
+daily `apt-get upgrade` cannot fix what Debian no longer patches, so the remaining OS-package
+CVEs on Bookworm could only be cleared by changing distribution.
+
+| Image | Was | Now |
+|---|---|---|
+| `ci-node22`, `ci-node24` | `node:2X-bookworm-slim`, `bookworm-v1` | `node:2X-trixie-slim`, `trixie-v1` |
+| `ci-python312`, `ci-python313` | `python:3.1X-slim-bookworm`, `bookworm-v1` | `python:3.1X-slim-trixie`, `trixie-v1` |
+| `ci-ruby34` | `ruby:3.4-slim-bookworm`, `bookworm-v1` | `ruby:3.4-slim-trixie`, `trixie-v1` |
+| `ci-php84` | `php:8.4-cli-bookworm`, `bookworm-v1` | `php:8.4-cli-trixie`, `trixie-v1` |
+| `ci-go`, `ci-rust` | `golang:1-bookworm`, `rust:1-bookworm` (full, not slim), `bookworm-v1` | `golang:1-trixie`, `rust:1-trixie` (still full), `trixie-v1` |
+| `ci-tools`, `ci-cloud`, `ci-security`, `ci-db` | `debian:bookworm-slim`, `bookworm-v1` | `debian:trixie-slim`, `trixie-v1` |
+| `ci-dotnet8`, `ci-dotnet9` | unchanged: `bookworm-v1` until they [retire](#deprecated-ci-dotnet8-and-ci-dotnet9) | |
+
+What consumers need to know:
+
+- **The old `bookworm-v1` tags of the moved images are frozen.** They stay pullable at their last
+  digest, but nothing rebuilds, re-scans or patches them any more. Change `:bookworm-v1` to
+  `:trixie-v1` in your `container:` lines; a digest pin needs a new digest from a `trixie-v1` build.
+- **Package names changed for some libraries** in Trixie's 64-bit `time_t` transition
+  (`libasound2` is `libasound2t64`, `libatk1.0-0` is `libatk1.0-0t64`, and so on). A job that
+  `apt-get install`s extra packages by their Bookworm names may need the new ones. The Node images'
+  Playwright libraries are installed by `playwright install-deps`, which picks the Trixie names.
+- **Tool versions are unchanged.** The Docker CLI in `ci-tools` now comes from Docker's `trixie`
+  suite (the same release, built for Debian 13), and all the other pinned tools are the same
+  release binaries as before.
+- **The Azure CLI in `ci-cloud` still comes from Microsoft's `bookworm` suite.** Microsoft
+  publishes no `trixie` suite of `packages.microsoft.com/repos/azure-cli` and builds its Debian
+  package for Bookworm only. That package bundles its own Python, and its system dependencies all
+  resolve on Trixie, so it is installed unchanged from the same signed repository; the suite is
+  one `ARG` (`AZURE_CLI_SUITE`) to change once Microsoft adds `trixie`.
+- **The Go-compiled tools keep their exceptions.** Findings in vendor binaries (kubectl, terraform,
+  gitleaks, golang-migrate, ...) come from the Go toolchain they were built with, not from the
+  distribution, so the migration does not clear them; they wait for vendor releases, as before
+  ([Vulnerability exceptions](security.md#vulnerability-exceptions)).
+
+[ADR 0010](adr/0010-migrate-bookworm-images-to-trixie.md) records the decision.
 
 ## Image lifecycle
 
@@ -278,7 +320,7 @@ differently.
 when you want them inside a container job rather than as marketplace actions:
 
 ```yaml
-    container: ghcr.io/greenblacked/ci-security:bookworm-v1
+    container: ghcr.io/greenblacked/ci-security:trixie-v1
     steps:
       - uses: actions/checkout@v5
       - run: trivy fs --exit-code 1 --severity HIGH,CRITICAL .
@@ -294,7 +336,7 @@ first run, so a baked-in snapshot cannot silently go stale. Budget for that down
 tears down for you:
 
 ```yaml
-    container: ghcr.io/greenblacked/ci-db:bookworm-v1
+    container: ghcr.io/greenblacked/ci-db:trixie-v1
     services:
       postgres:
         image: postgres:17
@@ -317,7 +359,7 @@ action first — the image deliberately contains no credentials, and its smoke t
 permission, and no personal access token. Pulling works anonymously, anywhere:
 
 ```bash
-docker pull ghcr.io/greenblacked/ci-node22:bookworm-v1
+docker pull ghcr.io/greenblacked/ci-node22:trixie-v1
 ```
 
 This is deliberate. The images are Debian or Ubuntu, the language runtimes, and open-source
@@ -362,7 +404,7 @@ The tag is multi-arch, so this runs natively on both Apple Silicon and x86 — n
 and no emulation:
 
 ```bash
-docker run --rm -it -v "$PWD:/workspace" ghcr.io/greenblacked/ci-node22:bookworm-v1 bash
+docker run --rm -it -v "$PWD:/workspace" ghcr.io/greenblacked/ci-node22:trixie-v1 bash
 ```
 
 Useful for reproducing a CI failure with the exact toolchain the runner used. Both published
