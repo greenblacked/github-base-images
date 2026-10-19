@@ -5,7 +5,10 @@
 #
 # pin-drift.yml reports drift; this acts on it. The work is in two scripts,
 # both runnable locally and tested offline by scripts/lint.sh:
-#   scripts/bump-pins.sh      rewrites a version and its vendor checksums
+#   scripts/bump-pins.sh      rewrites a version and its vendor checksums, and
+#                             refreshes the GPG keys in scripts/keys from
+#                             their vendors (a "Refresh vendor signing keys"
+#                             PR when one changed with no bump due)
 #   scripts/pin-bump-prs.sh   branch, commit, PR, CI dispatch, label
 #
 # Nothing here merges anything. merge-bot-prs.yml does, for every bump PR

@@ -8,6 +8,7 @@
 #   ./scripts/bump-pins.sh --unit kubectl           # one unit, to the vendor's latest
 #   ./scripts/bump-pins.sh --unit kubectl --to 1.38.1
 #   ./scripts/bump-pins.sh --plan --drift report.json   # list the units, touch nothing
+#   ./scripts/bump-pins.sh --refresh-keys           # refresh scripts/keys from the vendors
 #
 # A "unit" is what moves together. Usually one tool, but a pin that lives in
 # more than one place is one unit, so its copies can never be moved apart:
@@ -117,6 +118,15 @@
 # attestations API is answered from the same fixtures. See
 # scripts/test-bump-pins.sh.
 #
+# The GPG keys in scripts/keys are refreshed from each vendor's official copy
+# (the KEYS table below) every time one is used, before anything is verified
+# with it: a committed key file never learns of a renewal or a revocation on
+# its own. The refreshed key must be exactly the pinned primary key; it is
+# merged into the committed one, and a bump whose merged key has anything new
+# writes it back to scripts/keys as one of its edits. `--refresh-keys` does
+# the same for every key on its own, with no version bump, for
+# scripts/pin-bump-prs.sh's "Refresh vendor signing keys" PR.
+#
 # `--check` reads the tables below against the tree and touches nothing, with
 # no network: every pin, checksum and tofu row must name exactly one line that
 # exists, so a renamed ARG cannot quietly drop a checksum from the bumps.
@@ -145,17 +155,21 @@ unit_arg=""
 to_arg=""
 plan=0
 check=0
+refresh_keys=0
 log_level=info
 
 usage() {
   cat <<'EOF'
-usage: bump-pins.sh (--drift FILE | --unit NAME [--to VERSION] | --check) [options]
+usage: bump-pins.sh (--drift FILE | --unit NAME [--to VERSION] | --refresh-keys | --check) [options]
 
   --drift FILE   a `check-pins.sh --format json` report; bump every row that is behind
   --unit NAME    bump one unit (see UNITS below) to --to, or to the vendor's latest
   --to VERSION   the version to bump --unit to (an apt unit's is
                  <upstream>-<revision>, e.g. docker --to 29.9.1-1)
-  --plan         with --drift: print one JSON line per unit to bump, and edit nothing
+  --refresh-keys refresh every key in scripts/keys from its vendor's official URL
+                 (the KEYS table), with no version bump: one `signing-keys` row
+  --plan         with --drift or --refresh-keys: print one JSON line per unit to
+                 bump (or for the keys, when one changed), and edit nothing
   --check        verify the tables below against --root (no network, no edits)
   --root DIR     the tree to edit (default: this script's repository)
   --format F     table (default) or json, on stdout
@@ -180,6 +194,7 @@ while [ $# -gt 0 ]; do
     --format) [ $# -ge 2 ] || { echo "error: --format needs a value" >&2; exit 2; }; format="$2"; shift 2 ;;
     --plan)   plan=1; shift ;;
     --check)  check=1; shift ;;
+    --refresh-keys) refresh_keys=1; shift ;;
     --quiet)  log_level=quiet; shift ;;
     -h|--help) usage; exit 0 ;;
     *) echo "error: unknown argument: $1" >&2; usage >&2; exit 2 ;;
@@ -193,14 +208,17 @@ fi
 if [ "$check" -eq 1 ] && { [ -n "$drift_file" ] || [ -n "$unit_arg" ]; }; then
   echo "error: --check takes no --drift or --unit" >&2; exit 2
 fi
-if [ "$check" -eq 0 ] && [ -z "$drift_file" ] && [ -z "$unit_arg" ]; then
-  echo "error: one of --drift, --unit or --check is required" >&2; usage >&2; exit 2
+if [ "$refresh_keys" -eq 1 ] && { [ -n "$drift_file" ] || [ -n "$unit_arg" ] || [ "$check" -eq 1 ]; }; then
+  echo "error: --refresh-keys takes no --drift, --unit or --check" >&2; exit 2
+fi
+if [ "$check" -eq 0 ] && [ "$refresh_keys" -eq 0 ] && [ -z "$drift_file" ] && [ -z "$unit_arg" ]; then
+  echo "error: one of --drift, --unit, --refresh-keys or --check is required" >&2; usage >&2; exit 2
 fi
 if [ -n "$to_arg" ] && [ -z "$unit_arg" ]; then
   echo "error: --to needs --unit" >&2; exit 2
 fi
-if [ "$plan" -eq 1 ] && [ -z "$drift_file" ]; then
-  echo "error: --plan needs --drift" >&2; exit 2
+if [ "$plan" -eq 1 ] && [ -z "$drift_file" ] && [ "$refresh_keys" -eq 0 ]; then
+  echo "error: --plan needs --drift or --refresh-keys" >&2; exit 2
 fi
 case "$cooldown_days" in ''|*[!0-9]*) echo "error: BUMP_COOLDOWN_DAYS must be a whole number" >&2; exit 2 ;; esac
 case "$now" in ''|*[!0-9]*) echo "error: BUMP_PINS_NOW must be epoch seconds" >&2; exit 2 ;; esac
@@ -385,20 +403,24 @@ docker   | ci-tools/Dockerfile.ci:DOCKER_CLI_VERSION | https://download.docker.c
 # reads (--check enforces it): a vendor that signs signs everything we take
 # from it, and an unsigned file beside signed ones is not taken on trust.
 #
-# gpg: `gpgv` must report a valid signature by exactly this key (an expired
-# key still counts -- AWS lets the expiry of its CLI key lapse between
-# renewals, and the signature is no less AWS's for it -- a revoked one does
-# not). The key file must carry the pinned fingerprint, so swapping the file
-# alone changes nothing; a new vendor key fails the bump, for a human to check
-# and pin.
+# gpg: `gpgv` must report a valid signature by exactly this key, made while
+# the key (or the subkey that signed) was unexpired and unrevoked: EXPKEYSIG,
+# EXPSIG and REVKEYSIG all fail the unit, as apt fails them at build time.
+# The key is the committed key file merged with the vendor's current copy
+# (the KEYS table below), so a key the vendor has renewed reads as renewed;
+# one that has lapsed with no renewal anywhere fails closed. The key file must
+# carry the pinned fingerprint, so swapping the file alone changes nothing; a
+# new vendor key fails the bump, for a human to check and pin.
 #   aws-cli.asc    AWS's published "AWS CLI Team" key, the fingerprint AWS
-#                  documents for it.
+#                  documents for it. AWS extends its expiry from time to time
+#                  and republishes it on its install guide (KEYS below).
 #   hashicorp.asc  https://www.hashicorp.com/.well-known/pgp-key.txt, the
 #                  fingerprint on https://www.hashicorp.com/security. It signs
 #                  with a subkey; gpgv's VALIDSIG names the primary too.
 #   composer.asc   "Packagist Conductors", the key that signs each release's
 #                  composer.phar.asc; fetched from keyserver.ubuntu.com by
 #                  its fingerprint and checked against 2.10.3's signature.
+#                  Composer publishes no official copy of it (KEYS below).
 #   docker.asc     "Docker Release (CE deb)", the key that signs Docker's apt
 #                  repositories: https://download.docker.com/linux/debian/gpg,
 #                  the fingerprint Docker's install documentation gives, and
@@ -480,6 +502,49 @@ docker    | https://download.docker.com/linux/debian/dists/bookworm/InRelease | 
 composer  | $GH/composer/composer/releases/download/{v}/composer.phar | https://api.github.com/repos/composer/composer/attestations | ghattest | $GH/composer/composer/.github/workflows/release.yml@refs/tags/{v} | https://token.actions.githubusercontent.com | composer/composer
 kubectl   | https://dl.k8s.io/release/v{v}/bin/linux/amd64/kubectl.sha256 | https://dl.k8s.io/release/v{v}/bin/linux/amd64/kubectl | sigcert | krel-staging@k8s-releng-prod.iam.gserviceaccount.com | https://accounts.google.com
 kubectl   | https://dl.k8s.io/release/v{v}/bin/linux/arm64/kubectl.sha256 | https://dl.k8s.io/release/v{v}/bin/linux/arm64/kubectl | sigcert | krel-staging@k8s-releng-prod.iam.gserviceaccount.com | https://accounts.google.com
+"
+
+# key file in scripts/keys | primary key fingerprint | the vendor's official
+#   URL for that key ("-": the vendor publishes none) | how the key is served
+#
+# Every gpg SIGS row's key, and every file in scripts/keys, has a row here
+# (--check enforces it, and that each URL is https). Whenever a key is used,
+# its URL is fetched first (with http_get, like everything else) and:
+#   - the fetched copy must hold exactly one primary key, exactly this
+#     fingerprint, and no secret key; anything else fails the unit, and
+#     nothing is written;
+#   - it is merged into the committed key in a throwaway GNUPGHOME. gpg checks
+#     every self-signature it imports, so only what this key itself signed
+#     can be added -- a renewed expiry, a new subkey, a revocation -- and
+#     nothing is ever taken away. Signatures are verified against the merged
+#     key;
+#   - a revocation the merge adds, or any revocation of the primary key, fails
+#     the unit: that is for a human, never a bump;
+#   - when the merge added anything, a unit that bumps also writes the merged
+#     key, armored, to scripts/keys as one of its edits, so its PR carries the
+#     refreshed key for review (--refresh-keys does it on its own);
+#   - when the fetch fails, the committed key is used as it is, with a
+#     warning. A key that has expired there then fails the unit (above).
+# How the key is served:
+#   armor  the response is the armored key
+#   html   a web page: tags stripped, entities decoded, and exactly one
+#          distinct BEGIN/END PGP PUBLIC KEY BLOCK taken from it; none, an
+#          unterminated one, or two different ones, fail
+# The sources:
+#   aws-cli.asc    the AWS CLI install guide, whose Linux section carries the
+#                  key in a code block (docs.aws.amazon.com)
+#   hashicorp.asc  https://www.hashicorp.com/.well-known/pgp-key.txt
+#   docker.asc     https://download.docker.com/linux/debian/gpg, which
+#                  ci-tools/Dockerfile.ci also installs (by fingerprint)
+#   composer.asc   none: Composer's download page links each phar's .asc but
+#                  no key, and composer.github.io/pubkeys.html is the OpenSSL
+#                  keys for `composer self-update`, not this GPG key. Used as
+#                  committed; refreshed by hand from a keyserver
+readonly KEYS="
+aws-cli.asc   | FB5DB77FD5C118B80511ADA8A6310ACC4672475C | https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html | html
+hashicorp.asc | C874011F0AB405110D02105534365D9472D7468F | https://www.hashicorp.com/.well-known/pgp-key.txt | armor
+docker.asc    | 9DC858229FC7DD38854AE2D88D81803C0EBFCD88 | https://download.docker.com/linux/debian/gpg | armor
+composer.asc  | 161DFBE342889F01DDAC4E61CBB3D576F2A0946F | - | -
 "
 
 trim() { printf '%s' "$1" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//'; }
@@ -813,31 +878,217 @@ verify_sigstore() {
   log info "$unit: $url verifies as $identity"
 }
 
+# key_field KEYFILE N -- column N (1-based) of the key's KEYS row.
+key_field() {
+  local line
+  line=$(printf '%s\n' "$KEYS" | awk -F'|' -v k="$1" '{ x=$1; gsub(/[[:space:]]/, "", x); if (x == k) { print; exit } }')
+  [ -n "$line" ] || return 1
+  trim "$(printf '%s' "$line" | cut -d'|' -f"$2")"
+}
+
+# key_source KEYFILE FPR -- where the committed key is read from, and the
+# fingerprint it must be: scripts/keys and FPR, or in fixture mode
+# BUMP_PINS_KEYS and BUMP_PINS_KEY_FPR when set. Sets key_path, key_fpr.
+key_source() {
+  local keydir="$script_dir/keys"
+  key_fpr="$2"
+  if [ -n "$fixtures" ]; then
+    keydir=${BUMP_PINS_KEYS:-$keydir}; key_fpr=${BUMP_PINS_KEY_FPR:-$key_fpr}
+  fi
+  key_path="$keydir/$1"
+}
+
+# primaries_of FILE -- the fingerprint of every primary key in FILE, one per
+# line, and "secret" for each secret key in it, which no key file may hold.
+# A private GNUPGHOME: nothing is read from, or left in, the runner's own.
+primaries_of() {
+  mkdir -p "$tmp/gnupg"; chmod 700 "$tmp/gnupg"
+  GNUPGHOME="$tmp/gnupg" gpg --batch --show-keys --with-colons "$1" 2>/dev/null \
+    | awk -F: '$1 == "sec" { print "secret" } $1 == "pub" || $1 == "sec" { p = 1; next } p && $1 == "fpr" { print $10; p = 0 }'
+}
+
+# The armored key on a vendor's web page: the page with every tag stripped
+# (a <br> is a line break) and its entities decoded, once -- the named ones
+# below, and numeric ones that are printable ASCII; anything else is left as
+# it is, for gpg to refuse. Of what is left, the lines from
+# `-----BEGIN PGP PUBLIC KEY BLOCK-----` to `-----END PGP PUBLIC KEY BLOCK-----`,
+# each trimmed of the page's indentation. Exactly one distinct block, or exit
+# 2 (none), 3 (one never ended, or one inside another) or 4 (two that
+# differ). The same block twice, as a page with tabs may repeat it, is one.
+# shellcheck disable=SC2016  # awk's own $0, not this shell's
+readonly HTML_KEY_AWK='
+BEGIN { MB = "-----BEGIN PGP PUBLIC KEY BLOCK-----"; ME = "-----END PGP PUBLIC KEY BLOCK-----" }
+function hexval(h,   i, n) {
+  n = 0; h = tolower(h)
+  for (i = 1; i <= length(h); i++) n = n * 16 + index("0123456789abcdef", substr(h, i, 1)) - 1
+  return n
+}
+{ doc = doc $0 "\n" }
+END {
+  gsub(/\r/, "", doc)
+  gsub(/<[bB][rR][^>]*>/, "\n", doc)
+  gsub(/<[^>]*>/, "", doc)
+  out = ""
+  while (match(doc, /&(#[0-9]+|#[xX][0-9a-fA-F]+|[a-zA-Z]+);/)) {
+    ent = substr(doc, RSTART + 1, RLENGTH - 2); rep = "&" ent ";"; n = -1
+    if (ent == "amp") rep = "&"
+    else if (ent == "lt") rep = "<"
+    else if (ent == "gt") rep = ">"
+    else if (ent == "quot") rep = "\""
+    else if (ent == "apos") rep = "\047"
+    else if (ent == "nbsp") rep = " "
+    else if (ent ~ /^#[xX]/) n = hexval(substr(ent, 3))
+    else if (ent ~ /^#/) n = substr(ent, 2) + 0
+    if (n == 10 || (n >= 32 && n < 127)) rep = sprintf("%c", n)
+    out = out substr(doc, 1, RSTART - 1) rep
+    doc = substr(doc, RSTART + RLENGTH)
+  }
+  doc = out doc
+  nl = split(doc, line, "\n"); inb = 0; blocks = 0
+  for (i = 1; i <= nl; i++) {
+    l = line[i]; sub(/^[ \t]+/, "", l); sub(/[ \t]+$/, "", l)
+    # The markers may share a line with the text of the page once tags are
+    # stripped ("Paste this:-----BEGIN ..."), so they are found anywhere in it.
+    if ((k = index(l, MB)) > 0) {
+      if (inb) exit 3
+      inb = 1; cur = ""; l = substr(l, k)
+    }
+    if (!inb) continue
+    if ((k = index(l, ME)) > 0) l = substr(l, 1, k + length(ME) - 1)
+    cur = cur l "\n"
+    if (k > 0 && l ~ /-----END PGP PUBLIC KEY BLOCK-----$/) {
+      inb = 0
+      if (!(cur in seen)) { seen[cur] = 1; blocks++; first = cur }
+    }
+  }
+  if (inb) exit 3
+  if (blocks == 0) exit 2
+  if (blocks > 1) exit 4
+  printf "%s", first
+}'
+html_key_block() { awk "$HTML_KEY_AWK" "$1"; }
+
+# key_fail DIR MESSAGE -- a key refresh failed: logged, and remembered for
+# the rest of the run, so every row that uses the key fails the same way.
+key_err=""
+key_fail() { key_err=$2; printf '%s' "$2" > "$1/failed"; log error "$2"; return 1; }
+
+# revocations FPR HOME -- how many of FPR's keys (primary and subkeys) are
+# revoked in HOME's keyring.
+revocations() {
+  GNUPGHOME="$2" gpg --batch --with-colons --list-keys "$1" 2>/dev/null \
+    | awk -F: '($1 == "pub" || $1 == "sub") && $2 == "r" { n++ } END { print n + 0 }'
+}
+
+# refresh_key KEYFILE NAME FPR -- the keyring to verify NAME's signatures
+# against: KEYFILE (the committed key, already checked to be exactly FPR)
+# merged with the vendor's current copy from its KEYS row (see the table).
+# Sets key_ring (a binary keyring for gpgv), key_base (the committed key
+# alone, exported the same way), key_changed (1 when the merge added
+# anything), key_asc (the merged key, armored, when it did) and key_src (the
+# URL the vendor's copy came from; empty when there is none or it could not
+# be fetched). 1, with the reason logged, when the vendor's copy is not
+# exactly FPR, or the merged key is revoked. Once per key per run; later
+# calls reuse the outcome.
+refresh_key() {
+  local keyfile="$1" name="$2" fpr="$3" d="$tmp/key.$2" url fmt rc=0 got revs
+  key_ring="$d/ring.gpg"; key_base="$d/base.gpg"; key_asc="$d/merged.asc"; key_changed=0; key_src=""
+  if [ -f "$d/failed" ]; then key_err=$(cat "$d/failed"); log error "$key_err"; return 1; fi
+  if [ -f "$d/done" ]; then
+    key_changed=$(cat "$d/changed"); key_src=$(cat "$d/src"); return 0
+  fi
+  rm -rf "$d"; mkdir -p "$d/home"; chmod 700 "$d/home"
+  if ! url=$(key_field "$name" 3); then
+    key_fail "$d" "$name has no KEYS row, so it cannot be refreshed"; return 1
+  fi
+  fmt=$(key_field "$name" 4)
+  # self-sigs-only, import-clean: gpg checks a key's own signatures on import
+  # but keeps third-party certifications unchecked, so a copy padded with
+  # them (certificate flooding) would otherwise grow the merged key and be
+  # written back. Only what the vendor's own key signed is kept.
+  if ! GNUPGHOME="$d/home" gpg --batch --quiet --import-options self-sigs-only,import-clean --import "$keyfile" > /dev/null 2>&1; then
+    key_fail "$d" "could not import $keyfile"; return 1
+  fi
+  GNUPGHOME="$d/home" gpg --batch --export "$fpr" > "$key_base" 2>/dev/null || true
+  [ -s "$key_base" ] || { key_fail "$d" "could not export $fpr from $keyfile"; return 1; }
+  revs=$(revocations "$fpr" "$d/home")
+  if [ "$url" != - ]; then
+    rc=0; http_get "$url" > "$d/fetched.raw" || rc=$?
+    if [ "$rc" -eq "$NO_FIXTURE" ]; then
+      key_fail "$d" "$name: no fixture for its refresh URL $url"; return 1
+    elif [ "$rc" -ne 0 ]; then
+      log warn "$name: could not fetch the vendor's current key from $url (exit $rc); verifying against the committed copy, which may be stale"
+    elif [ "$(wc -c < "$d/fetched.raw")" -gt 2097152 ]; then
+      # The real pages and keys are a few hundred KB at most.
+      key_fail "$d" "$name: $url is over 2 MB, not a key or a page carrying one"; return 1
+    else
+      case "$fmt" in
+        armor) cp "$d/fetched.raw" "$d/fetched.asc" ;;
+        html)
+          rc=0; html_key_block "$d/fetched.raw" > "$d/fetched.asc" || rc=$?
+          case "$rc" in
+            0) ;;
+            2) key_fail "$d" "$name: $url has no PGP PUBLIC KEY BLOCK"; return 1 ;;
+            4) key_fail "$d" "$name: $url has more than one different PGP PUBLIC KEY BLOCK"; return 1 ;;
+            *) key_fail "$d" "$name: $url has a PGP PUBLIC KEY BLOCK that is not well formed"; return 1 ;;
+          esac ;;
+        *) key_fail "$d" "KEYS row for $name: unknown format '$fmt'"; return 1 ;;
+      esac
+      got=$(primaries_of "$d/fetched.asc" | paste -sd' ' -)
+      if [ "$got" != "$fpr" ]; then
+        key_fail "$d" "$name: the key at $url is not exactly the key $fpr (it holds: ${got:-no key})"; return 1
+      fi
+      if ! GNUPGHOME="$d/home" gpg --batch --quiet --import-options self-sigs-only,import-clean --import "$d/fetched.asc" > /dev/null 2>&1; then
+        key_fail "$d" "$name: could not import the key at $url"; return 1
+      fi
+      key_src=$url
+    fi
+  fi
+  # Both copies were exactly the one key, so the keyring must be too.
+  got=$(GNUPGHOME="$d/home" gpg --batch --with-colons --list-keys 2>/dev/null \
+    | awk -F: '$1 == "pub" { p = 1; next } p && $1 == "fpr" { print $10; p = 0 }' | paste -sd' ' -)
+  [ "$got" = "$fpr" ] || { key_fail "$d" "$name: the merged keyring is not exactly the key $fpr ($got)"; return 1; }
+  if GNUPGHOME="$d/home" gpg --batch --with-colons --list-keys "$fpr" 2>/dev/null \
+       | awk -F: '$1 == "pub" && $2 == "r" { r = 1 } END { exit !r }'; then
+    local where="in the committed key"
+    if [ -n "$key_src" ]; then where="in the committed key or the vendor's copy at $key_src"; fi
+    key_fail "$d" "$name: the key $fpr is revoked ($where); a revoked key verifies nothing, and a person has to look"
+    return 1
+  fi
+  if [ "$(revocations "$fpr" "$d/home")" != "$revs" ]; then
+    key_fail "$d" "$name: the vendor's copy at $key_src revokes a subkey of $fpr that the committed key does not; a person has to look before anything is verified with it"
+    return 1
+  fi
+  GNUPGHOME="$d/home" gpg --batch --export "$fpr" > "$key_ring" 2>/dev/null || true
+  [ -s "$key_ring" ] || { key_fail "$d" "$name: could not export the merged key"; return 1; }
+  if ! cmp -s "$key_base" "$key_ring"; then
+    key_changed=1
+    GNUPGHOME="$d/home" gpg --batch --armor --export "$fpr" > "$key_asc" 2>/dev/null || true
+    [ -s "$key_asc" ] || { key_fail "$d" "$name: could not export the merged key"; return 1; }
+    log info "$name: the vendor's copy at $key_src adds to the committed key (a renewal, new signatures or subkeys)"
+  fi
+  printf '%s' "$key_changed" > "$d/changed"; printf '%s' "$key_src" > "$d/src"; : > "$d/done"
+}
+
 # verify_gpg UNIT URL FILE SIG_URL KEYFILE FPR -- SIG_URL is a valid detached
-# signature on FILE by exactly the key FPR, read from scripts/keys/KEYFILE.
-# SIG_URL `-`: FILE is itself one clearsigned message by that key, and what it
-# signs is written to FILE.signed, the only copy of it a caller may read.
+# signature on FILE by exactly the key FPR, read from scripts/keys/KEYFILE
+# and refreshed from its vendor (refresh_key) first. SIG_URL `-`: FILE is
+# itself one clearsigned message by that key, and what it signs is written to
+# FILE.signed, the only copy of it a caller may read.
 verify_gpg() {
   local unit="$1" url="$2" file="$3" sig_url="$4" row_key="$5" fpr="$6"
-  local keyfile keydir status cmd inline=""
-  keydir="$script_dir/keys"
-  if [ -n "$fixtures" ]; then
-    keydir=${BUMP_PINS_KEYS:-$keydir}; fpr=${BUMP_PINS_KEY_FPR:-$fpr}
-  fi
-  keyfile="$keydir/$row_key"
+  local keyfile status cmd
+  key_source "$row_key" "$fpr"
+  keyfile=$key_path; fpr=$key_fpr
   for cmd in gpg gpgv; do
     command -v "$cmd" >/dev/null || { log error "$cmd is needed to verify $sig_url"; return 1; }
   done
   [ -f "$keyfile" ] || { log error "signing key $keyfile is missing"; return 1; }
-  # A private GNUPGHOME: nothing is read from, or left in, the runner's own.
-  mkdir -p "$tmp/gnupg"; chmod 700 "$tmp/gnupg"
-  if [ "$(GNUPGHOME="$tmp/gnupg" gpg --batch --show-keys --with-colons "$keyfile" 2>/dev/null \
-          | awk -F: '$1 == "pub" { p = 1; next } p && $1 == "fpr" { print $10; p = 0 }')" != "$fpr" ]; then
+  if [ "$(primaries_of "$keyfile")" != "$fpr" ]; then
     log error "$keyfile is not exactly the key $fpr"
     return 1
   fi
-  GNUPGHOME="$tmp/gnupg" gpg --batch --yes --dearmor -o "$tmp/sigkey.gpg" "$keyfile" 2>/dev/null \
-    || { log error "could not read $keyfile"; return 1; }
+  refresh_key "$keyfile" "$row_key" "$fpr" || return 1
   if [ "$sig_url" = - ]; then
     # Inline: one clearsigned message and nothing else. gpgv verifies only the
     # signed block, so text before it, or a second message after it, would be
@@ -849,13 +1100,13 @@ verify_gpg() {
       log error "$url is not exactly one clearsigned message"
       return 1
     fi
-    sig_url=$url inline=1
-    status=$(GNUPGHOME="$tmp/gnupg" gpgv --status-fd 1 --keyring "$tmp/sigkey.gpg" --output "$file.signed.part" "$file" 2>/dev/null) \
+    sig_url=$url
+    status=$(GNUPGHOME="$tmp/gnupg" gpgv --status-fd 1 --keyring "$key_ring" --output "$file.signed.part" "$file" 2>/dev/null) \
       || { rm -f "$file.signed.part"; log error "$url does not verify under $fpr"; return 1; }
   else
     rm -f "$tmp/artifact.sig"
     http_download "$sig_url" "$tmp/artifact.sig" || { log error "no signature at $sig_url"; return 1; }
-    status=$(GNUPGHOME="$tmp/gnupg" gpgv --status-fd 1 --keyring "$tmp/sigkey.gpg" "$tmp/artifact.sig" "$file" 2>/dev/null) \
+    status=$(GNUPGHOME="$tmp/gnupg" gpgv --status-fd 1 --keyring "$key_ring" "$tmp/artifact.sig" "$file" 2>/dev/null) \
       || { log error "$sig_url does not verify $url under $fpr"; return 1; }
   fi
   if printf '%s\n' "$status" | grep -qE '^\[GNUPG:\] (REVKEYSIG|BADSIG|ERRSIG)'; then
@@ -863,14 +1114,15 @@ verify_gpg() {
     log error "$sig_url: the key is revoked, or the signature is bad"
     return 1
   fi
-  # An apt InRelease is held to what apt itself enforces at build time: a
-  # signature by an expired key or subkey, or an expired signature, is refused
-  # there, so it is refused here rather than opening a bump apt then rejects.
-  # (Detached rows are left as they are: gpgv accepts a signature made while
-  # the key was valid, and AWS's published key has itself lapsed.)
-  if [ -n "$inline" ] && printf '%s\n' "$status" | grep -qE '^\[GNUPG:\] (EXPKEYSIG|EXPSIG)'; then
+  # A signature by an expired key or subkey, or an expired signature, is
+  # refused for every row, inline or detached: apt refuses one on an
+  # InRelease at build time, and a detached one is held to the same rule.
+  # The key was refreshed from its vendor above, so a key the vendor renewed
+  # does not read as expired here; one still expired after that (no renewal
+  # published, or the vendor unreachable) fails closed.
+  if printf '%s\n' "$status" | grep -qE '^\[GNUPG:\] (EXPKEYSIG|EXPSIG)'; then
     rm -f "$file.signed.part"
-    log error "$sig_url: signed by an expired key, or the signature has expired"
+    log error "$sig_url: signed by an expired key, or the signature has expired${key_src:+ (even after refreshing the key from $key_src)}"
     return 1
   fi
   if ! printf '%s\n' "$status" | awk -v f="$fpr" '$2 == "VALIDSIG" && ($3 == f || $NF == f) { ok = 1 } END { exit !ok }'; then
@@ -881,6 +1133,10 @@ verify_gpg() {
   if [ -f "$file.signed.part" ]; then mv "$file.signed.part" "$file.signed"; fi
   integrity_urls+=("$sig_url")
   add_note "its GPG signature verified under the vendor's pinned key"
+  if [ -n "$key_src" ]; then integrity_urls+=("$key_src"); fi
+  if [ "$key_changed" = 1 ]; then
+    case " ${key_edits[*]:-} " in *" $row_key "*) ;; *) key_edits+=("$row_key") ;; esac
+  fi
   log info "$unit: $url verifies under $fpr"
 }
 
@@ -1033,7 +1289,7 @@ apt_resolve() {
   # The signature first. verify_sig passes a file no row covers, so the
   # signed copy only gpg's inline method writes is what proves a row did.
   rm -f "$f.signed"
-  verify_sig "$unit" "$rel_url" "$f" || { apt_err="the vendor signature on $rel_url does not verify"; return 1; }
+  verify_sig "$unit" "$rel_url" "$f" || { apt_err="the vendor signature on $rel_url does not verify${key_err:+ ($key_err)}"; return 1; }
   [ -s "$f.signed" ] || { apt_err="$rel_url has no inline gpg SIGS row, so nothing in it is read"; return 1; }
   signed="$f.signed"
   # A validly signed InRelease of another suite is still Docker's; it must
@@ -1205,7 +1461,7 @@ set_pin() {
 }
 
 # --- one unit ----------------------------------------------------------------
-edited_files=(); integrity_urls=(); pin_values=(); signed_notes=()
+edited_files=(); integrity_urls=(); pin_values=(); signed_notes=(); key_edits=(); emit_integrity=""
 results="$tmp/results.jsonl"
 : > "$results"
 errors=0
@@ -1224,7 +1480,7 @@ emit() {
   jq -nc --arg unit "$1" --arg status "$2" --arg old "$3" --arg new "$4" \
     --arg class "$5" --arg reason "$6" --arg error "$7" \
     --arg tools "$(unit_field "$1" 2 2>/dev/null || true)" \
-    --arg integrity "$(unit_field "$1" 4 2>/dev/null || true)" \
+    --arg integrity "${emit_integrity:-$(unit_field "$1" 4 2>/dev/null || true)}" \
     --arg cooldown "$(if [ "$(unit_field "$1" 5 2>/dev/null || true)" = first-seen ]; then echo first-seen; else echo release-date; fi)" \
     --arg version_url "${version_url:-}" --arg released "${released:-}" \
     --argjson files "$files_json" --argjson integrity_urls "$urls_json" --argjson pins "$pins_json" \
@@ -1233,7 +1489,7 @@ emit() {
       class:(if $class == "" then null else $class end), reason:$reason,
       error:(if $error == "" then null else $error end),
       integrity:(if $integrity == "" then null else ($integrity | sub(":.*"; "")) end),
-      cooldown:(if $integrity == "" then null else $cooldown end),
+      cooldown:(if $integrity == "" or $integrity == "keys" then null else $cooldown end),
       released:(if $released == "" then null else $released end),
       version_url:(if $version_url == "" then null else $version_url end),
       integrity_urls:$integrity_urls, files:$files, pins:$pins}' >> "$results"
@@ -1245,10 +1501,18 @@ fail_unit() {
   emit "$1" error "${old:-}" "${new:-}" "" "" "$2"
 }
 
+# write_key NAME -- scripts/keys/NAME in --root becomes the key refresh_key
+# merged for it (armored), and is listed as an edited file.
+write_key() {
+  mkdir -p "$root/scripts/keys"
+  cat "$tmp/key.$1/merged.asc" > "$root/scripts/keys/$1"
+  edited_files+=("scripts/keys/$1")
+}
+
 bump_unit() {
   local unit="$1" new="$2" pins integrity date_spec
   local old="" pin file key cur all_new=1 note=""
-  edited_files=(); integrity_urls=(); pin_values=(); signed_notes=(); version_url=""; released=""
+  edited_files=(); integrity_urls=(); pin_values=(); signed_notes=(); key_edits=(); key_err=""; version_url=""; released=""
 
   pins=$(unit_field "$unit" 3) || { old=""; fail_unit "$unit" "unknown unit"; return 0; }
   # shellcheck disable=SC2086  # one spec per word
@@ -1365,7 +1629,7 @@ bump_unit() {
         # vendor signs it until that signature verifies.
         rc=0; verify_sums "$unit" "$surl" || rc=$?
         if [ "$rc" -eq 1 ]; then
-          fail_unit "$unit" "the vendor signature on $surl does not verify"; return 0
+          fail_unit "$unit" "the vendor signature on $surl does not verify${key_err:+ ($key_err)}"; return 0
         fi
         if ! sum=$(sum_from "$surl" "$sname"); then
           fail_unit "$unit" "no vendor checksum for $sname at $surl"; return 0
@@ -1401,7 +1665,7 @@ bump_unit() {
           fail_unit "$unit" "could not download $surl (exit $rc); is $new a real release?"; return 0
         fi
         if ! verify_sig "$unit" "$surl" "$dl"; then
-          rm -f "$dl"; fail_unit "$unit" "the vendor signature on $surl does not verify"; return 0
+          rm -f "$dl"; fail_unit "$unit" "the vendor signature on $surl does not verify${key_err:+ ($key_err)}"; return 0
         fi
         sum=$(sha256_of "$dl"); rm -f "$dl"
         is_sha256 "$sum" || { fail_unit "$unit" "could not hash $surl"; return 0; }
@@ -1489,6 +1753,11 @@ bump_unit() {
     fi
   fi
   reason="$note$reason"
+  local kname
+  for kname in "${key_edits[@]:-}"; do
+    [ -n "$kname" ] || continue
+    reason="$reason; the signing key was refreshed first from the vendor's copy at $(cat "$tmp/key.$kname/src"), which renews or adds to the committed one, so scripts/keys/$kname is updated here too"
+  done
 
   # --- stage every edit on copies, then write the unit's files in one go.
   # Plain arrays rather than an associative one, so this runs on the bash 3.2
@@ -1518,9 +1787,21 @@ bump_unit() {
     esac
     pin_values+=("$edit")
   done
+  # A signing key the vendor renewed or added to (verify_gpg): its merged
+  # copy, so the PR carries it and later runs start from it.
+  for kname in "${key_edits[@]:-}"; do
+    [ -n "$kname" ] || continue
+    if [ ! -s "$tmp/key.$kname/merged.asc" ]; then
+      fail_unit "$unit" "the refreshed $kname is missing"; return 0
+    fi
+  done
   for file in "${staged[@]}"; do
     cat "$stage/$(printf '%s' "$file" | tr '/' '_')" > "$root/$file"
     edited_files+=("$file")
+  done
+  for kname in "${key_edits[@]:-}"; do
+    [ -n "$kname" ] || continue
+    write_key "$kname"
   done
 
   log info "$unit: $old -> $new ($class)"
@@ -1648,7 +1929,7 @@ check_tables() {
       *) complain "SIGS row for $1: '$2' is not a known OIDC issuer" ;;
     esac
   }
-  local sm ss sa sb sc signed_units="" digest_rows="" inline_rows=""
+  local sm ss sa sb sc signed_units="" digest_rows="" inline_rows="" gpg_keys=""
   while IFS='|' read -r u urow ss sm sa sb sc; do
     u=$(trim "$u"); [ -n "$u" ] || continue
     urow=$(trim "$urow"); ss=$(trim "$ss"); sm=$(trim "$sm"); sa=$(trim "$sa"); sb=$(trim "$sb"); sc=$(trim "$sc")
@@ -1670,6 +1951,9 @@ check_tables() {
       gpg)
         [ -f "$script_dir/keys/$sa" ] || complain "SIGS row for $u: scripts/keys/$sa does not exist"
         printf '%s' "$sb" | grep -qxE '[0-9A-F]{40}' || complain "SIGS row for $u: '$sb' is not a full key fingerprint"
+        [ "$(key_field "$sa" 2 2>/dev/null || true)" = "$sb" ] \
+          || complain "SIGS row for $u: $sa has no KEYS row with the fingerprint $sb"
+        case " $gpg_keys " in *" $sa "*) ;; *) gpg_keys="$gpg_keys $sa" ;; esac
         # Inline exactly when the file is an APT row's InRelease.
         case " $apt_reads " in
           *" $u|$urow "*)
@@ -1737,12 +2021,109 @@ check_tables() {
         || complain "$u is signed, but $urow has no SIGS row"
     done <<< "$(printf '%s\n%s\n' "$DOWNLOADS" "$SUMS")"
   done
+  # Every key has a KEYS row -- a refresh URL, or an explicit `-` for none --
+  # that a gpg row uses, an https URL, and a committed file that is still
+  # exactly one primary key, the pinned one.
+  local kn kf ku kfmt key_rows="" kf_path got
+  while IFS='|' read -r kn kf ku kfmt; do
+    kn=$(trim "$kn"); [ -n "$kn" ] || continue
+    kf=$(trim "$kf"); ku=$(trim "$ku"); kfmt=$(trim "$kfmt")
+    case " $key_rows " in *" $kn "*) complain "KEYS has two rows for $kn" ;; esac
+    key_rows="$key_rows $kn"
+    printf '%s' "$kf" | grep -qxE '[0-9A-F]{40}' || complain "KEYS row for $kn: '$kf' is not a full key fingerprint"
+    case "$ku" in
+      -) [ "$kfmt" = - ] || complain "KEYS row for $kn: no refresh URL, so its format must be '-', not '$kfmt'" ;;
+      *)
+        printf '%s' "$ku" | grep -qxE 'https://[A-Za-z0-9.-]+(/[A-Za-z0-9._~%/+-]*)?' \
+          || complain "KEYS row for $kn: '$ku' is not an https URL (or '-' for none)"
+        case "$kfmt" in armor|html) ;; *) complain "KEYS row for $kn: '$kfmt' is not a key format (armor or html)" ;; esac ;;
+    esac
+    case " $gpg_keys " in *" $kn "*) ;; *) complain "KEYS row for $kn, which no gpg SIGS row uses" ;; esac
+    kf_path="$script_dir/keys/$kn"
+    if [ ! -f "$kf_path" ]; then
+      complain "KEYS row for $kn: scripts/keys/$kn does not exist"
+    elif command -v gpg >/dev/null; then
+      got=$(primaries_of "$kf_path" | paste -sd' ' -)
+      [ "$got" = "$kf" ] || complain "scripts/keys/$kn is not exactly one primary key, $kf (it holds: ${got:-no key})"
+    else
+      log warn "gpg not installed: scripts/keys/$kn not checked against $kf"
+    fi
+  done <<< "$KEYS"
+  for kf_path in "$script_dir"/keys/*; do
+    [ -e "$kf_path" ] || continue
+    kn=$(basename "$kf_path")
+    case " $key_rows " in *" $kn "*) ;; *) complain "scripts/keys/$kn has no KEYS row (a refresh URL, or '-' for none)" ;; esac
+  done
   [ "$bad" -eq 0 ] || { log error "$bad problem(s) in the tables"; return 1; }
   log info "tables consistent with $root"
 }
 if [ "$check" -eq 1 ]; then
   check_tables
   exit $?
+fi
+
+# --- --refresh-keys: every key, with no version bump -------------------------
+# One row, unit `signing-keys`: every KEYS row's key refreshed (refresh_key),
+# exactly as a bump would before verifying with it. `bumped` (class auto)
+# when any key gained something, and the merged keys written to
+# scripts/keys; `current` when none did, or their vendors could not be
+# reached (a warning each); `error` when any vendor's copy is not exactly the
+# pinned key, or revokes it -- and then nothing is written. old and new are
+# digests of the keys before and after (sha256 of their exports, in table
+# order), so pin-bump-prs.sh can tell one refresh from the next. With --plan,
+# only `{unit, from, to}` when a key changed, and nothing is written.
+readonly KEYS_UNIT=signing-keys
+refresh_all_keys() {
+  local name fpr errs="" changed=() n edit=""
+  local old="" new=""
+  emit_integrity=keys
+  : > "$tmp/keys.old"; : > "$tmp/keys.new"
+  command -v gpg >/dev/null || { fail_unit "$KEYS_UNIT" "gpg is needed to refresh the signing keys"; return 0; }
+  while IFS='|' read -r name fpr _; do
+    name=$(trim "$name"); fpr=$(trim "$fpr")
+    [ -n "$name" ] || continue
+    key_source "$name" "$fpr"
+    if [ ! -f "$key_path" ]; then errs="${errs}$name is missing; "; continue; fi
+    if [ "$(primaries_of "$key_path")" != "$key_fpr" ]; then
+      errs="${errs}$key_path is not exactly the key $key_fpr; "; continue
+    fi
+    if ! refresh_key "$key_path" "$name" "$key_fpr"; then
+      errs="${errs}$(cat "$tmp/key.$name/failed"); "; continue
+    fi
+    cat "$key_base" >> "$tmp/keys.old"; cat "$key_ring" >> "$tmp/keys.new"
+    if [ -n "$key_src" ]; then integrity_urls+=("$key_src"); fi
+    if [ "$key_changed" = 1 ]; then changed+=("$name"); fi
+  done <<< "$KEYS"
+  if [ -n "$errs" ]; then fail_unit "$KEYS_UNIT" "${errs%; }"; return 0; fi
+  old=$(sha256_of "$tmp/keys.old" | cut -c1-16); new=$(sha256_of "$tmp/keys.new" | cut -c1-16)
+  if [ "${#changed[@]}" -eq 0 ]; then
+    [ "$plan" -eq 1 ] || emit "$KEYS_UNIT" current "$old" "$new" "" "every signing key is as its vendor publishes it (or its vendor could not be reached)" ""
+    return 0
+  fi
+  if [ "$plan" -eq 1 ]; then
+    jq -nc --arg unit "$KEYS_UNIT" --arg from "$old" --arg to "$new" '{unit:$unit, from:$from, to:$to}'
+    return 0
+  fi
+  for n in "${changed[@]}"; do
+    write_key "$n"
+    pin_values+=("scripts/keys/$n#sha256=$(sha256_of "$tmp/key.$n/merged.asc")")
+    edit="${edit:+$edit, }$n"
+  done
+  log info "$KEYS_UNIT: refreshed $edit"
+  emit "$KEYS_UNIT" bumped "$old" "$new" auto \
+    "$edit refreshed from the vendor's official copy, which renews or adds to the committed key: each fetched key was exactly the pinned primary key, merged into the committed one by gpg (which imports only what that key itself signed), and carries no revocation" ""
+}
+if [ "$refresh_keys" -eq 1 ]; then
+  refresh_all_keys
+  if [ "$plan" -eq 1 ]; then
+    cat "$results"
+  elif [ "$format" = json ]; then
+    jq -s . "$results"
+  else
+    jq -r '[.unit, .status, (.old // "-"), (.new // "-"), (.class // "-"), (.error // .reason)] | @tsv' "$results"
+  fi
+  [ "$errors" -eq 0 ] || exit 1
+  exit 0
 fi
 
 # --- which units, to which versions ------------------------------------------

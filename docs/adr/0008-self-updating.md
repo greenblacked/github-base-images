@@ -429,6 +429,18 @@ the artifact's digest, not the checksums file, so a file-signature check cannot 
   upstream version alone would call `29.9.0-1` current with `29.9.0-2` published, and a packaging or
   security fix Docker ships only as a new revision would never be taken; so the bump reads exactly
   the revision asked for from the signed index, refuses an older one, and writes the full string.
+- **The GPG keys are refreshed from their vendors, and an expired one no longer passes** (added
+  2026-10-19, superseding the 2026-10-17 amendment's "an expired key is accepted"). Each key in
+  `scripts/keys` has a row in a `KEYS` table naming its vendor's official copy (AWS's install
+  guide, HashiCorp's `.well-known/pgp-key.txt`, Docker's `linux/debian/gpg`; `-` for Composer,
+  which publishes none). Before it verifies anything, `bump-pins.sh` fetches that copy, requires
+  exactly the pinned primary key, merges it into the committed key with gpg (only what the key
+  itself signed can be added) and verifies against the merge; a revocation is an error row, and an
+  unreachable vendor a warning. `EXPKEYSIG` and `EXPSIG` then fail every gpg row, detached as well
+  as inline, so a lapsed key fails closed while a renewed one verifies. A merged key with anything
+  new is written back to `scripts/keys` by the bump that used it, and otherwise by a daily
+  `signing-keys` pull request (*Refresh vendor signing keys*, `bump-pins.sh --refresh-keys`), so
+  the committed copies follow renewals and revocations without a person.
 
 **Consequences.**
 

@@ -12,6 +12,13 @@
 #      on the branch head, which is what the required checks look at;
 #   5. a `review` bump (no vendor checksum, no vendor release date, or a
 #      major version) gets the `needs-review` label, as information.
+# And one more, `signing-keys`, when a vendor has renewed or added to one of
+# the GPG keys in scripts/keys (bump-pins.sh --refresh-keys): the same
+# branch, commit, PR and CI steps, titled "Refresh vendor signing keys", so
+# the committed keys stay current even when no bump is due. Its identity is
+# a digest of the refreshed keys instead of a version. A vendor's copy that is
+# not the pinned key, or that revokes it, is an error row, never a PR.
+#
 # Merging is not done here. .github/workflows/merge-bot-prs.yml merges every
 # bump PR, `auto` and `review` alike, once its required checks are green on
 # its head commit -- a `review` one only once its first-seen cooldown is over
@@ -77,6 +84,10 @@ set -euo pipefail
 readonly BOT_NAME='github-actions[bot]'
 readonly BOT_EMAIL='41898282+github-actions[bot]@users.noreply.github.com'
 readonly LABEL=needs-review
+# The pseudo-unit for the signing keys' own refresh (bump-pins.sh
+# --refresh-keys): branch pin-bump/signing-keys, title "Refresh vendor
+# signing keys", `auto`, so it merges once green like any verified bump.
+readonly KEYS_UNIT=signing-keys
 # The four required checks (docs/security.md, "Required checks") -- the ones
 # merge-bot-prs.sh merges on -- and which workflow reports each, for
 # re-dispatching the one whose checks never ran.
@@ -265,8 +276,14 @@ one_unit() {
   rm -rf "$wt"
   local_run git worktree add --quiet --detach "$wt" "origin/$base"
   local rc=0 result
-  "$script_dir/bump-pins.sh" --root "$wt" --unit "$unit" --to "$to" --format json --quiet \
-    > "$work/bump-$unit.json" 2> "$work/bump-$unit.err" || rc=$?
+  if [ "$unit" = "$KEYS_UNIT" ]; then
+    # Not a version: every signing key refreshed from its vendor, on its own.
+    "$script_dir/bump-pins.sh" --root "$wt" --refresh-keys --format json --quiet \
+      > "$work/bump-$unit.json" 2> "$work/bump-$unit.err" || rc=$?
+  else
+    "$script_dir/bump-pins.sh" --root "$wt" --unit "$unit" --to "$to" --format json --quiet \
+      > "$work/bump-$unit.json" 2> "$work/bump-$unit.err" || rc=$?
+  fi
   result=$(jq -c '.[0] // empty' "$work/bump-$unit.json" 2>/dev/null || true)
   if [ -z "$result" ]; then
     note="bump-pins exit $rc: $(tail -3 "$work/bump-$unit.err" | tr '\n' ' ')"
@@ -296,6 +313,7 @@ one_unit() {
     printf -v "$t" '%s' "$(printf '%s' "${!t}" | tr '\r\n' '  ' | sed -e 's/<!--/< !--/g' -e 's/-->/-- >/g')"
   done
   title="Bump $unit from $old to $new"
+  [ "$unit" != "$KEYS_UNIT" ] || title="Refresh vendor signing keys"
 
   # The first-seen clock (see the header): kept while the version and every
   # value written are the same as the open PR's, restarted otherwise.
@@ -318,6 +336,7 @@ one_unit() {
     tofu) source="Checksums computed by scripts/bump-pins.sh from its own download of each artifact (trust on first use: the vendor publishes no checksum; a vendor signature, where listed below, was verified first)" ;;
     apt) source="Version string read by scripts/bump-pins.sh from the vendor's signed apt index: InRelease's GPG signature verified under the vendor's key, pinned by fingerprint, then each Packages file matched to the SHA-256 that signed InRelease lists for it; nothing was computed from a download, and apt checks the same chain, and every .deb's hash, again at build time" ;;
     attested) source="Checksum computed by scripts/bump-pins.sh from its own download of the release artifact, and pinned only after the vendor's attestation for exactly that digest, and its signature, listed below, verified" ;;
+    keys) source="Signing keys in scripts/keys refreshed by scripts/bump-pins.sh --refresh-keys from each vendor's official copy, listed below: each had to be exactly the pinned primary key (by fingerprint), was merged into the committed key by gpg in a throwaway keyring (gpg imports only what that key itself signed, so nothing can be added in its name and nothing is taken away), and carries no revocation, which would have failed the refresh instead. No pin and no image changes" ;;
     *)    source="Checksum or integrity source (the vendor's own file or registry record for this version; nothing was computed from a download; where the vendor signs that file, its signature, listed below, was verified first)" ;;
   esac
 
@@ -330,14 +349,23 @@ one_unit() {
     git -C "$wt" commit --quiet --file "$work/msg-$unit"
 
   {
-    echo "Automated bump of a hand-pinned tool, opened by the daily pin-bump workflow."
-    echo
-    echo "| | |"
-    echo "|---|---|"
-    echo "| Tool | \`$unit\` |"
-    echo "| Version | \`$old\` → \`$new\` |"
-    echo "| Files | $files |"
-    echo "| Release | $version_url ($released) |"
+    if [ "$unit" = "$KEYS_UNIT" ]; then
+      echo "Automated refresh of the vendor signing keys in \`scripts/keys\`, opened by the daily pin-bump workflow."
+      echo
+      echo "| | |"
+      echo "|---|---|"
+      echo "| Keys | digest \`$old\` → \`$new\` |"
+      echo "| Files | $files |"
+    else
+      echo "Automated bump of a hand-pinned tool, opened by the daily pin-bump workflow."
+      echo
+      echo "| | |"
+      echo "|---|---|"
+      echo "| Tool | \`$unit\` |"
+      echo "| Version | \`$old\` → \`$new\` |"
+      echo "| Files | $files |"
+      echo "| Release | $version_url ($released) |"
+    fi
     echo "| Classification | **$class**: $reason |"
     if [ "$class" != auto ]; then
       echo "| First seen | $seen: merges no earlier than **$eligible** |"
@@ -571,6 +599,26 @@ jq -c 'select(.status == "error") | {unit, old:"", new:(.new // ""), class:"", p
   "$work/plan.jsonl" >> "$RESULTS"
 if [ "$rc" -ne 0 ] && [ "$rc" -ne 1 ]; then
   log "error: bump-pins --plan failed (exit $rc)"; cat "$work/plan.err" >&2; exit 1
+fi
+
+# The signing keys, refreshed from their vendors with no version bump: a
+# `signing-keys` row when any key gained something (a renewal, new
+# signatures or subkeys), opened as its own PR like a unit; an error row when
+# a vendor's copy is not the pinned key or revokes it. A bump that verifies
+# with a key writes the refreshed copy too; this keeps scripts/keys current
+# when no bump is due. gpg is on every runner; without it (a local run) the
+# keys are not refreshed, and the bumps that need it fail on their own.
+if command -v gpg >/dev/null; then
+  rc=0
+  "$script_dir/bump-pins.sh" --plan --refresh-keys > "$work/plan-keys.jsonl" 2> "$work/plan-keys.err" || rc=$?
+  jq -c 'select(.status == "error") | {unit, old:"", new:"", class:"", pr:"", status:"error", action:"none", note:.error}' \
+    "$work/plan-keys.jsonl" >> "$RESULTS"
+  if [ "$rc" -ne 0 ] && [ "$rc" -ne 1 ]; then
+    log "error: bump-pins --plan --refresh-keys failed (exit $rc)"; cat "$work/plan-keys.err" >&2; exit 1
+  fi
+  jq -c 'select(.to)' "$work/plan-keys.jsonl" >> "$work/plan.jsonl"
+else
+  log "gpg not found: the vendor signing keys are not refreshed in this run"
 fi
 
 while IFS=$'\t' read -r unit to from; do

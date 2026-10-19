@@ -675,7 +675,7 @@ release, and those marked below were verified end to end, before it was pinned:
 | Tool | What is signed | Verified with | Pinned identity or key |
 |---|---|---|---|
 | terraform | `terraform_<v>_SHA256SUMS` (`.sig`) | `gpgv` | HashiCorp's key, `scripts/keys/hashicorp.asc` (from `hashicorp.com/.well-known/pgp-key.txt`), primary fingerprint `C874011F0AB405110D02105534365D9472D7468F` |
-| AWS CLI | each installer zip (`.sig`) | `gpgv` | AWS's key, `scripts/keys/aws-cli.asc`, fingerprint `FB5DB77FD5C118B80511ADA8A6310ACC4672475C` |
+| AWS CLI | each installer zip (`.sig`) | `gpgv` | AWS's key, `scripts/keys/aws-cli.asc` (from the Linux section of AWS's [install guide](https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html)), fingerprint `FB5DB77FD5C118B80511ADA8A6310ACC4672475C` |
 | trivy | `trivy_<v>_checksums.txt` (`.sigstore.json`) | `cosign verify-blob` | `https://github.com/aquasecurity/trivy/.github/workflows/reusable-release.yaml@refs/tags/v<v>`, issuer `https://token.actions.githubusercontent.com` |
 | syft | `syft_<v>_checksums.txt` (`.sigstore.json`) | `cosign verify-blob` | `https://github.com/anchore/syft/.github/workflows/release.yaml@refs/heads/main`, issuer `https://token.actions.githubusercontent.com` (anchore releases from `main`) |
 | grype | `grype_<v>_checksums.txt` (`.sigstore.json`) | `cosign verify-blob` | `https://github.com/anchore/grype/.github/workflows/release.yaml@refs/heads/main`, issuer `https://token.actions.githubusercontent.com` |
@@ -683,7 +683,7 @@ release, and those marked below were verified end to end, before it was pinned:
 | osv-scanner | each pinned digest, as a subject of the release's SLSA v0.2 provenance (`multiple.intoto.jsonl`) | `cosign verify-blob-attestation --type slsaprovenance --digest` | `https://github.com/slsa-framework/slsa-github-generator/.github/workflows/generator_generic_slsa3.yml@refs/tags/v2.1.0`, issuer `https://token.actions.githubusercontent.com`, **and** workflow repository `google/osv-scanner`, ref `refs/tags/v<v>`, trigger `push` |
 | hadolint | each `checksums.sha256` digest, by its GitHub artifact attestation (SLSA v1) | `cosign verify-blob-attestation --type slsaprovenance1 --digest` | `https://github.com/hadolint/hadolint/.github/workflows/release.yml@refs/heads/master` (hadolint releases from `master`), repository `hadolint/hadolint` |
 | actionlint | each archive digest in `actionlint_<v>_checksums.txt`, by its GitHub attestation | as hadolint | `https://github.com/rhysd/actionlint/.github/workflows/release.yaml@refs/tags/v<v>`, repository `rhysd/actionlint` |
-| Composer | `composer.phar` on the GitHub release: its digest by GitHub attestation, and the file by its `.asc` | as hadolint, then `gpgv` | `https://github.com/composer/composer/.github/workflows/release.yml@refs/tags/<v>` (no `v`), repository `composer/composer`; key `scripts/keys/composer.asc` (from keyserver.ubuntu.com), fingerprint `161DFBE342889F01DDAC4E61CBB3D576F2A0946F` |
+| Composer | `composer.phar` on the GitHub release: its digest by GitHub attestation, and the file by its `.asc` | as hadolint, then `gpgv` | `https://github.com/composer/composer/.github/workflows/release.yml@refs/tags/<v>` (no `v`), repository `composer/composer`; key `scripts/keys/composer.asc` (from keyserver.ubuntu.com: Composer publishes no official copy, so it is not refreshed), fingerprint `161DFBE342889F01DDAC4E61CBB3D576F2A0946F` |
 | kubectl | each binary (`kubectl.sig`, `kubectl.cert`) | `cosign verify-blob --signature --certificate`, then sha256 of the binary = the `.sha256` sum | `krel-staging@k8s-releng-prod.iam.gserviceaccount.com`, issuer `https://accounts.google.com` |
 | Docker CLI | the bookworm `InRelease` of `download.docker.com/linux/debian` (clearsigned), then each `stable/binary-<arch>/Packages` by the SHA-256 that signed file lists | `gpgv`, then sha256 of each Packages file = the signed sum | Docker's "Docker Release (CE deb)" key, `scripts/keys/docker.asc` (from `download.docker.com/linux/debian/gpg`), primary fingerprint `9DC858229FC7DD38854AE2D88D81803C0EBFCD88` (it signs with subkey `D3306A018370199E527AE7997EA0A9C3F273FCD8`) |
 
@@ -696,6 +696,34 @@ bumped.
 
 How the newer rows work, and what each binds:
 
+- **GPG keys, and how they are kept current.** A committed key file never learns of a renewal or
+  a revocation by itself, so `bump-pins.sh` refreshes each key from its vendor's official copy
+  (its `KEYS` table: HashiCorp's `.well-known/pgp-key.txt`, Docker's `linux/debian/gpg`, and the
+  armored block on AWS's install guide, a web page whose tags are stripped and entities decoded,
+  and which must hold exactly one distinct key block) every time it uses the key, before it
+  verifies anything with it. The fetched copy must be exactly one primary key, the pinned
+  fingerprint, and no secret key; it is merged into the committed key in a throwaway
+  `GNUPGHOME`, where gpg imports only what that key itself signed, so a renewed expiry, a new
+  subkey or a revocation can be added but nothing can be forged or taken away; signatures are
+  checked against the merged key. A revocation — of the key, or a new one of a subkey — fails the
+  bump. If the vendor cannot be reached, the committed key is used with a warning. A signature by
+  an expired key or subkey (`EXPKEYSIG`), or an expired signature (`EXPSIG`), is refused for every
+  gpg row, detached or inline, as apt refuses one: a key the vendor has renewed reads as renewed,
+  and one that has lapsed with no renewal anywhere fails closed. (HashiCorp's key keeps a signing
+  subkey that expired in 2022; its releases are signed by its valid subkey, which `gpgv` reports
+  as `VALIDSIG` with no `EXPKEYSIG` — checked against terraform 1.16.6's real `SHA256SUMS.sig` on
+  2026-10-19.) When the merged key differs from the committed one, a bump that used it also
+  writes it to `scripts/keys` as one of its edits, so its pull request carries the refreshed key
+  for review; and the daily pin-bump run opens a *Refresh vendor signing keys* pull request
+  (`bump-pins.sh --refresh-keys`, branch `pin-bump/signing-keys`) whenever any key has changed,
+  bump or no bump. Nothing builds from `scripts/keys` — the images take Docker's key from
+  Docker by fingerprint, and no other key is used at build time — so the committed copies are
+  what the bumps start from, and what a reviewer reads. `bump-pins.sh --check` requires a `KEYS`
+  row for every gpg key and every file in `scripts/keys` (a URL, or `-` for none), the URL to be
+  https, and each committed file still to be exactly one primary key with the pinned fingerprint.
+  Composer publishes no official copy of its key (its download page links each phar's `.asc`,
+  and `composer.github.io/pubkeys.html` holds the OpenSSL keys for `composer self-update`), so
+  `composer.asc` is used as committed, and refreshed by hand.
 - **osv-scanner.** The SLSA generator's identity is shared by every repository that uses that
   reusable workflow, so the identity alone would accept anyone's provenance: the source
   repository, the tag and the `push` trigger are what make it Google's release. The generator

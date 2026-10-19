@@ -325,7 +325,11 @@ sha256 instead: `bump-pins.sh` downloads each architecture's artifact and record
 it got, after checking AWS's detached signature against AWS's key, pinned by fingerprint in
 `scripts/keys/`, for the AWS CLI. Every build, the daily rebuilds included, then checks the
 download against that sum with `sha256sum --check --strict`, so a file substituted later fails the
-build instead of being installed.
+build instead of being installed. Every GPG key in `scripts/keys/` is refreshed from its vendor's
+official copy before it is used (so a renewed key verifies and an expired or revoked one fails),
+and a refreshed key is committed by the bump that used it, or by a daily *Refresh vendor signing
+keys* PR (`pin-bump/signing-keys`, `auto`) when no bump is due
+([Supply-chain pins](security.md#supply-chain-pins)).
 
 Nothing is adopted the day it ships. A release with a vendor date (a GitHub release, HashiCorp,
 npm, RubyGems, PyPI) is not bumped until it is seven days old; for a GitHub release that date is

@@ -30,6 +30,15 @@ mkdir -p "$fx"
 : > "$fx/urls"
 # serve URL FILE -- FILE's content (written by the caller) answers URL.
 serve() { printf '%s %s\n' "$1" "$2" >> "$fx/urls"; }
+# reserve URL FILE -- URL answers FILE from now on, whatever it answered before.
+reserve() { awk -v u="$1" '$1 != u' "$fx/urls" > "$fx/urls.new"; mv "$fx/urls.new" "$fx/urls"; serve "$1" "$2"; }
+# The vendors' official key URLs (bump-pins.sh's KEYS table), which every gpg
+# row refreshes its key from first: unreachable unless a case says otherwise,
+# so the committed (test) key is used as it is.
+AWSDOC=https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html
+serve "$AWSDOC" @404
+serve https://www.hashicorp.com/.well-known/pgp-key.txt @404
+serve https://download.docker.com/linux/debian/gpg @404
 # A stand-in vendor digest: distinct per label, and plainly not a real one.
 fake() { printf '%s' "$1" | sha256sum | cut -d' ' -f1; }
 gh_release() { # REPO TAG DATE
@@ -292,6 +301,7 @@ files=(
   ci-tools/Dockerfile.ci ci-cloud/Dockerfile.ci ci-security/Dockerfile.ci ci-db/Dockerfile.ci
   $NODE_FILES $PHP_FILES $JSON_FILES .github/workflows/security.yml .github/workflows/build-image.yml
   scripts/lint.sh .github/images.json ci-cloud/az-overrides.txt .github/zizmor-requirements.txt
+  scripts/keys/aws-cli.asc scripts/keys/hashicorp.asc scripts/keys/docker.asc scripts/keys/composer.asc
 )
 force() { # FILE KEY VALUE -- set a baseline, whichever spelling the pin uses
   # Not `sed -i`, whose syntax differs between GNU and BSD sed; cat keeps the mode.
@@ -863,8 +873,6 @@ if command -v gpg >/dev/null && command -v gpgv >/dev/null; then
   t=$(new_tree fiveg4); cp -a "$t" "$work/fiveg4.snap"
   gpg --batch --armor --export t@example.com > "$work/keys/docker.asc" 2>/dev/null
   dk=https://download.docker.com/linux/debian/dists/bookworm
-  # reserve URL FILE -- URL answers FILE from now on, whatever it answered before.
-  reserve() { awk -v u="$1" '$1 != u' "$fx/urls" > "$fx/urls.new"; mv "$fx/urls.new" "$fx/urls"; serve "$1" "$2"; }
   # deb_packages OUT ARCH VERSION... -- a Packages file for ARCH in the
   # repository's format: docker-ce-cli at each VERSION, and docker-ce at a
   # newer one, which is never the package read.
@@ -1006,6 +1014,226 @@ if command -v gpg >/dev/null && command -v gpgv >/dev/null; then
   check "  a major version from the index is review too" bash -c "
     t2=\$(mktemp -d) && cp -a '$t/.' \"\$t2\" && sed -i.b 's/^ARG DOCKER_CLI_VERSION=.*/ARG DOCKER_CLI_VERSION=$(D 28.5.0-1)/' \"\$t2/ci-tools/Dockerfile.ci\" &&
     '$bump' --root \"\$t2\" --unit docker --to 29.9.1-2 --quiet --format json 2>/dev/null | jq -e '.[0].class == \"review\" and (.[0].reason | test(\"^version string from the vendor.s signed apt index, .*major version change \\\\(28 -> 29\\\\); merges only\"))' >/dev/null; rc=\$?; rm -rf \"\$t2\"; exit \$rc"
+  unset BUMP_PINS_KEYS BUMP_PINS_KEY_FPR
+
+  echo "case 5g5: a signing key is refreshed from the vendor's official copy before it verifies anything"
+  # The AWS case: AWS signed a release with its CLI key after the committed
+  # copy's expiry, having renewed the key (same fingerprint, later expiry) on
+  # its install guide, where the key is a code block in a web page.
+  # page OUT KEYFILE... -- that page, one code block per key, rendered as the
+  # docs site renders one: indented, its `+` and `/` written as entities, the
+  # first line on the line of the <code> tag, and HTML-escaped text around it.
+  page() {
+    local out="$1" k; shift
+    {
+      echo '<!DOCTYPE html><html lang="en-US"><head><title>Installing or updating to the latest version of the AWS CLI - AWS Command Line Interface</title></head><body>'
+      echo '<div id="main-col-body"><awsdocs-tabs><dl style="display: none"><dt>Linux</dt><dd tab-id="linux">'
+      echo '<p>To verify with <code class="code">gpg</code>, the key&#39;s fingerprint is <code class="code">FB5D B77F D5C1 18B8 0511 ADA8 A631 0ACC 4672 475C</code> &amp; must match &lt;exactly&gt;.</p>'
+      for k in "$@"; do
+        printf '<div class="procedure"><ol><li><p>Create a text file and paste in the following text.</p>\n<pre class="programlisting"><div class="code-btn-container"><div class="btn-copy-code" title="Copy"><awsui-icon name="copy"></awsui-icon></div></div><!--DEBUG: cli ()--><code class="nohighlight">'
+        sed 's/^/    /; s/+/\&#43;/g; s|/|\&#x2F;|g' "$k"
+        printf '</code></pre></li></ol></div>\n'
+      done
+      echo '</dd><dt>macOS</dt><dd tab-id="macos"><p>The pkg is signed.</p></dd></dl></awsdocs-tabs></div></body></html>'
+    } > "$fx/$out"
+  }
+  gpg --batch --quiet --passphrase '' --quick-gen-key 'Renewed AWS <renew@example.com>' rsa2048 sign seconds=12 2>/dev/null
+  rfpr=$(gpg --batch --with-colons --fingerprint renew@example.com 2>/dev/null | awk -F: '$1 == "fpr" { print $10; exit }')
+  # The committed copy, every name the KEYS table lists: --refresh-keys reads
+  # them all, and in fixture mode every one must be BUMP_PINS_KEY_FPR.
+  mkdir -p "$work/keys-renew"
+  for k in aws-cli hashicorp docker composer; do
+    gpg --batch --armor --export renew@example.com > "$work/keys-renew/$k.asc" 2>/dev/null
+  done
+  for a in x86_64 aarch64; do
+    printf 'zip %s 2.38.4\n' "$a" > "$fx/aws-$a-2.38.4.zip"
+    serve "https://awscli.amazonaws.com/awscli-exe-linux-$a-2.38.4.zip" "aws-$a-2.38.4.zip"
+    gpg --batch --quiet --yes --local-user renew@example.com --detach-sign -o "$fx/aws-$a-2.38.4.zip.sig" "$fx/aws-$a-2.38.4.zip" 2>/dev/null
+    serve "https://awscli.amazonaws.com/awscli-exe-linux-$a-2.38.4.zip.sig" "aws-$a-2.38.4.zip.sig"
+  done
+  # A key that is revoked after its committed copy was taken: gpg writes each
+  # new key's revocation certificate, guarded by a leading ':', on creation.
+  gpg --batch --quiet --passphrase '' --quick-gen-key 'Revoked AWS <revoked@example.com>' rsa2048 sign never 2>/dev/null
+  vfpr=$(gpg --batch --with-colons --fingerprint revoked@example.com 2>/dev/null | awk -F: '$1 == "fpr" { print $10; exit }')
+  mkdir -p "$work/keys-rev"
+  for k in aws-cli hashicorp docker composer; do
+    gpg --batch --armor --export revoked@example.com > "$work/keys-rev/$k.asc" 2>/dev/null
+  done
+  for a in x86_64 aarch64; do
+    printf 'zip %s 2.38.5\n' "$a" > "$fx/aws-$a-2.38.5.zip"
+    serve "https://awscli.amazonaws.com/awscli-exe-linux-$a-2.38.5.zip" "aws-$a-2.38.5.zip"
+    gpg --batch --quiet --yes --local-user revoked@example.com --detach-sign -o "$fx/aws-$a-2.38.5.zip.sig" "$fx/aws-$a-2.38.5.zip" 2>/dev/null
+    serve "https://awscli.amazonaws.com/awscli-exe-linux-$a-2.38.5.zip.sig" "aws-$a-2.38.5.zip.sig"
+  done
+  sed 's/^:-----BEGIN/-----BEGIN/' "$GNUPGHOME/openpgp-revocs.d/$vfpr.rev" | gpg --batch --quiet --import 2>/dev/null
+  gpg --batch --armor --export revoked@example.com > "$fx/revoked.asc" 2>/dev/null
+  # HashiCorp's shape: a certify-only primary, one signing subkey long
+  # expired (HashiCorp's B0B441097685B676, 2022-04-20) and one valid, which
+  # signs. gpgv reports KEYEXPIRED for the old subkey, but the signature is
+  # GOODSIG/VALIDSIG by the valid one, with no EXPKEYSIG: not refused.
+  gpg --batch --quiet --passphrase '' --quick-gen-key 'HashiCorp-like <hc@example.com>' rsa2048 cert never 2>/dev/null
+  hfpr=$(gpg --batch --with-colons --fingerprint hc@example.com 2>/dev/null | awk -F: '$1 == "fpr" { print $10; exit }')
+  gpg --batch --quiet --pinentry-mode loopback --passphrase '' --quick-add-key "$hfpr" rsa2048 sign seconds=12 2>/dev/null
+  gpg --batch --quiet --pinentry-mode loopback --passphrase '' --quick-add-key "$hfpr" rsa2048 sign never 2>/dev/null
+  hsub=$(gpg --batch --with-colons --fingerprint --fingerprint hc@example.com 2>/dev/null | awk -F: '$1 == "sub" { s++ } $1 == "fpr" && s == 2 { print $10; exit }')
+  mkdir -p "$work/keys-hc"
+  v=1.16.10
+  printf '%s  terraform_%s_linux_amd64.zip\n%s  terraform_%s_linux_arm64.zip\n' \
+    "$(fake "tf-$v-amd64")" "$v" "$(fake "tf-$v-arm64")" "$v" > "$fx/tf-$v.txt"
+  serve "https://releases.hashicorp.com/terraform/$v/terraform_${v}_SHA256SUMS" "tf-$v.txt"
+  printf '{"timestamp_created":"%s"}\n' "$OLD" > "$fx/tf-$v.json"
+  serve "https://api.releases.hashicorp.com/v1/releases/terraform/$v" "tf-$v.json"
+  gpg --batch --quiet --yes --local-user "$hsub!" --detach-sign -o "$fx/tf-$v.sig" "$fx/tf-$v.txt" 2>/dev/null
+  serve "https://releases.hashicorp.com/terraform/$v/terraform_${v}_SHA256SUMS.sig" "tf-$v.sig"
+  sleep 13
+  gpg --batch --armor --export hc@example.com > "$work/keys-hc/hashicorp.asc" 2>/dev/null
+  gpg --batch --quiet --pinentry-mode loopback --passphrase '' --quick-set-expire "$rfpr" 1y 2>/dev/null
+  gpg --batch --armor --export renew@example.com > "$fx/renewed.asc" 2>/dev/null
+  gpg --batch --armor --export x@example.com > "$fx/other.asc" 2>/dev/null
+  printf '<html><body><p>No key on this page.</p></body></html>\n' > "$fx/aws-nokey.html"
+  page aws-renewed.html "$fx/renewed.asc"
+  page aws-renewed-twice.html "$fx/renewed.asc" "$fx/renewed.asc"
+  page aws-other.html "$fx/other.asc"
+  page aws-two.html "$fx/renewed.asc" "$fx/other.asc"
+  page aws-revoked.html "$fx/revoked.asc"
+  # An unterminated block: the page cut off inside the key.
+  sed '/END PGP PUBLIC KEY BLOCK/d' "$fx/aws-renewed.html" > "$fx/aws-cut.html"
+  # The markers sharing a line with the page's text once tags are stripped.
+  sed -e 's|<code class="nohighlight">    -----BEGIN|<code class="nohighlight">Key: -----BEGIN|' \
+      -e 's|-----END PGP PUBLIC KEY BLOCK-----$|-----END PGP PUBLIC KEY BLOCK-----</code></pre><p>Then save the file.</p>|' \
+      "$fx/aws-renewed.html" > "$fx/aws-inline.html"
+  # The renewed key padded with certifications by unrelated keys (certificate
+  # flooding): only what the vendor's key signed itself may be kept.
+  gpg --batch --quiet --passphrase '' --quick-gen-key 'Flooder <flood@example.com>' rsa2048 cert never 2>/dev/null
+  ffpr=$(gpg --batch --with-colons --fingerprint flood@example.com 2>/dev/null | awk -F: '$1 == "fpr" { print $10; exit }')
+  gpg --batch --quiet --pinentry-mode loopback --passphrase '' --yes --default-key "$ffpr" --quick-sign-key "$rfpr" > /dev/null 2>&1 < /dev/null
+  gpg --batch --armor --export renew@example.com > "$fx/flooded.asc" 2>/dev/null
+  # The certifier is removed again, so later exports of the renewed key are
+  # the vendor's own self-signatures only, as before.
+  gpg --batch --quiet --yes --delete-secret-and-public-keys "$ffpr" > /dev/null 2>&1
+  page aws-flooded.html "$fx/flooded.asc"
+  validity() { GNUPGHOME="$work/show" gpg --batch --show-keys --with-colons "$1" 2>/dev/null | awk -F: '$1 == "pub" { print $2; exit }'; }
+  mkdir -p "$work/show"; chmod 700 "$work/show"
+  check "  (the committed copy has expired; the vendor's renewed one has not)" \
+    [ "$(validity "$work/keys-renew/aws-cli.asc"):$(validity "$fx/renewed.asc")" = "e:-" ]
+  check "  (the page encodes the key as the docs site does)" grep -qF '&#43;' "$fx/aws-renewed.html"
+
+  t=$(new_tree fiveg5); cp -a "$t" "$work/fiveg5.snap"
+  export BUMP_PINS_KEYS="$work/keys-renew" BUMP_PINS_KEY_FPR="$rfpr"
+  aw_fail() { # PAGE WHAT LOG-MESSAGE [VERSION]
+    reserve "$AWSDOC" "$1"
+    rc=0; "$bump" --root "$t" --unit awscli --to "${4:-2.38.4}" --quiet --format json > "$work/r5x.json" 2> "$work/r5x.err" || rc=$?
+    check "$2: exit 1, error" [ "$rc:$(field "$work/r5x.json" awscli status)" = "1:error" ]
+    check "  because: $3" grep -qF -- "$3" "$work/r5x.err"
+  }
+  aw_fail @404 "the vendor unreachable, and the committed key expired: a detached EXPKEYSIG is refused" \
+    "awscli-exe-linux-x86_64-2.38.4.zip.sig: signed by an expired key, or the signature has expired"
+  check "  and the failed fetch was a warning first" grep -qF "[warn] aws-cli.asc: could not fetch the vendor's current key from $AWSDOC" "$work/r5x.err"
+  aw_fail aws-other.html "the vendor's page serving another key" "aws-cli.asc: the key at $AWSDOC is not exactly the key $rfpr"
+  aw_fail aws-nokey.html "a page with no key on it" "aws-cli.asc: $AWSDOC has no PGP PUBLIC KEY BLOCK"
+  aw_fail aws-two.html "a page with two different keys on it" "aws-cli.asc: $AWSDOC has more than one different PGP PUBLIC KEY BLOCK"
+  aw_fail aws-cut.html "a page whose key block never ends" "aws-cli.asc: $AWSDOC has a PGP PUBLIC KEY BLOCK that is not well formed"
+  export BUMP_PINS_KEYS="$work/keys-rev" BUMP_PINS_KEY_FPR="$vfpr"
+  aw_fail aws-revoked.html "the vendor's copy revoking the key" "aws-cli.asc: the key $vfpr is revoked" 2.38.5
+  check "  and the error row says why, not only the log" \
+    bash -c "jq -r '.[0].error' '$work/r5x.json' | grep -qF 'does not verify (aws-cli.asc: the key $vfpr is revoked'"
+  t2=$(new_tree fiveg5v); reserve "$AWSDOC" @404
+  rc=0; "$bump" --root "$t2" --unit awscli --to 2.38.5 --quiet --format json > "$work/r5x.json" 2>/dev/null || rc=$?
+  check "  (the revocation is the only reason: unrefreshed, the same release verifies)" \
+    [ "$rc:$(field "$work/r5x.json" awscli status)" = "0:bumped" ]
+  export BUMP_PINS_KEYS="$work/keys-renew" BUMP_PINS_KEY_FPR="$rfpr"
+  check "  none of them edited anything" [ -z "$(changed_files "$t" "$work/fiveg5.snap")" ]
+
+  reserve "$AWSDOC" aws-renewed.html
+  rc=0; "$bump" --root "$t" --unit awscli --to 2.38.4 --quiet --format json > "$work/r5x.json" 2> "$work/r5x.err" || rc=$?
+  check "the vendor's renewed key on its page: an EXPKEYSIG signature verifies, exit 0, bumped" \
+    [ "$rc:$(field "$work/r5x.json" awscli status)" = "0:bumped" ]
+  check "  the refreshed key file is one of the bump's edits" \
+    [ "$(jq -r '.[0].files | join(" ")' "$work/r5x.json")" = "ci-tools/Dockerfile.ci scripts/keys/aws-cli.asc" ]
+  check "  and only those two files changed" \
+    [ "$(changed_files "$t" "$work/fiveg5.snap" | sort | paste -sd' ' -)" = "ci-tools/Dockerfile.ci scripts/keys/aws-cli.asc" ]
+  check "  the written key is exactly the pinned key, no longer expired" \
+    [ "$(GNUPGHOME="$work/show" gpg --batch --show-keys --with-colons "$t/scripts/keys/aws-cli.asc" 2>/dev/null | awk -F: '$1 == "fpr" { print $10 }' | paste -sd' ' -):$(validity "$t/scripts/keys/aws-cli.asc")" = "$rfpr:-" ]
+  check "  and on its own it verifies the release: gpgv, no EXPKEYSIG" bash -c "
+    GNUPGHOME='$work/show' gpg --batch --dearmor < '$t/scripts/keys/aws-cli.asc' > '$work/r5x.gpg' 2>/dev/null &&
+    s=\$(gpgv --status-fd 1 --keyring '$work/r5x.gpg' '$fx/aws-x86_64-2.38.4.zip.sig' '$fx/aws-x86_64-2.38.4.zip' 2>/dev/null) &&
+    printf '%s\n' \"\$s\" | grep -q '^\[GNUPG:\] VALIDSIG ' && ! printf '%s\n' \"\$s\" | grep -q EXPKEYSIG"
+  check "  the vendor's page is listed as an integrity source" \
+    [ "$(jq -r --arg u "$AWSDOC" '.[0].integrity_urls | index($u) != null' "$work/r5x.json")" = true ]
+  check "  and the reason says the key was refreshed" \
+    bash -c "jq -r '.[0].reason' '$work/r5x.json' | grep -qF 'the signing key was refreshed first from the vendor'\''s copy at $AWSDOC, which renews or adds to the committed one, so scripts/keys/aws-cli.asc is updated here too'"
+  expect_pin "$t" ci-tools/Dockerfile.ci AWSCLI_VERSION 2.38.4
+
+  t=$(new_tree fiveg5c); cp -a "$t" "$work/fiveg5c.snap"
+  reserve "$AWSDOC" @404
+  rc=0; BUMP_PINS_KEYS="$work/keys" BUMP_PINS_KEY_FPR="$fpr" \
+    "$bump" --root "$t" --unit awscli --to 2.38.2 --quiet --format json > "$work/r5x.json" 2> "$work/r5x.err" || rc=$?
+  check "the vendor unreachable, the committed key still valid: exit 0, bumped" [ "$rc:$(field "$work/r5x.json" awscli status)" = "0:bumped" ]
+  check "  after a warning that the key could not be refreshed" grep -qF "[warn] aws-cli.asc: could not fetch the vendor's current key from $AWSDOC" "$work/r5x.err"
+  check "  and no key file is written" [ "$(changed_files "$t" "$work/fiveg5c.snap")" = ci-tools/Dockerfile.ci ]
+
+  t=$(new_tree fiveg5h); force "$t/ci-tools/Dockerfile.ci" TERRAFORM_VERSION 1.16.5
+  check "  (the HashiCorp-like key has one expired signing subkey and one valid)" \
+    [ "$(GNUPGHOME="$work/show" gpg --batch --show-keys --with-colons "$work/keys-hc/hashicorp.asc" 2>/dev/null | awk -F: '$1 == "sub" { printf "%s", $2 }')" = "e-" ]
+  rc=0; BUMP_PINS_KEYS="$work/keys-hc" BUMP_PINS_KEY_FPR="$hfpr" \
+    "$bump" --root "$t" --unit terraform --to 1.16.10 --quiet --format json > "$work/r5x.json" 2> "$work/r5x.err" || rc=$?
+  check "a key with an expired subkey, signed by its valid one: exit 0, bumped, auto" \
+    [ "$rc:$(field "$work/r5x.json" terraform status):$(field "$work/r5x.json" terraform class)" = "0:bumped:auto" ]
+  expect_pin "$t" ci-tools/Dockerfile.ci TERRAFORM_SHA256_AMD64 "$(fake tf-1.16.10-amd64)"
+
+  echo "case 5g6: --refresh-keys, with no version bump"
+  rc=0; "$bump" --refresh-keys --unit awscli > /dev/null 2>&1 || rc=$?
+  check "--refresh-keys with --unit is a usage error" [ "$rc" -eq 2 ]
+  t=$(new_tree fiveg6); cp -a "$t" "$work/fiveg6.snap"
+  reserve "$AWSDOC" aws-renewed.html
+  rc=0; "$bump" --root "$t" --refresh-keys --plan > "$work/r5y.jsonl" 2>/dev/null || rc=$?
+  check "--plan: exit 0, one signing-keys line from one digest to another" \
+    [ "$rc:$(jq -sr 'map(select(.unit == "signing-keys" and (.from | test("^[0-9a-f]{16}$")) and (.to | test("^[0-9a-f]{16}$")) and .from != .to)) | length' "$work/r5y.jsonl")" = "0:1" ]
+  check "  and writes nothing" [ -z "$(changed_files "$t" "$work/fiveg6.snap")" ]
+  reserve "$AWSDOC" aws-renewed-twice.html
+  rc=0; "$bump" --root "$t" --refresh-keys --plan > "$work/r5y2.jsonl" 2>/dev/null || rc=$?
+  check "  the same key twice on the page is one key, the same plan" [ "$rc" -eq 0 ]
+  check "  (the same digests)" cmp -s "$work/r5y.jsonl" "$work/r5y2.jsonl"
+  reserve "$AWSDOC" aws-inline.html
+  rc=0; "$bump" --root "$t" --refresh-keys --plan > "$work/r5y3.jsonl" 2>/dev/null || rc=$?
+  check "  markers sharing a line with the page's text: the same plan" [ "$rc" -eq 0 ]
+  check "  (the same digests)" cmp -s "$work/r5y.jsonl" "$work/r5y3.jsonl"
+  check "  (the fixture really does put text beside both markers)" \
+    bash -c "grep -q 'Key: -----BEGIN' '$fx/aws-inline.html' && grep -q 'END PGP PUBLIC KEY BLOCK-----.*Then save' <(sed 's/<[^>]*>//g' '$fx/aws-inline.html')"
+  reserve "$AWSDOC" aws-flooded.html
+  rc=0; "$bump" --root "$t" --refresh-keys --plan > "$work/r5y4.jsonl" 2>/dev/null || rc=$?
+  check "  a copy padded with third-party certifications: the same plan, nothing of theirs kept" [ "$rc" -eq 0 ]
+  check "  (the same digests)" cmp -s "$work/r5y.jsonl" "$work/r5y4.jsonl"
+  reserve "$AWSDOC" aws-renewed.html
+  rc=0; "$bump" --root "$t" --refresh-keys --format json > "$work/r5y.json" 2>/dev/null || rc=$?
+  check "a refresh: exit 0, bumped, auto" \
+    [ "$rc:$(field "$work/r5y.json" signing-keys status):$(field "$work/r5y.json" signing-keys class)" = "0:bumped:auto" ]
+  check "  only the refreshed key is written" \
+    [ "$(jq -r '.[0].files | join(" ")' "$work/r5y.json"):$(changed_files "$t" "$work/fiveg6.snap")" = "scripts/keys/aws-cli.asc:scripts/keys/aws-cli.asc" ]
+  check "  the integrity kind is keys, and the vendor's page a source" \
+    [ "$(field "$work/r5y.json" signing-keys integrity):$(jq -r --arg u "$AWSDOC" '.[0].integrity_urls | index($u) != null' "$work/r5y.json")" = keys:true ]
+  check "  old and new are the plan's digests" \
+    [ "$(jq -r '.[0] | .old + " " + .new' "$work/r5y.json")" = "$(jq -r '.from + " " + .to' "$work/r5y.jsonl")" ]
+  check "  the key written is the renewed one" [ "$(validity "$t/scripts/keys/aws-cli.asc")" = - ]
+  # Committed as refreshed, the next run has nothing to do.
+  mkdir -p "$work/keys-renewed"
+  for k in aws-cli hashicorp docker composer; do cp "$t/scripts/keys/aws-cli.asc" "$work/keys-renewed/$k.asc"; done
+  rc=0; BUMP_PINS_KEYS="$work/keys-renewed" "$bump" --root "$t" --refresh-keys --format json > "$work/r5y.json" 2>/dev/null || rc=$?
+  check "once committed, the same page: exit 0, current" [ "$rc:$(field "$work/r5y.json" signing-keys status)" = "0:current" ]
+  rc=0; BUMP_PINS_KEYS="$work/keys-renewed" "$bump" --root "$t" --refresh-keys --plan > "$work/r5y.jsonl" 2>/dev/null || rc=$?
+  check "  and --plan prints nothing" [ "$rc:$(wc -c < "$work/r5y.jsonl" | tr -d ' ')" = "0:0" ]
+  t=$(new_tree fiveg6r); cp -a "$t" "$work/fiveg6r.snap"
+  reserve "$AWSDOC" aws-revoked.html
+  rc=0; BUMP_PINS_KEYS="$work/keys-rev" BUMP_PINS_KEY_FPR="$vfpr" \
+    "$bump" --root "$t" --refresh-keys --format json > "$work/r5y.json" 2>/dev/null || rc=$?
+  check "a revocation served: exit 1, an error row, never a bump" [ "$rc:$(field "$work/r5y.json" signing-keys status)" = "1:error" ]
+  check "  that says so" bash -c "jq -r '.[0].error' '$work/r5y.json' | grep -qF 'aws-cli.asc: the key $vfpr is revoked'"
+  rc=0; BUMP_PINS_KEYS="$work/keys-rev" BUMP_PINS_KEY_FPR="$vfpr" \
+    "$bump" --root "$t" --refresh-keys --plan > "$work/r5y.jsonl" 2>/dev/null || rc=$?
+  check "  --plan: exit 1, the error row and no plan line" \
+    [ "$rc:$(jq -sr 'map(.status // "plan") | join(",")' "$work/r5y.jsonl")" = "1:error" ]
+  check "  and nothing written" [ -z "$(changed_files "$t" "$work/fiveg6r.snap")" ]
+  reserve "$AWSDOC" @404
   unset BUMP_PINS_KEYS BUMP_PINS_KEY_FPR
   unset GNUPGHOME
 else
@@ -1351,6 +1579,32 @@ bad_tables "an apt unit whose version pin no APT row writes" "is a version pin o
   's#| ci-tools/Dockerfile.ci:DOCKER_CLI_VERSION | apt |#| ci-tools/Dockerfile.ci:DOCKER_CLI_VERSION ci-tools/Dockerfile.ci:AWSCLI_VERSION | apt |#'
 bad_tables "an APT row for a unit that is not apt" "APT row for docker, which is not an apt unit" \
   's#| ci-tools/Dockerfile.ci:DOCKER_CLI_VERSION | apt |#| ci-tools/Dockerfile.ci:DOCKER_CLI_VERSION | sums |#'
+bad_tables "a key refreshed over plain http" "KEYS row for hashicorp.asc: 'http://www.hashicorp.com/.well-known/pgp-key.txt' is not an https URL" \
+  's#| https://www.hashicorp.com/.well-known/pgp-key.txt | armor$#| http://www.hashicorp.com/.well-known/pgp-key.txt | armor#'
+bad_tables "a gpg key with no KEYS row" "SIGS row for docker: docker.asc has no KEYS row with the fingerprint 9DC858229FC7DD38854AE2D88D81803C0EBFCD88" \
+  '/^docker.asc  *| /d'
+bad_tables "  (and the key file, too)" "scripts/keys/docker.asc has no KEYS row (a refresh URL, or '-' for none)" \
+  '/^docker.asc  *| /d'
+bad_tables "a KEYS row whose fingerprint is not the SIGS row's" "SIGS row for composer: composer.asc has no KEYS row with the fingerprint 161DFBE342889F01DDAC4E61CBB3D576F2A0946F" \
+  's/^composer.asc  | 161DFBE342889F01DDAC4E61CBB3D576F2A0946F/composer.asc  | 0000000000000000000000000000000000000000/'
+bad_tables "a KEYS row with no URL but a format" "KEYS row for composer.asc: no refresh URL, so its format must be '-', not 'armor'" \
+  's/^\(composer.asc  | [0-9A-F]* | - | \)-$/\1armor/'
+bad_tables "a KEYS row in an unknown format" "KEYS row for docker.asc: 'pem' is not a key format (armor or html)" \
+  's#| https://download.docker.com/linux/debian/gpg | armor$#| https://download.docker.com/linux/debian/gpg | pem#'
+if command -v gpg >/dev/null; then
+  cp -p "$bump" "$t/scripts/bp.sh"
+  cp -p "$t/scripts/keys/composer.asc" "$work/composer.asc.keep"
+  cat "$here/keys/composer.asc" "$here/keys/docker.asc" > "$t/scripts/keys/composer.asc"
+  rc=0; "$t/scripts/bp.sh" --root "$t" --check > /dev/null 2> "$work/c5j.err" || rc=$?
+  check "a committed key file holding a second key fails --check" [ "$rc" -eq 1 ]
+  check "  and says so" grep -qF "scripts/keys/composer.asc is not exactly one primary key, 161DFBE342889F01DDAC4E61CBB3D576F2A0946F (it holds: 161DFBE342889F01DDAC4E61CBB3D576F2A0946F 9DC858229FC7DD38854AE2D88D81803C0EBFCD88)" "$work/c5j.err"
+  cp -p "$here/keys/docker.asc" "$t/scripts/keys/composer.asc"
+  rc=0; "$t/scripts/bp.sh" --root "$t" --check > /dev/null 2> "$work/c5j.err" || rc=$?
+  check "a committed key file holding another key fails --check" [ "$rc" -eq 1 ]
+  cp -p "$work/composer.asc.keep" "$t/scripts/keys/composer.asc"
+else
+  ok "gpg not installed; the key file --check cases skipped"
+fi
 cp -p "$bump" "$t/scripts/bp.sh"
 force "$t/ci-tools/Dockerfile.ci" DOCKER_CLI_VERSION 29.9.0
 rc=0; "$t/scripts/bp.sh" --root "$t" --check > /dev/null 2> "$work/c5j.err" || rc=$?
@@ -1750,6 +2004,40 @@ if [ -n "${fpr:-}" ] && command -v gpgv >/dev/null; then
     bash -c "git -C '$origin' show pin-bump/docker:ci-tools/Dockerfile.ci | grep -qx 'ARG DOCKER_CLI_VERSION=5:29.9.1-2~debian.12~bookworm'"
 else
   ok "gpg/gpgv not installed; the Docker apt PR case skipped"
+fi
+
+echo "case 6n: a vendor's renewed signing key opens a 'Refresh vendor signing keys' PR, with no bump due"
+if [ -n "${rfpr:-}" ] && command -v gpgv >/dev/null; then
+  # The renewed AWS key of case 5g5, on AWS's page; nothing is behind.
+  scenario n
+  reserve "$AWSDOC" aws-renewed.html
+  export BUMP_PINS_KEYS="$work/keys-renew" BUMP_PINS_KEY_FPR="$rfpr"
+  run_prs < /dev/null
+  check "exit 0" [ "$rc" -eq 0 ]
+  expect_row signing-keys status ok
+  expect_row signing-keys class auto
+  check "  the PR is titled as a key refresh, on its own branch" \
+    bash -c "grep -q -- '^pr create --repo o/r --base main --head pin-bump/signing-keys --title Refresh vendor signing keys --body-file ' '$log'"
+  check "  the branch changes only the refreshed key" \
+    [ "$(git -C "$origin" diff --name-only main pin-bump/signing-keys)" = scripts/keys/aws-cli.asc ]
+  git -C "$origin" show pin-bump/signing-keys:scripts/keys/aws-cli.asc > "$work/r6n.asc"
+  check "  to the vendor's renewed copy" [ "$(validity "$work/r6n.asc")" = - ]
+  check "  the marker names the unit and the keys' digest, auto" \
+    bash -c "grep -oE '<!-- pin-bump: [^>]* -->' '$log.body' | grep -qE '^<!-- pin-bump: unit=signing-keys to=[0-9a-f]{16} class=auto seen=2026-09-28 fp=[0-9a-f]{16} -->$'"
+  check "  the body lists the vendor's page as the source" grep -qxF -- "- $AWSDOC" "$log.body"
+  check "  CI was dispatched on it" logged "workflow run security.yml --repo o/r --ref pin-bump/signing-keys"
+  check "  and it is not labelled needs-review" not_logged 'pr edit .* --add-label needs-review'
+  scenario n2
+  reserve "$AWSDOC" aws-revoked.html
+  export BUMP_PINS_KEYS="$work/keys-rev" BUMP_PINS_KEY_FPR="$vfpr"
+  run_prs < /dev/null
+  check "a revocation on the vendor's page: exit 1" [ "$rc" -eq 1 ]
+  expect_row signing-keys status error
+  check "  and no PR" not_logged '^pr create'
+  reserve "$AWSDOC" @404
+  unset BUMP_PINS_KEYS BUMP_PINS_KEY_FPR
+else
+  ok "gpg/gpgv not installed; the signing-keys PR case skipped"
 fi
 
 echo "case 6h: a failed dispatch errors its unit, after every unit was processed"

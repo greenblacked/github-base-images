@@ -243,6 +243,23 @@ key fails, for a person to check and pin the new key. To set one of these sums b
 script do it (`./scripts/bump-pins.sh --unit awscli --to <VERSION>`) rather than hashing a
 download yourself.
 
+The keys in [`scripts/keys`](scripts/keys) are kept current by the same scripts, not by hand.
+Each has a row in the `KEYS` table of `scripts/bump-pins.sh` naming the vendor's official copy
+(AWS's install guide, HashiCorp's `.well-known/pgp-key.txt`, Docker's `linux/debian/gpg`; `-` for
+Composer, which publishes none). Before a key verifies anything, the script fetches that copy,
+requires it to be exactly the pinned primary key, and merges it into the committed file in a
+throwaway keyring, so an expiry the vendor has extended is honoured. A signature by an expired
+key, or an expired signature, then fails the bump for every vendor: a key that has lapsed with no
+renewal published (or a vendor that could not be reached, which is a warning) is an error, never
+a pass. A revocation is an error too. When the merged key has anything new, the bump writes it
+back to `scripts/keys` in the same pull request, and the daily pin-bump run opens a *Refresh
+vendor signing keys* pull request for it when no bump is due (`./scripts/bump-pins.sh
+--refresh-keys` does the same locally, writing the refreshed files; add `--plan` to only see
+whether any changed). Adding a key means a `KEYS` row with its URL, or an explicit `-`, which
+`./scripts/bump-pins.sh --check` enforces along with https and each file's fingerprint. A key
+`-` (Composer's) is refreshed by hand: fetch it by fingerprint from a keyserver, check the
+fingerprint and a real release's signature, and commit it.
+
 These bumps, and the Docker CLI's, are always labelled `needs-review`, and with no vendor release date to wait on
 they merge only once their PR has carried the version for seven days (the first-seen clock,
 [ADR 0008](docs/adr/0008-self-updating.md#amendment-2026-10-17-the-cooldown-fails-closed-and-has-a-clock-of-its-own)).
