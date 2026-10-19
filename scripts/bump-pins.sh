@@ -917,6 +917,7 @@ primaries_of() {
 # differ). The same block twice, as a page with tabs may repeat it, is one.
 # shellcheck disable=SC2016  # awk's own $0, not this shell's
 readonly HTML_KEY_AWK='
+BEGIN { MB = "-----BEGIN PGP PUBLIC KEY BLOCK-----"; ME = "-----END PGP PUBLIC KEY BLOCK-----" }
 function hexval(h,   i, n) {
   n = 0; h = tolower(h)
   for (i = 1; i <= length(h); i++) n = n * 16 + index("0123456789abcdef", substr(h, i, 1)) - 1
@@ -946,13 +947,16 @@ END {
   nl = split(doc, line, "\n"); inb = 0; blocks = 0
   for (i = 1; i <= nl; i++) {
     l = line[i]; sub(/^[ \t]+/, "", l); sub(/[ \t]+$/, "", l)
-    if (l == "-----BEGIN PGP PUBLIC KEY BLOCK-----") {
+    # The markers may share a line with the text of the page once tags are
+    # stripped ("Paste this:-----BEGIN ..."), so they are found anywhere in it.
+    if ((k = index(l, MB)) > 0) {
       if (inb) exit 3
-      inb = 1; cur = ""
+      inb = 1; cur = ""; l = substr(l, k)
     }
     if (!inb) continue
+    if ((k = index(l, ME)) > 0) l = substr(l, 1, k + length(ME) - 1)
     cur = cur l "\n"
-    if (l == "-----END PGP PUBLIC KEY BLOCK-----") {
+    if (k > 0 && l ~ /-----END PGP PUBLIC KEY BLOCK-----$/) {
       inb = 0
       if (!(cur in seen)) { seen[cur] = 1; blocks++; first = cur }
     }
@@ -998,7 +1002,11 @@ refresh_key() {
     key_fail "$d" "$name has no KEYS row, so it cannot be refreshed"; return 1
   fi
   fmt=$(key_field "$name" 4)
-  if ! GNUPGHOME="$d/home" gpg --batch --quiet --import "$keyfile" > /dev/null 2>&1; then
+  # self-sigs-only, import-clean: gpg checks a key's own signatures on import
+  # but keeps third-party certifications unchecked, so a copy padded with
+  # them (certificate flooding) would otherwise grow the merged key and be
+  # written back. Only what the vendor's own key signed is kept.
+  if ! GNUPGHOME="$d/home" gpg --batch --quiet --import-options self-sigs-only,import-clean --import "$keyfile" > /dev/null 2>&1; then
     key_fail "$d" "could not import $keyfile"; return 1
   fi
   GNUPGHOME="$d/home" gpg --batch --export "$fpr" > "$key_base" 2>/dev/null || true
@@ -1010,6 +1018,9 @@ refresh_key() {
       key_fail "$d" "$name: no fixture for its refresh URL $url"; return 1
     elif [ "$rc" -ne 0 ]; then
       log warn "$name: could not fetch the vendor's current key from $url (exit $rc); verifying against the committed copy, which may be stale"
+    elif [ "$(wc -c < "$d/fetched.raw")" -gt 2097152 ]; then
+      # The real pages and keys are a few hundred KB at most.
+      key_fail "$d" "$name: $url is over 2 MB, not a key or a page carrying one"; return 1
     else
       case "$fmt" in
         armor) cp "$d/fetched.raw" "$d/fetched.asc" ;;
@@ -1027,7 +1038,7 @@ refresh_key() {
       if [ "$got" != "$fpr" ]; then
         key_fail "$d" "$name: the key at $url is not exactly the key $fpr (it holds: ${got:-no key})"; return 1
       fi
-      if ! GNUPGHOME="$d/home" gpg --batch --quiet --import "$d/fetched.asc" > /dev/null 2>&1; then
+      if ! GNUPGHOME="$d/home" gpg --batch --quiet --import-options self-sigs-only,import-clean --import "$d/fetched.asc" > /dev/null 2>&1; then
         key_fail "$d" "$name: could not import the key at $url"; return 1
       fi
       key_src=$url

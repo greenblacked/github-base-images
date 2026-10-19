@@ -1037,7 +1037,7 @@ if command -v gpg >/dev/null && command -v gpgv >/dev/null; then
       echo '</dd><dt>macOS</dt><dd tab-id="macos"><p>The pkg is signed.</p></dd></dl></awsdocs-tabs></div></body></html>'
     } > "$fx/$out"
   }
-  gpg --batch --quiet --passphrase '' --quick-gen-key 'Renewed AWS <renew@example.com>' rsa2048 sign seconds=3 2>/dev/null
+  gpg --batch --quiet --passphrase '' --quick-gen-key 'Renewed AWS <renew@example.com>' rsa2048 sign seconds=12 2>/dev/null
   rfpr=$(gpg --batch --with-colons --fingerprint renew@example.com 2>/dev/null | awk -F: '$1 == "fpr" { print $10; exit }')
   # The committed copy, every name the KEYS table lists: --refresh-keys reads
   # them all, and in fixture mode every one must be BUMP_PINS_KEY_FPR.
@@ -1073,7 +1073,7 @@ if command -v gpg >/dev/null && command -v gpgv >/dev/null; then
   # GOODSIG/VALIDSIG by the valid one, with no EXPKEYSIG: not refused.
   gpg --batch --quiet --passphrase '' --quick-gen-key 'HashiCorp-like <hc@example.com>' rsa2048 cert never 2>/dev/null
   hfpr=$(gpg --batch --with-colons --fingerprint hc@example.com 2>/dev/null | awk -F: '$1 == "fpr" { print $10; exit }')
-  gpg --batch --quiet --pinentry-mode loopback --passphrase '' --quick-add-key "$hfpr" rsa2048 sign seconds=3 2>/dev/null
+  gpg --batch --quiet --pinentry-mode loopback --passphrase '' --quick-add-key "$hfpr" rsa2048 sign seconds=12 2>/dev/null
   gpg --batch --quiet --pinentry-mode loopback --passphrase '' --quick-add-key "$hfpr" rsa2048 sign never 2>/dev/null
   hsub=$(gpg --batch --with-colons --fingerprint --fingerprint hc@example.com 2>/dev/null | awk -F: '$1 == "sub" { s++ } $1 == "fpr" && s == 2 { print $10; exit }')
   mkdir -p "$work/keys-hc"
@@ -1085,7 +1085,7 @@ if command -v gpg >/dev/null && command -v gpgv >/dev/null; then
   serve "https://api.releases.hashicorp.com/v1/releases/terraform/$v" "tf-$v.json"
   gpg --batch --quiet --yes --local-user "$hsub!" --detach-sign -o "$fx/tf-$v.sig" "$fx/tf-$v.txt" 2>/dev/null
   serve "https://releases.hashicorp.com/terraform/$v/terraform_${v}_SHA256SUMS.sig" "tf-$v.sig"
-  sleep 4
+  sleep 13
   gpg --batch --armor --export hc@example.com > "$work/keys-hc/hashicorp.asc" 2>/dev/null
   gpg --batch --quiet --pinentry-mode loopback --passphrase '' --quick-set-expire "$rfpr" 1y 2>/dev/null
   gpg --batch --armor --export renew@example.com > "$fx/renewed.asc" 2>/dev/null
@@ -1098,6 +1098,20 @@ if command -v gpg >/dev/null && command -v gpgv >/dev/null; then
   page aws-revoked.html "$fx/revoked.asc"
   # An unterminated block: the page cut off inside the key.
   sed '/END PGP PUBLIC KEY BLOCK/d' "$fx/aws-renewed.html" > "$fx/aws-cut.html"
+  # The markers sharing a line with the page's text once tags are stripped.
+  sed -e 's|<code class="nohighlight">    -----BEGIN|<code class="nohighlight">Key: -----BEGIN|' \
+      -e 's|-----END PGP PUBLIC KEY BLOCK-----$|-----END PGP PUBLIC KEY BLOCK-----</code></pre><p>Then save the file.</p>|' \
+      "$fx/aws-renewed.html" > "$fx/aws-inline.html"
+  # The renewed key padded with certifications by unrelated keys (certificate
+  # flooding): only what the vendor's key signed itself may be kept.
+  gpg --batch --quiet --passphrase '' --quick-gen-key 'Flooder <flood@example.com>' rsa2048 cert never 2>/dev/null
+  ffpr=$(gpg --batch --with-colons --fingerprint flood@example.com 2>/dev/null | awk -F: '$1 == "fpr" { print $10; exit }')
+  gpg --batch --quiet --pinentry-mode loopback --passphrase '' --yes --default-key "$ffpr" --quick-sign-key "$rfpr" > /dev/null 2>&1 < /dev/null
+  gpg --batch --armor --export renew@example.com > "$fx/flooded.asc" 2>/dev/null
+  # The certifier is removed again, so later exports of the renewed key are
+  # the vendor's own self-signatures only, as before.
+  gpg --batch --quiet --yes --delete-secret-and-public-keys "$ffpr" > /dev/null 2>&1
+  page aws-flooded.html "$fx/flooded.asc"
   validity() { GNUPGHOME="$work/show" gpg --batch --show-keys --with-colons "$1" 2>/dev/null | awk -F: '$1 == "pub" { print $2; exit }'; }
   mkdir -p "$work/show"; chmod 700 "$work/show"
   check "  (the committed copy has expired; the vendor's renewed one has not)" \
@@ -1180,6 +1194,16 @@ if command -v gpg >/dev/null && command -v gpgv >/dev/null; then
   rc=0; "$bump" --root "$t" --refresh-keys --plan > "$work/r5y2.jsonl" 2>/dev/null || rc=$?
   check "  the same key twice on the page is one key, the same plan" [ "$rc" -eq 0 ]
   check "  (the same digests)" cmp -s "$work/r5y.jsonl" "$work/r5y2.jsonl"
+  reserve "$AWSDOC" aws-inline.html
+  rc=0; "$bump" --root "$t" --refresh-keys --plan > "$work/r5y3.jsonl" 2>/dev/null || rc=$?
+  check "  markers sharing a line with the page's text: the same plan" [ "$rc" -eq 0 ]
+  check "  (the same digests)" cmp -s "$work/r5y.jsonl" "$work/r5y3.jsonl"
+  check "  (the fixture really does put text beside both markers)" \
+    bash -c "grep -q 'Key: -----BEGIN' '$fx/aws-inline.html' && grep -q 'END PGP PUBLIC KEY BLOCK-----.*Then save' <(sed 's/<[^>]*>//g' '$fx/aws-inline.html')"
+  reserve "$AWSDOC" aws-flooded.html
+  rc=0; "$bump" --root "$t" --refresh-keys --plan > "$work/r5y4.jsonl" 2>/dev/null || rc=$?
+  check "  a copy padded with third-party certifications: the same plan, nothing of theirs kept" [ "$rc" -eq 0 ]
+  check "  (the same digests)" cmp -s "$work/r5y.jsonl" "$work/r5y4.jsonl"
   reserve "$AWSDOC" aws-renewed.html
   rc=0; "$bump" --root "$t" --refresh-keys --format json > "$work/r5y.json" 2>/dev/null || rc=$?
   check "a refresh: exit 0, bumped, auto" \
