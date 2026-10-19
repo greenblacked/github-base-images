@@ -6,7 +6,9 @@ publishing parts of [0007](0007-automatic-updates.md); how the merge bot is star
 [0009](0009-image-lifecycle.md#merge-bot-trigger); the gate gains the base image as a second
 baseline in the [2026-10-14 amendment](#amendment-2026-10-14-the-base-image-is-a-second-baseline);
 `review` pin bumps wait a first-seen cooldown before they merge, and the cooldown fails closed, in
-the [2026-10-17 amendment](#amendment-2026-10-17-the-cooldown-fails-closed-and-has-a-clock-of-its-own)
+the [2026-10-17 amendment](#amendment-2026-10-17-the-cooldown-fails-closed-and-has-a-clock-of-its-own);
+the tool pins the workflows read move out of `.github/workflows/` in the
+[2026-10-19 amendment](#amendment-2026-10-19-no-bump-managed-pin-lives-in-a-workflow-file)
 
 **Date:** 2026-10-06
 
@@ -125,7 +127,8 @@ The workflow uses `GITHUB_TOKEN` only, with `contents`, `pull-requests` and `act
 `checks` read. It needs no PAT, no app, no ruleset and no auto-merge setting. One limit is
 expected but not yet seen either way: `GITHUB_TOKEN` can never hold the `workflows` permission,
 and GitHub may refuse to merge a PR that changes `.github/workflows/*` without it (Dependabot's
-action bumps, and the gitleaks and osv-scanner pin bumps). GitHub's documented Dependabot recipe
+action bumps; the gitleaks and osv-scanner pin bumps no longer touch a workflow file, see the
+[2026-10-19 amendment](#amendment-2026-10-19-no-bump-managed-pin-lives-in-a-workflow-file)). GitHub's documented Dependabot recipe
 merges action bumps with this token, so it is expected to work. The first action bump will show
 whether it does. If GitHub refuses, the bot marks that PR skipped with a warning (merge it by
 hand, or give the workflow a token with `workflows: write`), and the run stays green.
@@ -461,3 +464,43 @@ the artifact's digest, not the checksums file, so a file-signature check cannot 
 **Revisit if** gitleaks or golang-migrate start attesting their releases (add `ghattest` rows),
 kubectl ships bundles for its binaries or `.sha256` files, or GitHub stops returning inline
 bundles and python3 is not on the runner.
+
+## Amendment (2026-10-19): no bump-managed pin lives in a workflow file
+
+**Context.** The limit the merge bot only expected turned out to bite one step earlier, in the
+pin-bump bot. It pushes its `pin-bump/<tool>` branches with `GITHUB_TOKEN`, and GitHub refuses any
+push made with that token that changes a file under `.github/workflows/`, since the token can never
+hold the `workflows` permission. Two hand-pinned tools were pinned in a workflow step's `env:`:
+osv-scanner (`OSV_SCANNER_VERSION`, `OSV_SCANNER_SHA256` in `build-image.yml`) and the gitleaks
+copy of the git history scan (`GITLEAKS_VERSION`, `GITLEAKS_SHA256` in `security.yml`). The daily
+run found the osv-scanner bump, verified it, and then failed with "push refused (exit 1)". The
+gitleaks bump would have failed the same way.
+
+**Decision.**
+
+- **The pins move to `.github/tool-pins.env`,** one plain `KEY=value` line per key, under a header
+  saying what the file is and that the pin-bump bot maintains it. `bump-pins.sh` and
+  `check-pins.sh` read and write it as they do a shell `KEY=` pin.
+- **Each step reads the file as data from its checkout, never by sourcing it.** It takes exactly
+  one `KEY=` line per key, the whole line matching `KEY=<value>` with the value a dotted version or
+  64 hex digits, into plain shell variables (not `$GITHUB_ENV`), and fails before any download if
+  a key is missing, repeated or malformed. Both jobs already check out the repository.
+- **`bump-pins.sh --check` refuses a pin under `.github/workflows/`,** for every kind of row
+  (version, checksum, download, apt), so a tool cannot be pinned back into a workflow where its
+  bump could never be pushed. Lint runs the check on every PR. GitHub Action SHA pins stay with
+  Dependabot and are not affected.
+- **`tool-pins.env` is a pipeline input of `build-and-push.yml`:** in its push path filter and in
+  the plan's full-rebuild list, as the secret gate's two files are, since `build-image.yml` reads
+  osv-scanner's pins from it on every image. `security.yml` has no path filter, so it runs on
+  every change anyway.
+
+**Consequences.**
+
+- The osv-scanner and gitleaks bumps reach a pull request like any other, and none of the pin
+  bumps changes a workflow file, so the merge bot's `workflows` limit concerns only Dependabot's
+  action bumps.
+- A change to `tool-pins.env`, gitleaks's included, rebuilds every image, as a change to
+  `build-image.yml` did for osv-scanner before. A gitleaks bump rebuilt `ci-security` already; it
+  now rebuilds the rest too.
+- The two workflow steps carry the same few lines of reader; a third tool pinned this way copies
+  them.

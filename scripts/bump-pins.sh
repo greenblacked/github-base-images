@@ -13,7 +13,8 @@
 # A "unit" is what moves together. Usually one tool, but a pin that lives in
 # more than one place is one unit, so its copies can never be moved apart:
 # kubectl (ci-tools + ci-cloud), Composer (every PHP image), gitleaks
-# (ci-security + security.yml), npm and Playwright (every Node image), and the
+# (ci-security + .github/tool-pins.env, the copy security.yml runs), npm and
+# Playwright (every Node image), and the
 # brace-expansion and undici copies swapped into npm's tree (every Node image;
 # check-pins.sh resolves those within their current major).
 #
@@ -129,7 +130,8 @@
 #
 # `--check` reads the tables below against the tree and touches nothing, with
 # no network: every pin, checksum and tofu row must name exactly one line that
-# exists, so a renamed ARG cannot quietly drop a checksum from the bumps.
+# exists, so a renamed ARG cannot quietly drop a checksum from the bumps, and
+# none may be under .github/workflows/, where the bot's push would be refused.
 #
 # Exit codes:
 #   0  every unit was bumped, already current, or deferred (--check: tables ok)
@@ -271,9 +273,15 @@ trap 'rm -rf "$tmp"' EXIT INT TERM
 #             rubygems:<gem>, pypi:<project>, or first-seen (no vendor date:
 #             the pin-bump PR's own first-seen clock is the cooldown)
 #
-# A pin is `file:KEY`: a Dockerfile `ARG KEY=`, a shell `KEY=`, a workflow
-# `KEY:` -- or, in a `.txt` requirements file, the `<project>==` line, KEY
-# being the project name as written there.
+# A pin is `file:KEY`: a Dockerfile `ARG KEY=`, a shell or env-file `KEY=`, a
+# YAML `KEY:` -- or, in a `.txt` requirements file, the `<project>==` line,
+# KEY being the project name as written there.
+#
+# Never a file under .github/workflows/ (--check refuses one). The pin-bump
+# bot pushes with the workflow token, and GitHub refuses any push made with
+# that token which changes a workflow file: a pin there could be found and
+# bumped, and then never reach a pull request. A tool a workflow step
+# downloads itself is pinned in .github/tool-pins.env, which the step reads.
 #
 # {v} is replaced by the target version everywhere.
 readonly UNITS='
@@ -296,9 +304,9 @@ trivy       | trivy               | ci-security/Dockerfile.ci:TRIVY_VERSION | su
 syft        | syft                | ci-security/Dockerfile.ci:SYFT_VERSION | sums | github:anchore/syft:v{v} | https://github.com/anchore/syft/releases/tag/v{v}
 grype       | grype               | ci-security/Dockerfile.ci:GRYPE_VERSION | sums | github:anchore/grype:v{v} | https://github.com/anchore/grype/releases/tag/v{v}
 cosign      | cosign              | ci-security/Dockerfile.ci:COSIGN_VERSION | sums | github:sigstore/cosign:v{v} | https://github.com/sigstore/cosign/releases/tag/v{v}
-gitleaks    | gitleaks,gitleaks-workflow | ci-security/Dockerfile.ci:GITLEAKS_VERSION .github/workflows/security.yml:GITLEAKS_VERSION | sums | github:gitleaks/gitleaks:v{v} | https://github.com/gitleaks/gitleaks/releases/tag/v{v}
+gitleaks    | gitleaks,gitleaks-workflow | ci-security/Dockerfile.ci:GITLEAKS_VERSION .github/tool-pins.env:GITLEAKS_VERSION | sums | github:gitleaks/gitleaks:v{v} | https://github.com/gitleaks/gitleaks/releases/tag/v{v}
 migrate     | migrate             | ci-db/Dockerfile.ci:MIGRATE_VERSION | sums | github:golang-migrate/migrate:v{v} | https://github.com/golang-migrate/migrate/releases/tag/v{v}
-osv-scanner | osv-scanner         | .github/workflows/build-image.yml:OSV_SCANNER_VERSION | sums | github:google/osv-scanner:v{v} | https://github.com/google/osv-scanner/releases/tag/v{v}
+osv-scanner | osv-scanner         | .github/tool-pins.env:OSV_SCANNER_VERSION | sums | github:google/osv-scanner:v{v} | https://github.com/google/osv-scanner/releases/tag/v{v}
 json        | json                | */Dockerfile.ci:JSON_VERSION | rubygems:json | rubygems:json | https://rubygems.org/gems/json/versions/{v}
 hadolint    | hadolint            | scripts/lint.sh:HADOLINT_VERSION | sums | github:hadolint/hadolint:v{v} | https://github.com/hadolint/hadolint/releases/tag/v{v}
 actionlint  | actionlint          | scripts/lint.sh:ACTIONLINT_VERSION | sums | github:rhysd/actionlint:v{v} | https://github.com/rhysd/actionlint/releases/tag/v{v}
@@ -327,10 +335,10 @@ cosign      | ci-security/Dockerfile.ci:COSIGN_SHA256_AMD64 | $GH/sigstore/cosig
 cosign      | ci-security/Dockerfile.ci:COSIGN_SHA256_ARM64 | $GH/sigstore/cosign/releases/download/v{v}/cosign_checksums.txt | cosign-linux-arm64
 gitleaks    | ci-security/Dockerfile.ci:GITLEAKS_SHA256_AMD64 | $GH/gitleaks/gitleaks/releases/download/v{v}/gitleaks_{v}_checksums.txt | gitleaks_{v}_linux_x64.tar.gz
 gitleaks    | ci-security/Dockerfile.ci:GITLEAKS_SHA256_ARM64 | $GH/gitleaks/gitleaks/releases/download/v{v}/gitleaks_{v}_checksums.txt | gitleaks_{v}_linux_arm64.tar.gz
-gitleaks    | .github/workflows/security.yml:GITLEAKS_SHA256  | $GH/gitleaks/gitleaks/releases/download/v{v}/gitleaks_{v}_checksums.txt | gitleaks_{v}_linux_x64.tar.gz
+gitleaks    | .github/tool-pins.env:GITLEAKS_SHA256           | $GH/gitleaks/gitleaks/releases/download/v{v}/gitleaks_{v}_checksums.txt | gitleaks_{v}_linux_x64.tar.gz
 migrate     | ci-db/Dockerfile.ci:MIGRATE_SHA256_AMD64      | $GH/golang-migrate/migrate/releases/download/v{v}/sha256sum.txt | migrate.linux-amd64.tar.gz
 migrate     | ci-db/Dockerfile.ci:MIGRATE_SHA256_ARM64      | $GH/golang-migrate/migrate/releases/download/v{v}/sha256sum.txt | migrate.linux-arm64.tar.gz
-osv-scanner | .github/workflows/build-image.yml:OSV_SCANNER_SHA256 | $GH/google/osv-scanner/releases/download/v{v}/osv-scanner_SHA256SUMS | osv-scanner_linux_amd64
+osv-scanner | .github/tool-pins.env:OSV_SCANNER_SHA256      | $GH/google/osv-scanner/releases/download/v{v}/osv-scanner_SHA256SUMS | osv-scanner_linux_amd64
 hadolint    | scripts/lint.sh:HADOLINT_SHA256_LINUX_X86_64  | $GH/hadolint/hadolint/releases/download/v{v}/checksums.sha256 | hadolint-linux-x86_64
 hadolint    | scripts/lint.sh:HADOLINT_SHA256_LINUX_ARM64   | $GH/hadolint/hadolint/releases/download/v{v}/checksums.sha256 | hadolint-linux-arm64
 hadolint    | scripts/lint.sh:HADOLINT_SHA256_MACOS_ARM64   | $GH/hadolint/hadolint/releases/download/v{v}/checksums.sha256 | hadolint-macos-arm64
@@ -1380,7 +1388,8 @@ ver_gt() { [ "$1" != "$2" ] && [ "$(printf '%s\n%s\n' "$1" "$2" | sort -V | tail
 
 # --- reading and writing a pin -----------------------------------------------
 # The three spellings check-pins.sh reads: a Dockerfile `ARG KEY=v`, a shell
-# `KEY=v` at the start of a line, and a workflow `env:` entry `    KEY: v`.
+# or env-file `KEY=v` at the start of a line (.github/tool-pins.env), and an
+# indented YAML entry `    KEY: v`.
 # And a fourth, in a `.txt` requirements file: `KEY==v`, followed by its
 # `--hash=` continuation lines (see set_req).
 get_pin() {
@@ -1810,7 +1819,8 @@ bump_unit() {
 
 # --- --check: the tables against the tree ------------------------------------
 # Every pin a unit names, every checksum row and every download row must be
-# exactly one line in --root, holding a version or a sha256; every tofu or
+# exactly one line in --root, holding a version or a sha256, in a file outside
+# .github/workflows/ (which the bot's pushes cannot change); every tofu or
 # attested unit must have its download rows and every download row such a
 # unit; every signature row must match a download or checksum row of its
 # unit, name a key file that exists or an exact identity, a known issuer and
@@ -1830,6 +1840,13 @@ check_tables() {
   }
   one_line() { # FILE:KEY WHAT -- the pin is exactly one line; its value in $v
     f=${1%%:*}; k=${1#*:}
+    # The bot's own limit: its pushes are made with the workflow token, which
+    # GitHub refuses for any change under .github/workflows/.
+    case "$f" in
+      .github/workflows/*|./.github/workflows/*)
+        complain "$2 $1: the pin-bump bot cannot push a change to .github/workflows/ (the workflow token has no workflows permission); pin it in .github/tool-pins.env and read it from there"
+        return 1 ;;
+    esac
     [ -f "$root/$f" ] || { complain "$2 $1: $f does not exist"; return 1; }
     n=$(pin_lines "$root/$f" "$k")
     [ "$n" = 1 ] || { complain "$2 $1: $n lines carry it, not 1"; return 1; }

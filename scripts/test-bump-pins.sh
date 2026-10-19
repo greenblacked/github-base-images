@@ -222,7 +222,7 @@ EOF
 serve "$G/golang-migrate/migrate/releases/download/v4.20.2/sha256sum.txt" migrate.txt
 gh_release golang-migrate/migrate v4.20.2 "$OLD"
 
-# gitleaks 8.31.0: paired across ci-security and security.yml.
+# gitleaks 8.31.0: paired across ci-security and tool-pins.env (security.yml's copy).
 cat > "$fx/gitleaks.txt" <<EOF
 $(fake gitleaks-darwin)  gitleaks_8.31.0_darwin_arm64.tar.gz
 $(fake gitleaks-arm64)  gitleaks_8.31.0_linux_arm64.tar.gz
@@ -299,7 +299,7 @@ fi
 # shellcheck disable=SC2206  # one path per word
 files=(
   ci-tools/Dockerfile.ci ci-cloud/Dockerfile.ci ci-security/Dockerfile.ci ci-db/Dockerfile.ci
-  $NODE_FILES $PHP_FILES $JSON_FILES .github/workflows/security.yml .github/workflows/build-image.yml
+  $NODE_FILES $PHP_FILES $JSON_FILES .github/tool-pins.env
   scripts/lint.sh .github/images.json ci-cloud/az-overrides.txt .github/zizmor-requirements.txt
   scripts/keys/aws-cli.asc scripts/keys/hashicorp.asc scripts/keys/docker.asc scripts/keys/composer.asc
 )
@@ -317,7 +317,7 @@ new_tree() {
   force "$t/ci-security/Dockerfile.ci" GRYPE_VERSION 0.119.0
   force "$t/ci-security/Dockerfile.ci" COSIGN_VERSION 3.1.3
   force "$t/ci-security/Dockerfile.ci" GITLEAKS_VERSION 8.30.1
-  force "$t/.github/workflows/security.yml" GITLEAKS_VERSION 8.30.1
+  force "$t/.github/tool-pins.env" GITLEAKS_VERSION 8.30.1
   force "$t/ci-tools/Dockerfile.ci" KUBECTL_VERSION 1.37.0
   force "$t/ci-cloud/Dockerfile.ci" KUBECTL_VERSION 1.37.0
   force "$t/ci-tools/Dockerfile.ci" DOCKER_CLI_VERSION '5:29.8.1-1~debian.12~bookworm'
@@ -326,7 +326,7 @@ new_tree() {
   force "$t/scripts/lint.sh" HADOLINT_VERSION 2.15.1
   for f in $NODE_FILES; do force "$t/$f" NPM_VERSION 12.1.0; done
   for f in $PHP_FILES; do force "$t/$f" COMPOSER_VERSION 2.10.3; done
-  force "$t/.github/workflows/build-image.yml" OSV_SCANNER_VERSION 2.6.0
+  force "$t/.github/tool-pins.env" OSV_SCANNER_VERSION 2.6.0
   for f in $JSON_FILES; do force "$t/$f" JSON_VERSION 2.19.9; done
   for f in $UNDICI_FILES; do force "$t/$f" NPM_UNDICI_VERSION 6.29.0; done
   force "$t/ci-tools/Dockerfile.ci" AWSCLI_VERSION 2.38.1
@@ -422,12 +422,14 @@ check "  each kubectl binary verified once, though two images pin it" \
 check "  and the reason says so" \
   bash -c "jq -r '.[] | select(.unit == \"kubectl\") | .reason' '$work/r1.json' | grep -q 'Sigstore signature verified under the vendor.s pinned identity, and its sha256 matched'"
 
-echo " paired bump (gitleaks in ci-security and security.yml)"
+echo " paired bump (gitleaks in ci-security and tool-pins.env)"
 expect_pin "$t" ci-security/Dockerfile.ci GITLEAKS_VERSION 8.31.0
 expect_pin "$t" ci-security/Dockerfile.ci GITLEAKS_SHA256_AMD64 "$(fake gitleaks-x64)"
 expect_pin "$t" ci-security/Dockerfile.ci GITLEAKS_SHA256_ARM64 "$(fake gitleaks-arm64)"
-expect_pin "$t" .github/workflows/security.yml GITLEAKS_VERSION 8.31.0
-expect_pin "$t" .github/workflows/security.yml GITLEAKS_SHA256 "$(fake gitleaks-x64)"
+expect_pin "$t" .github/tool-pins.env GITLEAKS_VERSION 8.31.0
+expect_pin "$t" .github/tool-pins.env GITLEAKS_SHA256 "$(fake gitleaks-x64)"
+check "  tool-pins.env's gitleaks lines are still strict KEY=value" \
+  [ "$(grep -cxE 'GITLEAKS_VERSION=[0-9.]+|GITLEAKS_SHA256=[0-9a-f]{64}' "$t/.github/tool-pins.env")" -eq 2 ]
 
 echo " major version -> review (syft); a minor from the registry -> auto (json)"
 expect_field "$work/r1.json" syft status bumped
@@ -465,12 +467,12 @@ check "grype checksum lines untouched" \
 expect_field "$work/r1.json" migrate status bumped
 expect_pin "$t" ci-db/Dockerfile.ci MIGRATE_SHA256_ARM64 "$(fake migrate-arm64)"
 expect_field "$work/r1.json" osv-scanner status error
-check "a checksum file missing the asset leaves build-image.yml byte-identical" \
-  cmp -s "$t/.github/workflows/build-image.yml" "$snap/.github/workflows/build-image.yml"
+check "a checksum file missing the asset leaves osv-scanner's pins untouched" \
+  [ "$(grep '^OSV_SCANNER_' "$t/.github/tool-pins.env")" = "$(grep '^OSV_SCANNER_' "$snap/.github/tool-pins.env")" ]
 
 echo " nothing outside the expected files changed"
 # shellcheck disable=SC2086  # one path per word
-expected=$(printf '%s\n' .github/workflows/security.yml ci-cloud/Dockerfile.ci ci-db/Dockerfile.ci \
+expected=$(printf '%s\n' .github/tool-pins.env ci-cloud/Dockerfile.ci ci-db/Dockerfile.ci \
   $NODE_FILES $JSON_FILES ci-security/Dockerfile.ci ci-tools/Dockerfile.ci scripts/lint.sh | sort)
 check "changed files are exactly the bumped units' files" [ "$(changed_files "$t" "$snap")" = "$expected" ]
 check "every changed line is a pin line" \
@@ -1324,7 +1326,7 @@ osv_bundle 2.7.0 "$SLSA_ID" google/osv-scanner refs/tags/v2.7.0 "$(fake osv-2.7.
 rc=0; "$bump" --root "$t" --unit osv-scanner --to 2.7.0 --quiet --format json > "$work/r5w.json" 2>/dev/null || rc=$?
 check "the generator at v2.1.0, for google/osv-scanner at the tag: exit 0, bumped, auto" \
   [ "$rc:$(field "$work/r5w.json" osv-scanner status):$(field "$work/r5w.json" osv-scanner class)" = "0:bumped:auto" ]
-expect_pin "$t" .github/workflows/build-image.yml OSV_SCANNER_SHA256 "$(fake osv-2.7.0-a)"
+expect_pin "$t" .github/tool-pins.env OSV_SCANNER_SHA256 "$(fake osv-2.7.0-a)"
 check "  cosign bound the repository, the tag and the trigger, not just the shared generator identity" \
   grep -qF -- "--type slsaprovenance --certificate-identity $SLSA_ID --certificate-oidc-issuer $GHA --certificate-github-workflow-repository google/osv-scanner --certificate-github-workflow-ref refs/tags/v2.7.0 --certificate-github-workflow-trigger push --digest $(fake osv-2.7.0-a) --digestAlg sha256" "$FAKE_COSIGN_LOG"
 check "  the provenance bundle is listed as an integrity source" \
@@ -1558,6 +1560,19 @@ bad_tables "an slsa row bound to a repository but no ref" "is not an exact owner
   's/| google\/osv-scanner@refs\/tags\/v{v}$/| google\/osv-scanner/'
 bad_tables "an attested unit whose download has no digest row" "composer is attested, but" \
   '/^composer .* ghattest /d'
+# The bot's own limit: its pushes cannot change .github/workflows/. A pin
+# moved back into a workflow, as osv-scanner's and gitleaks's once were, is
+# refused for each kind of row, even with the pin line in place there.
+mkdir -p "$t/.github/workflows"
+printf 'jobs:\n  a:\n    steps:\n      - env:\n          OSV_SCANNER_VERSION: 2.6.0\n          OSV_SCANNER_SHA256: %s\n' \
+  "$(fake osv-wf)" > "$t/.github/workflows/build-image.yml"
+bad_tables "a version pin under .github/workflows/" "cannot push a change to .github/workflows/" \
+  's#^osv-scanner | osv-scanner \( *\)| .github/tool-pins.env:OSV_SCANNER_VERSION #osv-scanner | osv-scanner \1| .github/workflows/build-image.yml:OSV_SCANNER_VERSION #'
+check "  and names the pin" grep -qF '.github/workflows/build-image.yml:OSV_SCANNER_VERSION' "$work/c5j.err"
+bad_tables "a checksum pin under .github/workflows/" "cannot push a change to .github/workflows/" \
+  's#^osv-scanner | .github/tool-pins.env:OSV_SCANNER_SHA256 #osv-scanner | .github/workflows/build-image.yml:OSV_SCANNER_SHA256 #'
+check "  and names the pin" grep -qF 'checksum .github/workflows/build-image.yml:OSV_SCANNER_SHA256' "$work/c5j.err"
+rm -rf "$t/.github/workflows"
 bad_tables "a kubectl row signed as a pattern" "is not an exact workflow or service-account identity" \
   '/^kubectl .*arm64.* sigcert /s/krel-staging@/.*@/'
 bad_tables "a kubectl arch with no signature row" "kubectl is signed, but https://dl.k8s.io/release/v{v}/bin/linux/arm64/kubectl.sha256 has no SIGS row" \

@@ -1007,14 +1007,31 @@ jobs:
 
       # Pinned release binary, verified against the vendor's own
       # osv-scanner_SHA256SUMS -- the same pattern as gitleaks in security.yml
-      # and the lint engines in scripts/lint.sh. scripts/check-pins.sh reads
-      # OSV_SCANNER_VERSION from this file, so pin-drift.yml reports when it
-      # falls behind.
+      # and the lint engines in scripts/lint.sh. The version and checksum are
+      # in .github/tool-pins.env, not here: the pin-bump bot moves them, and
+      # GitHub refuses a workflow-token push that touches this directory.
+      # scripts/check-pins.sh reads the version from there too, so
+      # pin-drift.yml reports when it falls behind.
+      #
+      # The file is data, read from the checkout above, never sourced: exactly
+      # one strict `KEY=value` line per key, and a value of the right shape,
+      # or the step fails before anything is downloaded.
       - name: Install osv-scanner
-        env:
-          OSV_SCANNER_VERSION: 2.6.0
-          OSV_SCANNER_SHA256: ca69b3d3cd08f889a49dc0a383122f71cc528b83803671df5fd874d97485b108
         run: |
+          pin() { # KEY ERE WHAT -- the value on KEY's one line in tool-pins.env
+            local f=.github/tool-pins.env lines
+            lines=$(grep -E "^$1=" "$f" || true)
+            if [ -z "$lines" ] || [ "$(printf '%s\n' "$lines" | wc -l)" -ne 1 ]; then
+              echo "::error::$f must have exactly one $1= line" >&2; return 1
+            fi
+            # The whole line, exactly: KEY=, then a value of the right shape
+            # and nothing else -- no quotes, spaces, comment or carriage return.
+            printf '%s\n' "$lines" | grep -qxE "$1=$2" \
+              || { echo "::error::$1 in $f is not $3" >&2; return 1; }
+            printf '%s' "${lines#"$1="}"
+          }
+          OSV_SCANNER_VERSION=$(pin OSV_SCANNER_VERSION '[0-9]+(\.[0-9]+)+' 'a dotted version')
+          OSV_SCANNER_SHA256=$(pin OSV_SCANNER_SHA256 '[0-9a-f]{64}' 'a sha256')
           dir="$RUNNER_TEMP/osv-scanner"
           mkdir -p "$dir"
           curl -fsSL --retry 3 -o "$dir/osv-scanner" \

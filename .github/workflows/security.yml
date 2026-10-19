@@ -431,16 +431,33 @@ jobs:
       # revalidates; scripts/bump-pins.sh makes it together with the
       # ci-security copy, so the two cannot drift apart.
       #
+      # The version and checksum are in .github/tool-pins.env, not here: the
+      # pin-bump bot moves them, and GitHub refuses a workflow-token push that
+      # touches this directory. The file is data, read from the checkout
+      # above, never sourced: exactly one strict `KEY=value` line per key, and
+      # a value of the right shape, or the step fails before any download.
+      #
       # Reported, not gating. A history finding cannot be fixed by a commit --
       # it needs a rewrite plus rotation -- so failing the build would block
       # every unrelated change until that happens. Read the log; treat a hit
       # as an incident rather than a broken build.
       - name: Gitleaks
         continue-on-error: true
-        env:
-          GITLEAKS_VERSION: 8.30.1
-          GITLEAKS_SHA256: 551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb
         run: |
+          pin() { # KEY ERE WHAT -- the value on KEY's one line in tool-pins.env
+            local f=.github/tool-pins.env lines
+            lines=$(grep -E "^$1=" "$f" || true)
+            if [ -z "$lines" ] || [ "$(printf '%s\n' "$lines" | wc -l)" -ne 1 ]; then
+              echo "::error::$f must have exactly one $1= line" >&2; return 1
+            fi
+            # The whole line, exactly: KEY=, then a value of the right shape
+            # and nothing else -- no quotes, spaces, comment or carriage return.
+            printf '%s\n' "$lines" | grep -qxE "$1=$2" \
+              || { echo "::error::$1 in $f is not $3" >&2; return 1; }
+            printf '%s' "${lines#"$1="}"
+          }
+          GITLEAKS_VERSION=$(pin GITLEAKS_VERSION '[0-9]+(\.[0-9]+)+' 'a dotted version')
+          GITLEAKS_SHA256=$(pin GITLEAKS_SHA256 '[0-9a-f]{64}' 'a sha256')
           curl -fsSLo gitleaks.tgz \
             "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
           echo "${GITLEAKS_SHA256}  gitleaks.tgz" > gitleaks.sum
