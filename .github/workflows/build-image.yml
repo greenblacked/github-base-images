@@ -985,6 +985,8 @@ jobs:
       contents: read
       # Required by the SARIF upload to code scanning.
       security-events: write
+      # To list this run's artifacts and pick the newest SBOM (below).
+      actions: read
 
     strategy:
       fail-fast: false
@@ -999,11 +1001,35 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Download SBOM
-        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
-        with:
-          name: security-report-${{ inputs.image }}-${{ matrix.arch }}
-          path: reports
+      # Artifact names are unique per attempt, not per run: after "re-run
+      # failed jobs" a failed attempt's report (with no SBOM in it) and the
+      # re-run's both carry this name. download-artifact keeps only the one
+      # with the higher ID, which need not be the newer, and does so even when
+      # asked for an ID. So the newest of this run is picked by creation time
+      # and fetched here, its zip checked against the digest GitHub recorded
+      # for it at upload -- the same check download-artifact makes.
+      - name: Download this run's newest SBOM
+        env:
+          GH_TOKEN: ${{ github.token }}
+          NAME: security-report-${{ inputs.image }}-${{ matrix.arch }}
+        run: |
+          pick=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/artifacts?name=$NAME&per_page=100" \
+            --jq '.artifacts | sort_by(.created_at) | last | "\(.id) \(.digest // "")"')
+          id=${pick%% *} digest=${pick#* }
+          if ! [[ "$id" =~ ^[0-9]+$ ]]; then
+            echo "::error::no $NAME artifact in this run"
+            exit 1
+          fi
+          zip="$RUNNER_TEMP/$NAME.zip"
+          gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/$id/zip" > "$zip"
+          if ! [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+            echo "::error::artifact $id ($NAME) has no recorded sha256 digest"
+            exit 1
+          fi
+          echo "${digest#sha256:}  $zip" | sha256sum --check --strict
+          mkdir -p reports
+          unzip -q -o "$zip" -d reports
+          echo "using artifact $id ($NAME), $(stat -c %s "$zip") bytes"
 
       # Pinned release binary, verified against the vendor's own
       # osv-scanner_SHA256SUMS -- the same pattern as gitleaks in security.yml
