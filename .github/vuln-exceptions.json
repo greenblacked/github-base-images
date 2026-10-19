@@ -1194,5 +1194,17 @@
       "usr/local/bin/kubectl",
       "usr/local/bin/terraform"
     ]
+  },
+  {
+    "image": "ci-tools",
+    "id": "CVE-2026-56851",
+    "package": "golang.org/x/text",
+    "installed": "v0.40.0 (kubectl)",
+    "reason": "Compiled into kubectl 1.37.1, the latest release (dl.k8s.io stable.txt) and pinned as such in ci-tools, whose go.mod still requires golang.org/x/text v0.40.0; only a new kubectl release built with golang.org/x/text 0.41.0 can carry the fix, and the pin-bump bot picks it up automatically. (terraform 1.16.6 in this image already carries v0.42.0.)",
+    "upstream": "https://github.com/kubernetes/kubernetes/releases",
+    "expires": "2026-10-26",
+    "paths": [
+      "usr/local/bin/kubectl"
+    ]
   }
 ]
