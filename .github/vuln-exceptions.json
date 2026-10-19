@@ -91,6 +91,18 @@
     "no_path": "Trivy reports pip's vendored packages from pip/_vendor/bom.cdx.json with no package path, under the aggregate target \"Python\" that every site-packages package in the image shares, so a path cannot narrow this entry; the purl's exact name and version is the narrowest match Trivy offers."
   },
   {
+    "image": "ci-cloud",
+    "id": "CVE-2026-56851",
+    "package": "golang.org/x/text",
+    "installed": "v0.40.0 (kubectl)",
+    "reason": "Compiled into kubectl 1.37.1, the latest release (dl.k8s.io stable.txt) and pinned as such in ci-cloud, whose go.mod still requires golang.org/x/text v0.40.0; only a new kubectl release built with golang.org/x/text 0.41.0 can carry the fix, and the pin-bump bot picks it up automatically.",
+    "upstream": "https://github.com/kubernetes/kubernetes/releases",
+    "expires": "2026-10-26",
+    "paths": [
+      "usr/local/bin/kubectl"
+    ]
+  },
+  {
     "image": "ci-db",
     "id": "CVE-2026-56852",
     "package": "golang.org/x/text",
@@ -180,6 +192,18 @@
     "package": "google.golang.org/grpc",
     "installed": "v1.82.0",
     "reason": "Compiled into the golang-migrate v4.20.1 release binary, the latest release, whose go.mod still requires google.golang.org/grpc v1.82.0; only a new migrate release can carry the fix.",
+    "upstream": "https://github.com/golang-migrate/migrate/releases",
+    "expires": "2026-10-26",
+    "paths": [
+      "usr/local/bin/migrate"
+    ]
+  },
+  {
+    "image": "ci-db",
+    "id": "CVE-2026-56851",
+    "package": "golang.org/x/text",
+    "installed": "v0.38.0",
+    "reason": "Compiled into the golang-migrate v4.20.1 release binary, the latest release, whose go.mod still requires golang.org/x/text v0.38.0; only a new migrate release can carry the fix.",
     "upstream": "https://github.com/golang-migrate/migrate/releases",
     "expires": "2026-10-26",
     "paths": [
@@ -1064,6 +1088,19 @@
     ]
   },
   {
+    "image": "ci-security",
+    "id": "CVE-2026-56851",
+    "package": "golang.org/x/text",
+    "installed": "v0.38.0 (cosign), v0.22.0 (gitleaks)",
+    "reason": "Compiled into cosign 3.1.3, gitleaks 8.30.1, each the latest upstream release and pinned as such in ci-security, so only new releases built with golang.org/x/text 0.41.0 can carry the fix.",
+    "upstream": "https://github.com/sigstore/cosign/releases",
+    "expires": "2026-10-26",
+    "paths": [
+      "usr/local/bin/cosign",
+      "usr/local/bin/gitleaks"
+    ]
+  },
+  {
     "image": "ci-python315",
     "id": "CVE-2025-47273",
     "package": "setuptools",
@@ -1156,6 +1193,18 @@
     "paths": [
       "usr/local/bin/kubectl",
       "usr/local/bin/terraform"
+    ]
+  },
+  {
+    "image": "ci-tools",
+    "id": "CVE-2026-56851",
+    "package": "golang.org/x/text",
+    "installed": "v0.40.0 (kubectl)",
+    "reason": "Compiled into kubectl 1.37.1, the latest release (dl.k8s.io stable.txt) and pinned as such in ci-tools, whose go.mod still requires golang.org/x/text v0.40.0; only a new kubectl release built with golang.org/x/text 0.41.0 can carry the fix, and the pin-bump bot picks it up automatically. (terraform 1.16.6 in this image already carries v0.42.0.)",
+    "upstream": "https://github.com/kubernetes/kubernetes/releases",
+    "expires": "2026-10-26",
+    "paths": [
+      "usr/local/bin/kubectl"
     ]
   }
 ]
