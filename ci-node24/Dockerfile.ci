@@ -111,7 +111,7 @@ RUN set -eu; \
 #
 # The library set is stable across Playwright releases, so pinning the version
 # used to resolve it only affects which list we install, not what consumers run.
-ARG PLAYWRIGHT_VERSION=1.63.0
+ARG PLAYWRIGHT_VERSION=1.64.1
 RUN npx --yes playwright@${PLAYWRIGHT_VERSION} install-deps chromium \
     && rm -rf /var/lib/apt/lists/* \
     && rm -rf /root/.npm
