@@ -68,7 +68,7 @@ RUN npm install --global "npm@${NPM_VERSION}" \
 # the pin-bump bot moves them), once npm ships brace-expansion >= 5.0.11 and
 # undici >= 6.28.1; test.sh asserts those floors whichever way they arrive.
 ARG NPM_BRACE_EXPANSION_VERSION=5.0.12
-ARG NPM_UNDICI_VERSION=6.29.0
+ARG NPM_UNDICI_VERSION=6.29.1
 RUN set -eu; \
     deps="$(npm root -g)/npm/node_modules"; \
     work="$(mktemp -d)"; \
