@@ -39,6 +39,8 @@ container target is ever added (Cloudflare Containers, Fly, Kubernetes), that is
 
 ### Node.js
 
+- **`ci-node26`** — Node.js 26, npm, and Playwright's system libraries (Chromium only, no
+  browser binaries; see [Running Playwright tests](#running-playwright-tests)), on Debian Trixie.
 - **`ci-node24`** — the same image on Node.js 24, for repositories that have moved to the newer
   LTS line or that test against both in a matrix.
 - **`ci-node22`** — Node.js 22, npm, and Playwright's system libraries (Chromium only, no browser
