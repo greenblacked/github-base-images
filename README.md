@@ -6,7 +6,7 @@
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
 Shared container images for running CI in GitHub Actions container jobs, published to
-`ghcr.io/greenblacked`. There are 22: language runtimes (Node.js, Python, Go, Rust, Ruby, Java,
+`ghcr.io/greenblacked`. There are 23: language runtimes (Node.js, Python, Go, Rust, Ruby, Java,
 PHP, .NET) and four tool images (infra, cloud, security scanners, database clients). Every image is
 built for `linux/amd64` and `linux/arm64` on native runners, rebuilt daily to pick up distribution
 security updates, blocked from publishing if a build adds a fixable HIGH/CRITICAL vulnerability or
@@ -82,6 +82,7 @@ and the OpenSSH client. Follow an image name for what it leaves out and why.
 
 | Image | What's in it | Base | Tag |
 |---|---|---|---|
+| [`ci-node26`](docs/images.md#nodejs) | Node.js 26, npm, Playwright's Chromium libraries | `node:26-trixie-slim` | `trixie-v1` |
 | [`ci-node24`](docs/images.md#nodejs) | Node.js 24, npm, Playwright's Chromium libraries | `node:24-trixie-slim` | `trixie-v1` |
 | [`ci-node22`](docs/images.md#nodejs) | Node.js 22, npm, Playwright's Chromium libraries | `node:22-trixie-slim` | `trixie-v1` |
 | [`ci-python315`](docs/images.md#python) | Python 3.15, pip | `python:3.15-slim-trixie` | `trixie-v1` |

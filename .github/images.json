@@ -66,6 +66,12 @@
     "upstream": "node:24-trixie-slim"
   },
   {
+    "image": "ci-node26",
+    "version": "trixie-v1",
+    "mirror": "mirror-node:26-trixie-slim",
+    "upstream": "node:26-trixie-slim"
+  },
+  {
     "image": "ci-php84",
     "version": "trixie-v1",
     "mirror": "mirror-php:8.4-cli-trixie",

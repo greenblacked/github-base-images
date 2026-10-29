@@ -1,0 +1,100 @@
+#!/usr/bin/env bash
+# Smoke tests for the ci-node26 image. Run against a built image before it is pushed.
+#   ./ci-node26/test.sh ci-node26:test
+#
+# Exit codes: 0 all checks passed, 1 one or more checks failed, 2 bad usage.
+# SC2016: check strings are deliberately single-quoted so they expand inside
+# the container (docker run bash -c), not on the host.
+# shellcheck disable=SC2016
+set -euo pipefail
+
+if [ "$#" -ne 1 ]; then
+  echo "usage: test.sh <image-ref>" >&2
+  exit 2
+fi
+IMAGE="$1"
+failed=0
+
+# On failure, print what the container actually said. Discarding it means an
+# arm64 machine is needed to reproduce what the log could have shown: a
+# wrong-arch binary says "exec format error", a missing library names the .so,
+# a TLS failure names the certificate problem.
+check() {
+  local name="$1" script="$2" out
+  if out=$(docker run --rm "$IMAGE" bash -c "$script" 2>&1); then
+    echo "ok       $name"
+  else
+    echo "FAILED   $name"
+    if [ -n "$out" ]; then
+      printf '%s\n' "$out" | sed 's/^/         | /' >&2
+    fi
+    failed=1
+  fi
+}
+
+echo "Testing $IMAGE"
+
+# Every tool the image promises to ship. --no-install-recommends is exactly how
+# one of these silently goes missing, so assert each one individually.
+check "node is present"            'node --version'
+check "node is v26"                '[ "$(node -p "process.versions.node.split(\".\")[0]")" = 26 ]'
+check "npm is present"             'npm --version'
+check "npm is v12 (bundled deps patched)" '[ "$(npm --version | cut -d. -f1)" = 12 ]'
+
+# Two of npm's own dependencies are replaced in the Dockerfile, because the
+# newest npm still bundles vulnerable copies: brace-expansion (CVE-2026-102276,
+# CVE-2026-102278; fixed in 5.0.11) and undici (CVE-2026-19534; fixed in
+# 6.28.1). Asserted as floors, not exact versions, so these still hold once an
+# npm release bundles the fixes and that step leaves npm's copies alone.
+npm_dep_at_least='node -e "const [root, name, min] = process.argv.slice(1); const have = require(root + \"/npm/node_modules/\" + name + \"/package.json\").version; const v = have.split(\".\").map(Number), m = min.split(\".\").map(Number); if (!((v[0] - m[0] || v[1] - m[1] || v[2] - m[2]) >= 0)) { console.error(name + \" \" + have + \" is below \" + min); process.exit(1); }" "$(npm root -g)"'
+check "npm bundles brace-expansion >= 5.0.11" "$npm_dep_at_least brace-expansion 5.0.11"
+check "npm bundles undici >= 6.28.1"       "$npm_dep_at_least undici 6.28.1"
+# ...and npm still works with them. `npm ls --all` fails on a bundled copy
+# outside the range its dependent asks for; the pack (a `files` glob with a
+# brace, which goes through brace-expansion) and the offline install of the
+# result exercise npm's own code paths; undici is loaded for its API, since
+# only node-gyp's downloads reach it.
+check "npm dependency tree is valid" 'npm ls --global --all > /dev/null'
+check "npm packs and installs offline" 'd=$(mktemp -d) && mkdir "$d/probe" "$d/app" && cd "$d/probe" && printf "{\"name\":\"probe\",\"version\":\"1.0.0\",\"main\":\"a.js\",\"files\":[\"{a,b}.js\"]}" > package.json && echo "module.exports = 42" > a.js && echo > b.js && echo > c.js && npm pack --silent --pack-destination "$d" > /dev/null && [ "$(tar -tzf "$d/probe-1.0.0.tgz" | sort | tr "\n" " ")" = "package/a.js package/b.js package/package.json " ] && cd "$d/app" && echo "{}" > package.json && npm install --offline --no-audit --no-fund --silent "$d/probe-1.0.0.tgz" && [ "$(node -p "require(\"probe\")")" = 42 ]'
+check "npm's undici loads"             'node -e "const u = require(process.argv[1] + \"/npm/node_modules/undici\"); process.exit(typeof u.fetch === \"function\" && typeof u.Agent === \"function\" ? 0 : 1)" "$(npm root -g)"'
+check "bash is present"            'bash --version'
+check "git is present"             'git --version'
+check "curl is present"            'curl --version'
+check "jq is present"              'jq --version'
+check "ssh client is present"      'ssh -V'
+check "tar is present"             'tar --version'
+check "gzip is present"            'gzip --version'
+check "unzip is present"           'unzip -v'
+check "xz is present"              'xz --version'
+check "zstd is present"            'zstd --version'
+
+# ca-certificates is only meaningfully installed if TLS actually verifies;
+# npm ci depends on this working.
+check "CA bundle exists"           'test -s /etc/ssl/certs/ca-certificates.crt'
+check "TLS verification works"     'curl -sSf --max-time 15 https://registry.npmjs.org/ -o /dev/null'
+
+check "workdir is /workspace"      '[ "$PWD" = /workspace ]'
+
+# Playwright system libraries, so `npx playwright install chromium` works in a
+# consuming repo without root or apt. The package names follow the
+# distribution: Debian 13 and Ubuntu 24.04 on renamed two of them for the
+# 64-bit time_t transition (libasound2t64, libatk1.0-0t64), and the old names
+# are not installable there. Which set applies is read from the image itself,
+# so the same check fits every Node image, whichever line it is on.
+check "playwright libs present"    '. /etc/os-release; case "$VERSION_CODENAME" in bullseye|bookworm|focal|jammy) t64= ;; *) t64=t64 ;; esac; dpkg -s libnss3 libgbm1 "libatk1.0-0$t64" "libasound2$t64" libxkbcommon0 fonts-liberation >/dev/null 2>&1'
+
+# ...but no browser binaries. Browsers are version-locked to the consumer's
+# playwright package; baking them would pin every repo to this image's version.
+check "no browsers baked in"       '! test -d /ms-playwright && ! test -d /root/.cache/ms-playwright'
+
+# The image is shared across projects: project dependencies belong in each
+# repo's lockfile, not baked in here.
+check "no node_modules baked in"   '! test -e /workspace/node_modules'
+check "no wrangler baked in"       '! command -v wrangler'
+check "no next baked in"           '! command -v next'
+
+if [ "$failed" -ne 0 ]; then
+  echo "FAIL: one or more checks failed for $IMAGE" >&2
+  exit 1
+fi
+echo "PASS: $IMAGE"
