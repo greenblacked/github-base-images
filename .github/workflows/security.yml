@@ -81,7 +81,7 @@ jobs:
       - name: Upload SARIF to code scanning
         if: always()
         continue-on-error: true
-        uses: github/codeql-action/upload-sarif@6f2ac81f5cd81fe351a197ba0b00d91d03cd2aee # v4.39.0
+        uses: github/codeql-action/upload-sarif@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4.39.1
         with:
           sarif_file: trivy-repo-secrets.sarif
           category: repo-secrets
@@ -152,7 +152,7 @@ jobs:
       - name: Upload SARIF to code scanning
         if: always()
         continue-on-error: true
-        uses: github/codeql-action/upload-sarif@6f2ac81f5cd81fe351a197ba0b00d91d03cd2aee # v4.39.0
+        uses: github/codeql-action/upload-sarif@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4.39.1
         with:
           sarif_file: zizmor.sarif
           category: workflow-audit
@@ -357,7 +357,7 @@ jobs:
       - name: Upload SARIF to code scanning
         if: steps.download.outcome == 'success'
         continue-on-error: true
-        uses: github/codeql-action/upload-sarif@6f2ac81f5cd81fe351a197ba0b00d91d03cd2aee # v4.39.0
+        uses: github/codeql-action/upload-sarif@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4.39.1
         with:
           sarif_file: ${{ steps.filter.outcome == 'success' && 'scorecard-upload.sarif' || 'scorecard-results/scorecard.sarif' }}
           category: scorecard
@@ -392,12 +392,12 @@ jobs:
           persist-credentials: false
 
       - name: Initialize CodeQL
-        uses: github/codeql-action/init@6f2ac81f5cd81fe351a197ba0b00d91d03cd2aee # v4.39.0
+        uses: github/codeql-action/init@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4.39.1
         with:
           languages: actions
 
       - name: Analyze
-        uses: github/codeql-action/analyze@6f2ac81f5cd81fe351a197ba0b00d91d03cd2aee # v4.39.0
+        uses: github/codeql-action/analyze@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4.39.1
         with:
           category: codeql-actions
 
