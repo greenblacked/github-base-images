@@ -11,7 +11,10 @@
 # it waits on -- with no active ruleset it merges at once, checks or not -- and
 # which needs a repository setting nothing here can turn on. This script reads
 # the four checks itself, on the PR's exact head commit, and merges only what
-# passed them. It depends on no ruleset and no repository setting.
+# passed them. These checks are necessary, not sufficient: an active branch
+# ruleset must also be satisfied. In particular, workflow_dispatch checks do
+# not satisfy required PR checks; approval-pending pull_request runs still need
+# a maintainer. The bot reports this policy gate without bypassing it.
 #
 # Candidates: open pull requests into BASE_BRANCH (main), from a branch in
 # this repository (never a fork), that are either
@@ -405,12 +408,19 @@ one_pr() {
     pin_bump_cooled || return 0
   fi
 
-  recheck || return 0
+  recheck merge || return 0
   note="all four checks passed on ${sha:0:12}"
   rc=0; run gh pr merge "$n" --repo "$repo" --squash --match-head-commit "$sha" 2> "$work/merge-$n.err" || rc=$?
   cat "$work/merge-$n.err" >&2
   if [ "$rc" -ne 0 ]; then
-    # The one refusal that is a standing limit rather than a failure: the
+    # Rules can change after the final read, or GitHub can still be computing
+    # its policy result. A policy refusal is waiting, never a reason to use
+    # --admin/--auto or to weaken the required checks.
+    if grep -qiE 'required status checks? (are|is) expected|base branch policy prohibits the merge' "$work/merge-$n.err"; then
+      policy_wait
+      return 0
+    fi
+    # Another refusal that is a standing limit rather than a failure: the
     # workflow token has no `workflows` permission (no GITHUB_TOKEN can be
     # granted it), and GitHub may refuse a merge that changes
     # .github/workflows/* without it -- Dependabot's action bumps, or a pin
@@ -519,10 +529,21 @@ pin_bump_cooled() {
 # Whether the PR on stdin carries the `hold` label.
 held() { jq -e --arg l "$HOLD" 'any(.labels[]?; .name == $l)' >/dev/null; }
 
+# A green head is not enough: workflow_dispatch job checks do not satisfy
+# branch rulesets. GITHUB_TOKEN-created PRs can have pull_request runs waiting
+# for maintainer approval even while their dispatched checks are all green.
+# Report the remaining policy gate without approving runs or bypassing rules.
+policy_wait() {
+  warn=true
+  note="GitHub's base branch policy blocks this PR despite its green head checks. Review the PR merge box and any pull_request workflows awaiting approval; workflow_dispatch checks do not satisfy required status checks. A maintainer must review/approve waiting runs or satisfy the other branch requirements; no bypass was attempted"
+  row waiting "not merged: base branch policy"
+}
+
 # Right before a merge or a refresh, read the PR once more: a `hold` added,
 # or a head moved, while this PR was being checked stops the write. Writes a
 # row and returns 1 when the write must not happen; 0 to go ahead. Shares
-# one_pr's locals (n, sha, note, row).
+# one_pr's locals (n, sha, note, row). With argument "merge", also respect
+# the fresh policy result; a blocked branch may still be refreshed safely.
 recheck() {
   local again rc=0
   again=$(gh_read "pr-$n" api "repos/$repo/pulls/$n") || rc=$?
@@ -538,6 +559,10 @@ recheck() {
   if [ "$(jq -r '.head.sha' <<<"$again")" != "$sha" ]; then
     note="the head moved from ${sha:0:12} while it was being checked; the next run checks the new one"
     row waiting "not merged: new commits"
+    return 1
+  fi
+  if [ "${1:-}" = merge ] && [ "$(jq -r '.mergeable_state' <<<"$again")" = blocked ]; then
+    policy_wait
     return 1
   fi
 }
