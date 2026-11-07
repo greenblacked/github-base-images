@@ -177,9 +177,9 @@ RUN /opt/az/bin/python3 -m pip install --no-cache-dir --disable-pip-version-chec
 # needs no exception. A future SDK that bundles new fixtures fails the gate
 # until each one is deleted here or reviewed into that file.
 ARG TARGETARCH
-ARG GCLOUD_VERSION=590.0.0
-ARG GCLOUD_SHA256_AMD64=1503a6fcda689d1e1013a421e2c85850e7f58382c0be7064877b5e1a1038bc64
-ARG GCLOUD_SHA256_ARM64=547c5c28ae449a862339edbe73e4254073b33072a364463f581adebf894c5cfa
+ARG GCLOUD_VERSION=590.0.1
+ARG GCLOUD_SHA256_AMD64=d1ae7be7e12c4e7d8286fab4774f5441020aca89dc7793ddacbace8d11d20f06
+ARG GCLOUD_SHA256_ARM64=fd760d8b1c2c4c484d7b659964994b07aaefddc6ac4350e681940477dbdbb22c
 RUN case "${TARGETARCH}" in \
         amd64) gcarch=x86_64 sum="${GCLOUD_SHA256_AMD64}" ;; \
         arm64) gcarch=arm sum="${GCLOUD_SHA256_ARM64}" ;; \
@@ -204,9 +204,9 @@ RUN case "${TARGETARCH}" in \
 # kubectl is shared with ci-tools and pinned to the same version and checksums,
 # so a cluster deploy behaves identically whichever of the two images runs it.
 # The vendor publishes a per-artifact SHA-256, so this one is verified.
-ARG KUBECTL_VERSION=1.37.1
-ARG KUBECTL_SHA256_AMD64=65691ff77eb6fa44c908b77a1082c9f092c3b9733b5cefabec0d1104890e21a8
-ARG KUBECTL_SHA256_ARM64=ff749f4b78d9c4f1ec87307df9b50119ed819e2094aa9810cb9acffc3286c8c7
+ARG KUBECTL_VERSION=1.37.2
+ARG KUBECTL_SHA256_AMD64=c04487523e7aa7d1493f7808174c899db93d7a9cf57531420cd76b9bd415f8f4
+ARG KUBECTL_SHA256_ARM64=fcc16f63186659d9722014b7e02d5fdd2d4e669cb8c0ab66365d7d3b8ba03509
 RUN case "${TARGETARCH}" in \
         amd64) sum="${KUBECTL_SHA256_AMD64}" ;; \
         arm64) sum="${KUBECTL_SHA256_ARM64}" ;; \
