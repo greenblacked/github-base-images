@@ -777,6 +777,70 @@ expect 231 status merged
 BUMP_COOLDOWN_DAYS=14 run_bot MERGE_BOT_TODAY=2026-10-19
 expect 231 status waiting
 
+echo "case 24: green dispatched checks do not override a blocked branch policy"
+scenario twentyfour
+pr 241 pin-bump "$H1"
+jq '.mergeable_state = "blocked"' "$stub/pr-241.json" > "$stub/p.tmp" && mv "$stub/p.tmp" "$stub/pr-241.json"
+run_bot
+check "policy waiting is not a failed bot action" [ "$rc" -eq 0 ]
+expect 241 status waiting
+expect 241 warn true
+check "blocked PR causes no writes, including publish" no_writes
+check "diagnostic explains the dispatch/PR check mismatch" grep -q 'workflow_dispatch checks do not satisfy required status checks' "$out"
+check "diagnostic asks for maintainer review, not bypass" grep -q 'maintainer must review/approve waiting runs' "$out"
+# A policy gate that appears after the check reads still stops the merge.
+scenario twentyfour-b
+pr 242 pin-bump "$H1"
+jq '.mergeable_state = "blocked"' "$stub/pr-242.json" > "$stub/pr-242.2.json"
+run_bot
+expect 242 status waiting
+check "fresh policy result stops the write" no_writes
+# Conversely, use the fresh result rather than retaining an obsolete block.
+scenario twentyfour-c
+pr 243 pin-bump "$H1"
+jq '.mergeable_state = "clean"' "$stub/pr-243.json" > "$stub/pr-243.2.json"
+jq '.mergeable_state = "blocked"' "$stub/pr-243.json" > "$stub/p.tmp" && mv "$stub/p.tmp" "$stub/pr-243.json"
+run_bot
+expect 243 status merged
+# The ordinary safety gates are still evaluated, not replaced by policy.
+scenario twentyfour-d
+pr 244 pin-bump "$H1"
+checks 244 failure success success success
+jq '.mergeable_state = "blocked"' "$stub/pr-244.json" > "$stub/p.tmp" && mv "$stub/p.tmp" "$stub/pr-244.json"
+pr 245 pin-bump "$H2"; pin_marker 245 review 2026-10-28
+jq '.mergeable_state = "blocked"' "$stub/pr-245.json" > "$stub/p.tmp" && mv "$stub/p.tmp" "$stub/pr-245.json"
+run_bot MERGE_BOT_TODAY=2026-10-29
+expect 244 status red
+expect 245 action "not merged: first-seen cooldown"
+check "red checks and cooldown still cause no writes" no_writes
+# A blocked policy must not disable the existing safe red-branch refresh.
+scenario twentyfour-refresh
+pr 248 dependabot "$H1"; checks 248 failure success success success
+jq '.mergeable_state = "blocked"' "$stub/pr-248.json" > "$stub/p.tmp" && mv "$stub/p.tmp" "$stub/pr-248.json"
+echo '{"behind_by":1}' > "$stub/compare-248.json"
+jq -n --arg s "$MERGE" '{head: {sha: $s}}' > "$stub/head-248.json"
+run_bot
+expect 248 status refreshed
+check "blocked Dependabot branch can still be refreshed" logged "api -X PUT repos/o/r/pulls/248/update-branch -f expected_head_sha=$H1"
+# GitHub can refuse policy between the read and merge: leave it waiting.
+for refusal in 'GraphQL: Repository rule violations found. 4 of 4 required status checks are expected. (mergePullRequest)' \
+    'X Pull request o/r#246 is not mergeable: the base branch policy prohibits the merge.'; do
+  scenario twentyfour-race
+  pr 246 pin-bump "$H1"
+  FAKE_GH_FAIL='^pr merge 246 ' FAKE_GH_ERR="$refusal" run_bot
+  check "policy race exits zero" [ "$rc" -eq 0 ]
+  expect 246 status waiting
+  expect 246 warn true
+  check "refused merge never dispatches publication" not_logged '^workflow run'
+  check "refused merge never retries with auto/admin" not_logged '--(auto|admin)'
+done
+# Other failures still fail the run, rather than disappearing as waiting.
+scenario twentyfour-error
+pr 247 pin-bump "$H1"
+FAKE_GH_FAIL='^pr merge 247 ' FAKE_GH_ERR='HTTP 502: Bad Gateway' run_bot
+check "unexpected merge error remains fatal" [ "$rc" -eq 1 ]
+expect 247 status error
+
 echo "case 21: what starts the merge bot (the workflows' request-merge jobs)"
 # YAML the scripts do not run, so read structurally: every workflow that
 # carries a bot PR's checks, or is a daily backstop, ends by dispatching the

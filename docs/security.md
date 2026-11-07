@@ -571,6 +571,23 @@ The merge bot merges an automated PR only when the latest GitHub Actions run of 
 has completed with success on its head commit. Missing, still running, skipped, neutral,
 cancelled, failed or unreadable all mean it waits.
 
+Successful head checks are necessary, but do not override GitHub's merge policy. In particular,
+checks from `workflow_dispatch` do **not** satisfy required checks in a branch ruleset
+([GitHub's event eligibility rules](https://docs.github.com/en/pull-requests/how-tos/merge-and-close-pull-requests/troubleshooting-required-status-checks#checks-from-some-workflow-jobs-are-not-evaluated)).
+Pull requests opened or updated with `GITHUB_TOKEN` can have `pull_request` runs awaiting
+maintainer approval ([trigger behavior](https://docs.github.com/en/actions/how-tos/write-workflows/choose-when-workflows-run/trigger-a-workflow)).
+A green dispatched build is not a substitute for those runs. The merge bot reports a blocked
+base-branch policy as waiting with a warning, including when policy changes during the merge
+attempt; unexpected merge failures still fail the job.
+
+When a bot PR is blocked despite four successful head checks, inspect its **pull-request-triggered**
+Build and Push and Security runs. Review the exact head and workflow changes before approving
+pending runs. If only validation is intended, add `hold` to the PR **before** approving: completion
+of those runs can wake the merge bot, which otherwise merges an eligible green bot PR and publishes
+it. Leave the hold in place until merging is intended. Do not disable required checks, bypass the
+ruleset, or enable auto-merge to work around an approval requirement. The first-seen cooldown
+continues to apply independently.
+
 ## Security alerts report
 
 *Security → Code scanning* spreads its alerts over forty-odd categories — every image,
