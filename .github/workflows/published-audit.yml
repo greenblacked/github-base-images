@@ -245,6 +245,7 @@ jobs:
           TITLE: Published images failed the post-publish audit
           MARKER: '<!-- published-audit: tracking issue -->'
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          OWNER: ${{ github.repository_owner }}
         run: |
           # The default shell is `bash -e` without pipefail: a failed lookup
           # piped into jq would otherwise read as "no issue yet" and open a
@@ -254,7 +255,7 @@ jobs:
             # First, so it survives however the rest of the body changes;
             # it is how the next run recognises this issue (see below).
             echo "$MARKER"
-            echo "One or more images published to ghcr.io/${{ github.repository_owner }} did not pass"
+            echo "One or more images published to ghcr.io/$OWNER did not pass"
             echo "the post-publish audit: pullable, public (pullable with no credentials), correctly"
             echo "signed, carrying both SBOM and"
             echo "provenance attestations, and no older than 10 days (rebuilt daily; the margin allows for a few failed rebuilds)."
