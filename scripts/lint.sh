@@ -123,6 +123,16 @@ fi
 
 command -v shellcheck >/dev/null || die "shellcheck not found (apt-get install shellcheck / brew install shellcheck)"
 command -v jq >/dev/null || die "jq not found (apt-get install jq / brew install jq)"
+# jq is whatever the runner ships (ubuntu-latest moved from 1.7 to 1.8 without
+# notice, and 1.8 parses `X and (E) as $p | F` differently from 1.7, which broke
+# the merge-bot self-test). Print the version so a failure can be matched to a
+# jq change, and refuse one older than the 1.7 the filters are written for.
+jq_version=$(jq --version)
+note "$jq_version"
+jq_v=${jq_version#jq-}
+case "$jq_v" in
+  1.[0-6]|1.[0-6].*|0.*) die "$jq_version is too old: the scripts need jq 1.7 or newer" ;;
+esac
 
 # --- 1. shellcheck: what CI runs, plus this repo's own scripts.
 note "shellcheck (test scripts + scripts/)"
