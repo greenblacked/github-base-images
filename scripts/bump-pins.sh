@@ -294,6 +294,7 @@ az-pyjwt    | az-pyjwt            | ci-cloud/az-overrides.txt:pyjwt | pypi:PyJWT
 az-cryptography | az-cryptography | ci-cloud/az-overrides.txt:cryptography | pypi:cryptography | pypi:cryptography | https://pypi.org/project/cryptography/{v}/
 az-pyopenssl | az-pyopenssl       | ci-cloud/az-overrides.txt:pyopenssl | pypi:pyOpenSSL | pypi:pyOpenSSL | https://pypi.org/project/pyOpenSSL/{v}/
 az-urllib3  | az-urllib3          | ci-cloud/az-overrides.txt:urllib3 | pypi:urllib3 | pypi:urllib3 | https://pypi.org/project/urllib3/{v}/
+az-oauthlib | az-oauthlib         | ci-cloud/az-overrides.txt:oauthlib | pypi:oauthlib | pypi:oauthlib | https://pypi.org/project/oauthlib/{v}/
 zizmor      | zizmor              | .github/zizmor-requirements.txt:zizmor | pypi:zizmor | pypi:zizmor | https://pypi.org/project/zizmor/{v}/
 playwright  | playwright          | */Dockerfile.ci:PLAYWRIGHT_VERSION | npm:playwright | npm:playwright | https://www.npmjs.com/package/playwright/v/{v}
 npm         | npm                 | */Dockerfile.ci:NPM_VERSION | npm:npm | npm:npm | https://www.npmjs.com/package/npm/v/{v}
