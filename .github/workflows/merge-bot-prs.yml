@@ -5,9 +5,10 @@
 # scripts/merge-bot-prs.sh, tested offline by scripts/lint.sh.
 #
 # Why our own workflow rather than GitHub auto-merge: auto-merge waits only
-# for what the `main` ruleset requires, so with the ruleset inactive it would
-# merge at once, checks or not; and it needs "Allow auto-merge", a setting no
-# workflow can turn on. This reads the four checks itself, on the exact head
+# for what the `main` ruleset requires, so with no active ruleset requiring the
+# checks it would merge at once, checks or not (the ruleset is active today and
+# requires them, but that is a setting this repository's files do not hold); and
+# it needs "Allow auto-merge", a setting no workflow can turn on. This reads the four checks itself, on the exact head
 # SHA, and merges with --match-head-commit, so it depends on neither.
 #
 # The token is the workflow's own GITHUB_TOKEN; no PAT, no app. Its catch: a
