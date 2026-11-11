@@ -6,7 +6,7 @@
 # Exact versions, and the sha256 of every wheel a linux amd64 or arm64
 # CPython can pick, as PyPI's JSON API lists them for that release: pip
 # refuses anything else. Not edited by hand. scripts/check-pins.sh tracks
-# each as its own pin (az-pyjwt, az-cryptography, az-pyopenssl, az-urllib3),
+# each as its own pin (az-pyjwt, az-cryptography, az-pyopenssl, az-urllib3, az-oauthlib),
 # and scripts/bump-pins.sh rewrites the version and its hashes together, at
 # least seven days after the release, on a pin-bump PR. --no-deps because
 # these are replacements for packages azure-cli already ships, whose own
@@ -31,3 +31,5 @@ pyopenssl==26.4.0 \
     --hash=sha256:f0eb0cb2d581d3ad2b9c489468485e7f2ab6727d08401bcf9d824c3caddf3c1c
 urllib3==2.8.0 \
     --hash=sha256:0cf3cae568d36aa9576b28dfb35f11328f1cb974ca7647d9475ebb86c75ac6e3
+oauthlib==4.0.1 \
+    --hash=sha256:498a298876e996301950a5b053d12c31628bb7b895db03666430c69ce182eb61
