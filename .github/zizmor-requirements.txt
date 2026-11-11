@@ -8,6 +8,6 @@
 # scripts/check-pins.sh tracks it, and scripts/bump-pins.sh rewrites the
 # version and hashes together, at least seven days after the release, on a
 # pin-bump PR. scripts/lint.sh reads the version from here for its local run.
-zizmor==1.31.1 \
-    --hash=sha256:58e878eb2dbd2c6183c105e1ac28c14f7dd1eca44a783f1fe2a69647d012c410 \
-    --hash=sha256:d9b36840c560a8abe39d9ef3d077239aabf6d572c5c2b629c970592a617dbf6f
+zizmor==1.32.0 \
+    --hash=sha256:0cdd38fca6eb34ceb567548548d706332e3535ea66894b9168c048e03207b68c \
+    --hash=sha256:84a6acb975accc13408786a2bd274b572537ca19c933ebbc13e78f3988562071
