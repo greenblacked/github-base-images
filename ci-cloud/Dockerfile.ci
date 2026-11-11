@@ -117,6 +117,9 @@ RUN GNUPGHOME="$(mktemp -d)" \
 # and cryptography unpinned and msal allows cryptography<51, so upgrading them
 # in place is within what azure-cli declares it supports; pyOpenSSL moves
 # with cryptography because older pyOpenSSL caps it.
+# oauthlib is replaced for the same reason: the bundle ships 3.2.2 (CVE-2026-118669,
+# fixed in 4.0.0), and its only dependent here, requests-oauthlib, requires
+# oauthlib>=3.0.0.
 #
 # Exact versions with every wheel's sha256, from az-overrides.txt
 # (--require-hashes: pip installs nothing whose hash is not listed there;

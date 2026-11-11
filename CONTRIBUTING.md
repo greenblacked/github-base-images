@@ -283,7 +283,7 @@ swaps into the Azure CLI's bundled Python, in
 version with the sha256 of every linux x86_64 and aarch64 wheel PyPI lists for it, installed with
 `pip --require-hashes --only-binary :all:`. Do not edit them by hand:
 `./scripts/bump-pins.sh --unit az-cryptography --to <VERSION>` (or `az-pyjwt`, `az-pyopenssl`,
-`az-urllib3`, `zizmor`) rewrites the version and its hashes together.
+`az-urllib3`, `az-oauthlib`, `zizmor`) rewrites the version and its hashes together.
 
 ## Commit and PR conventions
 

@@ -152,6 +152,7 @@ az-pyjwt   | ci-cloud/az-overrides.txt            | pyjwt              | pypi   
 az-cryptography | ci-cloud/az-overrides.txt       | cryptography       | pypi      | cryptography
 az-pyopenssl | ci-cloud/az-overrides.txt          | pyopenssl          | pypi      | pyOpenSSL
 az-urllib3 | ci-cloud/az-overrides.txt            | urllib3            | pypi      | urllib3
+az-oauthlib | ci-cloud/az-overrides.txt           | oauthlib           | pypi      | oauthlib
 zizmor     | .github/zizmor-requirements.txt      | zizmor             | pypi      | zizmor
 '
 
