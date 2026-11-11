@@ -8,8 +8,10 @@
 # that run the full build,
 # smoke tests and vulnerability gate. What was missing was the last step. It
 # used to be GitHub auto-merge, which is only as strict as the `main` ruleset
-# it waits on -- with no active ruleset it merges at once, checks or not -- and
-# which needs a repository setting nothing here can turn on. This script reads
+# it waits on -- with no active ruleset requiring the checks it merges at once,
+# checks or not (the `main` ruleset is active today and requires them, but no
+# file here holds that setting) -- and which needs a repository setting nothing
+# here can turn on. This script reads
 # the four checks itself, on the PR's exact head commit, and merges only what
 # passed them. These checks are necessary, not sufficient: an active branch
 # ruleset must also be satisfied. In particular, workflow_dispatch checks do
@@ -601,7 +603,7 @@ own_commits() {
         or (by("author"; $gha; $gha_email)
             and (by("committer"; $wf; $wf_email) or by("committer"; $gha; $gha_email))
             and (parents | length) == 2
-            and (parents | sort) as $p | any($markers[]; [.head, .main] | sort == $p))
+            and ((parents | sort) as $p | any($markers[]; [.head, .main] | sort == $p)))
       end;
     [ .[] | select(own | not)
       | "\(.sha[:12]) (author \(.commit.author.email // "?"), committer \(.commit.committer.email // "?")\(if (.parents | length) > 1 then ", merge" else "" end))" ]
@@ -613,7 +615,7 @@ own_commits() {
 head_is_refresh() {
   jq -e --argjson markers "$1" --arg gha "$GHA_LOGIN" '
     .[-1] | (.author.login // "") == $gha and (.parents | length) == 2
-    and ([.parents[].sha] | sort) as $p | any($markers[]; [.head, .main] | sort == $p)' >/dev/null
+    and (([.parents[].sha] | sort) as $p | any($markers[]; [.head, .main] | sort == $p))' >/dev/null
 }
 
 # Dispatch WORKFLOW... on REF. Every one is tried; fails if any failed, with
