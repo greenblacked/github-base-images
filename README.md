@@ -6,7 +6,7 @@
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
 Shared container images for running CI in GitHub Actions container jobs, published to
-`ghcr.io/greenblacked`. There are 24: language runtimes (Node.js, Python, Go, Rust, Ruby, Java,
+`ghcr.io/greenblacked`. There are 23: language runtimes (Node.js, Python, Go, Rust, Ruby, Java,
 PHP, .NET) and four tool images (infra, cloud, security scanners, database clients). Every image is
 built for `linux/amd64` and `linux/arm64` on native runners, rebuilt daily to pick up distribution
 security updates, blocked from publishing if a build adds a fixable HIGH/CRITICAL vulnerability or
@@ -101,17 +101,16 @@ and the OpenSSH client. Follow an image name for what it leaves out and why.
 | [`ci-dotnet11`](docs/images.md#net-sdk) | .NET SDK 11.0 (STS) | `mcr.microsoft.com/dotnet/sdk:11.0-resolute` | `resolute-v1` |
 | [`ci-dotnet10`](docs/images.md#net-sdk) | .NET SDK 10.0 (LTS) | `mcr.microsoft.com/dotnet/sdk:10.0-noble` | `noble-v1` |
 | [`ci-dotnet9`](docs/images.md#net-sdk) **(deprecated: retires after 2026-11-10)** | .NET SDK 9.0 (STS) | `mcr.microsoft.com/dotnet/sdk:9.0-bookworm-slim` | `bookworm-v1` |
-| [`ci-dotnet8`](docs/images.md#net-sdk) **(deprecated: retires after 2026-11-10)** | .NET SDK 8.0 (LTS) | `mcr.microsoft.com/dotnet/sdk:8.0-bookworm-slim` | `bookworm-v1` |
 | [`ci-tools`](docs/images.md#tool-images) | Terraform, kubectl, AWS CLI v2, Docker client | `debian:trixie-slim` | `trixie-v1` |
 | [`ci-cloud`](docs/images.md#tool-images) | gcloud CLI, Azure CLI, kubectl | `debian:trixie-slim` | `trixie-v1` |
 | [`ci-security`](docs/images.md#tool-images) | trivy, syft, grype, cosign, gitleaks | `debian:trixie-slim` | `trixie-v1` |
 | [`ci-db`](docs/images.md#tool-images) | psql, mysql, redis-cli, golang-migrate | `debian:trixie-slim` | `trixie-v1` |
 
 <!-- lifecycle:notices:begin -->
-**Deprecated: `ci-dotnet8` and `ci-dotnet9`.** .NET 8 and .NET 9 reach end of support on
-**2026-11-10**, and both images are retired after that date: they stop being rebuilt and
-re-scanned. Move to `ci-dotnet10` (Ubuntu Noble, so check that any extra `apt-get` package names
-still resolve). Details in [docs/images.md](docs/images.md#deprecated-ci-dotnet8-and-ci-dotnet9).
+**Deprecated: `ci-dotnet9`.** .NET 9 reaches end of support on **2026-11-10**, and the image is
+retired after that date: it stops being rebuilt and re-scanned. Move to `ci-dotnet10` (Ubuntu
+Noble, so check that any extra `apt-get` package names still resolve). Details in
+[docs/images.md](docs/images.md#deprecated-ci-dotnet8-and-ci-dotnet9).
 <!-- lifecycle:notices:end -->
 
 A few things the table does not say:
