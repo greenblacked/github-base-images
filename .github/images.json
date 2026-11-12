@@ -12,12 +12,6 @@
     "upstream": "debian:trixie-slim"
   },
   {
-    "image": "ci-dotnet8",
-    "version": "bookworm-v1",
-    "mirror": "mirror-dotnet:8.0-bookworm-slim",
-    "upstream": "mcr.microsoft.com/dotnet/sdk:8.0-bookworm-slim"
-  },
-  {
     "image": "ci-dotnet9",
     "version": "bookworm-v1",
     "mirror": "mirror-dotnet:9.0-bookworm-slim",

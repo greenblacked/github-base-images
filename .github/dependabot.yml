@@ -121,16 +121,6 @@ updates:
         update-types: ["version-update:semver-major", "version-update:semver-minor"]
 
   - package-ecosystem: docker
-    directory: /ci-dotnet8
-    schedule:
-      interval: daily
-    cooldown:
-      default-days: 7
-    ignore:
-      - dependency-name: "*"
-        update-types: ["version-update:semver-major", "version-update:semver-minor"]
-
-  - package-ecosystem: docker
     directory: /ci-dotnet9
     schedule:
       interval: daily
