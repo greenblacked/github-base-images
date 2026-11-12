@@ -65,7 +65,4 @@ An image is supported until its runtime's upstream end of support, and retired a
 ([ADR 0009](docs/adr/0009-image-lifecycle.md)); the deprecation is announced here, and in the
 catalog, 120 days ahead.
 <!-- lifecycle:deprecated:begin -->
-
-`ci-dotnet9` is deprecated: .NET 9 reaches end of support on 2026-11-10, and the image is retired
-after that date. Use `ci-dotnet10`.
 <!-- lifecycle:deprecated:end -->
