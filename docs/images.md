@@ -118,6 +118,8 @@ What this means for the rolling tag is in [Tags and rebuilds](pipeline.md#tags-a
 
 ### .NET SDK
 
+- **`ci-dotnet11`** — the .NET SDK 11.0 (STS), on Ubuntu Resolute. No global tools: those are
+  pinned per project in `.config/dotnet-tools.json`.
 - **`ci-dotnet10`** — the .NET SDK 10.0, the current LTS release, on Ubuntu Noble. No global
   tools: those are pinned per project in `.config/dotnet-tools.json` and restored by the project's
   own workflow.

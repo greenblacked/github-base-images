@@ -30,6 +30,12 @@
     "upstream": "mcr.microsoft.com/dotnet/sdk:10.0-noble"
   },
   {
+    "image": "ci-dotnet11",
+    "version": "resolute-v1",
+    "mirror": "mirror-dotnet:11.0-resolute",
+    "upstream": "mcr.microsoft.com/dotnet/sdk:11.0-resolute"
+  },
+  {
     "image": "ci-go",
     "version": "trixie-v1",
     "mirror": "mirror-golang:1-trixie",
