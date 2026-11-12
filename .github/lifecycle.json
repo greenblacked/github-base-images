@@ -11,11 +11,12 @@
   },
   {
     "image": "ci-dotnet9",
-    "state": "deprecated",
+    "state": "retired",
     "runtime": ".NET 9",
     "eol": "2026-11-10",
     "announced": "2026-09-26",
     "successor": "ci-dotnet10",
-    "notice": "deprecated-ci-dotnet8-and-ci-dotnet9"
+    "notice": "deprecated-ci-dotnet8-and-ci-dotnet9",
+    "retired": "2026-11-12"
   }
 ]

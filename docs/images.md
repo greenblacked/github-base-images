@@ -123,7 +123,6 @@ What this means for the rolling tag is in [Tags and rebuilds](pipeline.md#tags-a
 - **`ci-dotnet10`** — the .NET SDK 10.0, the current LTS release, on Ubuntu Noble. No global
   tools: those are pinned per project in `.config/dotnet-tools.json` and restored by the project's
   own workflow.
-- **`ci-dotnet9`** — the .NET SDK 9.0 (STS).
 
 Which images are deprecated, and when each retires, is in [Image lifecycle](#image-lifecycle) and
 in the catalog.
@@ -257,25 +256,14 @@ every other automated update ([Automatic updates](pipeline.md#automatic-updates)
 checks that ([Visibility and authentication](#visibility-and-authentication)).
 <!-- lifecycle:status:begin -->
 
-### Deprecated: `ci-dotnet8` and `ci-dotnet9`
+<a id="deprecated-ci-dotnet8-and-ci-dotnet9"></a>
 
-.NET 9 reaches end of support upstream on **2026-11-10**. After that date it receives no security
-fixes upstream, so rebuilding this image daily would only keep producing fresh digests of an
-unpatched runtime.
+### Retired: `ci-dotnet8` and `ci-dotnet9`
 
-- **Move to `ci-dotnet10`** (`ghcr.io/greenblacked/ci-dotnet10:noble-v1`). It is Ubuntu Noble
-  rather than Debian Bookworm, so a job that installs extra packages with `apt-get` should check
-  that their names still resolve.
-- **Retired automatically after 2026-11-10**, and no sooner than 30 days after this notice: the
-  image lifecycle workflow opens a pull request that removes it from the build, so it stops being
-  rebuilt and re-scanned. Until then it is built, scanned and published as normal.
-- Retiring an image does not delete its published package (see [Tags and
-  rebuilds](pipeline.md#tags-and-rebuilds)); deleting the GHCR package is a separate decision for
-  the repository owner.
-
-.NET 8 reached end of support upstream on 2026-11-10. Retired, and no longer rebuilt or
-re-scanned: `ci-dotnet8` on 2026-11-12. A retired package stays pullable until the owner deletes
-it, collecting unpatched vulnerabilities, so move to `ci-dotnet10`.
+.NET 8 and .NET 9 reached end of support upstream on 2026-11-10. Retired, and no longer rebuilt or
+re-scanned: `ci-dotnet8` on 2026-11-12 and `ci-dotnet9` on 2026-11-12. A retired package stays
+pullable until the owner deletes it, collecting unpatched vulnerabilities, so move to
+`ci-dotnet10`.
 
 <!-- lifecycle:status:end -->
 
