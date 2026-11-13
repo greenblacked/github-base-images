@@ -17,9 +17,9 @@
     "id": "CVE-2026-78669",
     "package": "golang.org/x/net",
     "installed": "v0.57.0 (kubectl)",
-    "reason": "Compiled into kubectl 1.37.2, still the latest stable release (checked 2026-11-11: dl.k8s.io stable.txt), whose go.mod requires golang.org/x/net v0.57.0; only a kubectl release built with golang.org/x/net 0.60.0 or later can carry the fix.",
+    "reason": "Compiled into kubectl 1.37.2, still the latest stable release (checked 2026-11-13: dl.k8s.io stable.txt and stable-1.37.txt both say v1.37.2; 1.38 is at beta.0), and `go version -m` on its linux/amd64 binary reports golang.org/x/net v0.57.0; only a kubectl release built with golang.org/x/net 0.60.0 or later can carry the fix.",
     "upstream": "https://github.com/kubernetes/kubernetes/releases",
-    "expires": "2026-11-25",
+    "expires": "2026-12-13",
     "paths": [
       "usr/local/bin/kubectl"
     ]
@@ -29,9 +29,9 @@
     "id": "CVE-2026-97687",
     "package": "urllib3",
     "installed": "2.7.0",
-    "reason": "urllib3 is vendored inside pip 26.2.2 (pip/_vendor) in azure-cli's bundled Python, and pip's vendor.txt in 26.2.2, the latest release, still pins urllib3==2.7.0 (checked 2026-11-11); the bump to 2.8.0 exists only on pip main, so only a pip release vendoring urllib3 2.8.0 can carry the fix, and the daily rebuild picks it up from the base image.",
+    "reason": "urllib3 2.7.0 is vendored inside pip 26.2.2 (pip/_vendor) in azure-cli's bundled Python. pip 26.3 (2026-11-02) vendors urllib3 2.8.0, but azure-cli 2.92.0, the newest package in Microsoft's bookworm repository, still bundles pip 26.2.2 (checked 2026-11-13), and this repository does not pin or upgrade that pip, so the fix arrives with an azure-cli release that bundles pip 26.3, which the daily rebuild installs.",
     "upstream": "https://github.com/pypa/pip/blob/main/src/pip/_vendor/vendor.txt",
-    "expires": "2026-11-25",
+    "expires": "2026-12-13",
     "purls": [
       "pkg:pypi/urllib3@2.7.0"
     ],
@@ -42,9 +42,9 @@
     "id": "CVE-2026-97689",
     "package": "urllib3",
     "installed": "2.7.0",
-    "reason": "urllib3 is vendored inside pip 26.2.2 (pip/_vendor) in azure-cli's bundled Python, and pip's vendor.txt in 26.2.2, the latest release, still pins urllib3==2.7.0 (checked 2026-11-11); the bump to 2.8.0 exists only on pip main, so only a pip release vendoring urllib3 2.8.0 can carry the fix, and the daily rebuild picks it up from the base image.",
+    "reason": "urllib3 2.7.0 is vendored inside pip 26.2.2 (pip/_vendor) in azure-cli's bundled Python. pip 26.3 (2026-11-02) vendors urllib3 2.8.0, but azure-cli 2.92.0, the newest package in Microsoft's bookworm repository, still bundles pip 26.2.2 (checked 2026-11-13), and this repository does not pin or upgrade that pip, so the fix arrives with an azure-cli release that bundles pip 26.3, which the daily rebuild installs.",
     "upstream": "https://github.com/pypa/pip/blob/main/src/pip/_vendor/vendor.txt",
-    "expires": "2026-11-25",
+    "expires": "2026-12-13",
     "purls": [
       "pkg:pypi/urllib3@2.7.0"
     ],
@@ -80,9 +80,9 @@
     "id": "CVE-2026-78661",
     "package": "golang.org/x/net",
     "installed": "v0.57.0 (kubectl)",
-    "reason": "Compiled into kubectl 1.37.2, still the latest stable release (checked 2026-11-11: dl.k8s.io stable.txt), whose go.mod requires golang.org/x/net v0.57.0; only a kubectl release built with golang.org/x/net 0.62.0 or later can carry the fix.",
+    "reason": "Compiled into kubectl 1.37.2, still the latest stable release (checked 2026-11-13: dl.k8s.io stable.txt and stable-1.37.txt both say v1.37.2; 1.38 is at beta.0), and `go version -m` on its linux/amd64 binary reports golang.org/x/net v0.57.0; only a kubectl release built with golang.org/x/net 0.62.0 or later can carry the fix.",
     "upstream": "https://github.com/kubernetes/kubernetes/releases",
-    "expires": "2026-11-25",
+    "expires": "2026-12-13",
     "paths": [
       "usr/local/bin/kubectl"
     ]
@@ -92,9 +92,9 @@
     "id": "CVE-2026-111943",
     "package": "stdlib",
     "installed": "v1.27.2 (gcloud-crc32c)",
-    "reason": "Compiled into gcloud-crc32c, which the Google Cloud CLI ships; 593.0.0, the latest release, still carries it (Trivy scan of its tarball, checked 2026-11-11), so only a release built with Go 1.26.10 or 1.27.3 can carry the fix; the pin-bump workflow picks gcloud releases up once their cooldown ends.",
+    "reason": "Compiled into gcloud-crc32c, which the Google Cloud CLI ships; 593.0.0, the latest release, still carries it (`go version -m` on bin/gcloud-crc32c from the 593.0.0 linux-x86_64 tarball reports go1.27.2, checked 2026-11-13), so only a release built with Go 1.26.10 or 1.27.3 can carry the fix; the pin-bump workflow picks gcloud releases up once their cooldown ends.",
     "upstream": "https://cloud.google.com/sdk/docs/release-notes",
-    "expires": "2026-11-25",
+    "expires": "2026-12-13",
     "paths": [
       "opt/google-cloud-sdk/bin/gcloud-crc32c"
     ]
@@ -104,9 +104,9 @@
     "id": "CVE-2026-114613",
     "package": "msgpack",
     "installed": "1.1.2",
-    "reason": "msgpack is vendored inside pip 26.2.2 (pip/_vendor) in azure-cli's bundled Python, and no released pip vendors the fixed msgpack 1.2.3 yet: pip 26.2.2, the latest release, still pins msgpack==1.1.2 in vendor.txt, and the bump (msgpack 1.2.4) exists only on pip main (checked 2026-11-11).",
+    "reason": "msgpack 1.1.2 is vendored inside pip 26.2.2 (pip/_vendor) in azure-cli's bundled Python. pip 26.3 (2026-11-02) vendors msgpack 1.2.4, but azure-cli 2.92.0, the newest package in Microsoft's bookworm repository, still bundles pip 26.2.2 (checked 2026-11-13), and this repository does not pin or upgrade that pip, so the fix arrives with an azure-cli release that bundles pip 26.3, which the daily rebuild installs.",
     "upstream": "https://github.com/pypa/pip/blob/main/src/pip/_vendor/vendor.txt",
-    "expires": "2026-11-25",
+    "expires": "2026-12-13",
     "purls": [
       "pkg:pypi/msgpack@1.1.2"
     ],
@@ -141,9 +141,9 @@
     "id": "CVE-2026-78667",
     "package": "stdlib",
     "installed": "v1.26.7 (golang-migrate)",
-    "reason": "Compiled into the golang-migrate v4.20.1 release binary, still the latest release ({chk}: no newer tag), built with Go 1.26.7; only a new migrate release built with Go 1.26.9 or 1.27.2 can carry the fix.",
+    "reason": "Compiled into the golang-migrate v4.20.1 release binary, still the latest release (checked 2026-11-13: no newer tag; `go version -m` on the release binary confirms the versions below), built with Go 1.26.7; only a new migrate release built with Go 1.26.9 or 1.27.2 can carry the fix.",
     "upstream": "https://github.com/golang-migrate/migrate/releases",
-    "expires": "2026-11-25",
+    "expires": "2026-12-13",
     "paths": [
       "usr/local/bin/migrate"
     ]
@@ -153,9 +153,9 @@
     "id": "CVE-2026-78669",
     "package": "stdlib, golang.org/x/net",
     "installed": "stdlib v1.26.7; golang.org/x/net v0.56.0 (golang-migrate)",
-    "reason": "Compiled into the golang-migrate v4.20.1 release binary, still the latest release ({chk}: no newer tag), built with Go 1.26.7 and golang.org/x/net v0.56.0; only a new migrate release built with Go 1.26.9 or 1.27.2 and golang.org/x/net 0.60.0 can carry the fix.",
+    "reason": "Compiled into the golang-migrate v4.20.1 release binary, still the latest release (checked 2026-11-13: no newer tag; `go version -m` on the release binary confirms the versions below), built with Go 1.26.7 and golang.org/x/net v0.56.0; only a new migrate release built with Go 1.26.9 or 1.27.2 and golang.org/x/net 0.60.0 can carry the fix.",
     "upstream": "https://github.com/golang-migrate/migrate/releases",
-    "expires": "2026-11-25",
+    "expires": "2026-12-13",
     "paths": [
       "usr/local/bin/migrate"
     ]
@@ -189,9 +189,9 @@
     "id": "CVE-2026-97031",
     "package": "stdlib",
     "installed": "v1.26.7 (golang-migrate)",
-    "reason": "Compiled into the golang-migrate v4.20.1 release binary, still the latest release ({chk}: no newer tag), built with Go 1.26.7; only a new migrate release built with Go 1.26.9 or 1.27.2 can carry the fix.",
+    "reason": "Compiled into the golang-migrate v4.20.1 release binary, still the latest release (checked 2026-11-13: no newer tag; `go version -m` on the release binary confirms the versions below), built with Go 1.26.7; only a new migrate release built with Go 1.26.9 or 1.27.2 can carry the fix.",
     "upstream": "https://github.com/golang-migrate/migrate/releases",
-    "expires": "2026-11-25",
+    "expires": "2026-12-13",
     "paths": [
       "usr/local/bin/migrate"
     ]
@@ -225,9 +225,9 @@
     "id": "CVE-2026-111943",
     "package": "stdlib",
     "installed": "v1.26.7 (golang-migrate)",
-    "reason": "Compiled into the golang-migrate v4.20.1 release binary, still the latest release (checked 2026-11-11: no newer tag), built with Go 1.26.7; only a new migrate release built with Go 1.26.10 or 1.27.3 can carry the fix.",
+    "reason": "Compiled into the golang-migrate v4.20.1 release binary, still the latest release (checked 2026-11-13: no newer tag; `go version -m` on the release binary confirms the versions below), built with Go 1.26.7; only a new migrate release built with Go 1.26.10 or 1.27.3 can carry the fix.",
     "upstream": "https://github.com/golang-migrate/migrate/releases",
-    "expires": "2026-11-25",
+    "expires": "2026-12-13",
     "paths": [
       "usr/local/bin/migrate"
     ]
@@ -237,9 +237,9 @@
     "id": "CVE-2026-116587",
     "package": "github.com/go-jose/go-jose/v4",
     "installed": "v4.1.4 (golang-migrate)",
-    "reason": "Compiled into the golang-migrate v4.20.1 release binary, still the latest release (checked 2026-11-11: no newer tag), which requires github.com/go-jose/go-jose/v4 v4.1.4; only a new migrate release built with go-jose 4.1.6 or later can carry the fix.",
+    "reason": "Compiled into the golang-migrate v4.20.1 release binary, still the latest release (checked 2026-11-13: no newer tag; `go version -m` on the release binary confirms the versions below), which requires github.com/go-jose/go-jose/v4 v4.1.4; only a new migrate release built with go-jose 4.1.6 or later can carry the fix.",
     "upstream": "https://github.com/golang-migrate/migrate/releases",
-    "expires": "2026-11-25",
+    "expires": "2026-12-13",
     "paths": [
       "usr/local/bin/migrate"
     ]
@@ -249,9 +249,9 @@
     "id": "CVE-2026-63209",
     "package": "github.com/klauspost/compress",
     "installed": "v1.16.7 (golang-migrate)",
-    "reason": "Compiled into the golang-migrate v4.20.1 release binary, still the latest release (checked 2026-11-11: no newer tag), which requires github.com/klauspost/compress v1.16.7; only a new migrate release built with klauspost/compress 1.18.7 or later can carry the fix.",
+    "reason": "Compiled into the golang-migrate v4.20.1 release binary, still the latest release (checked 2026-11-13: no newer tag; `go version -m` on the release binary confirms the versions below), which requires github.com/klauspost/compress v1.16.7; only a new migrate release built with klauspost/compress 1.18.7 or later can carry the fix.",
     "upstream": "https://github.com/golang-migrate/migrate/releases",
-    "expires": "2026-11-25",
+    "expires": "2026-12-13",
     "paths": [
       "usr/local/bin/migrate"
     ]
@@ -261,9 +261,9 @@
     "id": "CVE-2026-78661",
     "package": "golang.org/x/net",
     "installed": "v0.56.0 (golang-migrate)",
-    "reason": "Compiled into the golang-migrate v4.20.1 release binary, still the latest release (checked 2026-11-11: no newer tag), which requires golang.org/x/net v0.56.0; only a new migrate release built with golang.org/x/net 0.62.0 or later can carry the fix.",
+    "reason": "Compiled into the golang-migrate v4.20.1 release binary, still the latest release (checked 2026-11-13: no newer tag; `go version -m` on the release binary confirms the versions below), which requires golang.org/x/net v0.56.0; only a new migrate release built with golang.org/x/net 0.62.0 or later can carry the fix.",
     "upstream": "https://github.com/golang-migrate/migrate/releases",
-    "expires": "2026-11-25",
+    "expires": "2026-12-13",
     "paths": [
       "usr/local/bin/migrate"
     ]
@@ -286,9 +286,9 @@
     "id": "CVE-2026-97687",
     "package": "urllib3",
     "installed": "2.7.0",
-    "reason": "urllib3 is vendored inside pip 26.2.2 (pip/_vendor) in the upstream python image, and pip's vendor.txt in 26.2.2, the latest release, still pins urllib3==2.7.0 (checked 2026-11-11); the bump to 2.8.0 exists only on pip main, so only a pip release vendoring urllib3 2.8.0 can carry the fix, and the daily rebuild picks it up from the base image.",
+    "reason": "urllib3 2.7.0 is vendored inside pip 26.2.2 (pip/_vendor) in the upstream python image. pip 26.3 (2026-11-02) vendors urllib3 2.8.0, but python:3.13-slim-trixie (CPython 3.13.18) still ships pip 26.2.2 from ensurepip (checked 2026-11-13), and this image does not pin or upgrade pip, so the fix arrives with a CPython release that bundles pip 26.3, which the daily rebuild picks up from the base image.",
     "upstream": "https://github.com/pypa/pip/blob/main/src/pip/_vendor/vendor.txt",
-    "expires": "2026-11-25",
+    "expires": "2026-12-13",
     "purls": [
       "pkg:pypi/urllib3@2.7.0"
     ],
@@ -299,9 +299,9 @@
     "id": "CVE-2026-97689",
     "package": "urllib3",
     "installed": "2.7.0",
-    "reason": "urllib3 is vendored inside pip 26.2.2 (pip/_vendor) in the upstream python image, and pip's vendor.txt in 26.2.2, the latest release, still pins urllib3==2.7.0 (checked 2026-11-11); the bump to 2.8.0 exists only on pip main, so only a pip release vendoring urllib3 2.8.0 can carry the fix, and the daily rebuild picks it up from the base image.",
+    "reason": "urllib3 2.7.0 is vendored inside pip 26.2.2 (pip/_vendor) in the upstream python image. pip 26.3 (2026-11-02) vendors urllib3 2.8.0, but python:3.13-slim-trixie (CPython 3.13.18) still ships pip 26.2.2 from ensurepip (checked 2026-11-13), and this image does not pin or upgrade pip, so the fix arrives with a CPython release that bundles pip 26.3, which the daily rebuild picks up from the base image.",
     "upstream": "https://github.com/pypa/pip/blob/main/src/pip/_vendor/vendor.txt",
-    "expires": "2026-11-25",
+    "expires": "2026-12-13",
     "purls": [
       "pkg:pypi/urllib3@2.7.0"
     ],
@@ -325,9 +325,9 @@
     "id": "CVE-2026-114613",
     "package": "msgpack",
     "installed": "1.1.2",
-    "reason": "msgpack is vendored inside pip 26.2.2 (pip/_vendor) in the upstream python image, and no released pip vendors the fixed msgpack 1.2.3 yet: pip 26.2.2, the latest release, still pins msgpack==1.1.2 in vendor.txt, and the bump (msgpack 1.2.4) exists only on pip main (checked 2026-11-11).",
+    "reason": "msgpack 1.1.2 is vendored inside pip 26.2.2 (pip/_vendor) in the upstream python image. pip 26.3 (2026-11-02) vendors msgpack 1.2.4, but python:3.13-slim-trixie (CPython 3.13.18) still ships pip 26.2.2 from ensurepip (checked 2026-11-13), and this image does not pin or upgrade pip, so the fix arrives with a CPython release that bundles pip 26.3, which the daily rebuild picks up from the base image.",
     "upstream": "https://github.com/pypa/pip/blob/main/src/pip/_vendor/vendor.txt",
-    "expires": "2026-11-25",
+    "expires": "2026-12-13",
     "purls": [
       "pkg:pypi/msgpack@1.1.2"
     ],
@@ -351,9 +351,9 @@
     "id": "CVE-2026-97687",
     "package": "urllib3",
     "installed": "2.7.0",
-    "reason": "urllib3 is vendored inside pip 26.2.2 (pip/_vendor) in the upstream python image, and pip's vendor.txt in 26.2.2, the latest release, still pins urllib3==2.7.0 (checked 2026-11-11); the bump to 2.8.0 exists only on pip main, so only a pip release vendoring urllib3 2.8.0 can carry the fix, and the daily rebuild picks it up from the base image.",
+    "reason": "urllib3 2.7.0 is vendored inside pip 26.2.2 (pip/_vendor) in the upstream python image. pip 26.3 (2026-11-02) vendors urllib3 2.8.0, but python:3.14-slim-trixie (CPython 3.14.10) still ships pip 26.2.2 from ensurepip (checked 2026-11-13), and this image does not pin or upgrade pip, so the fix arrives with a CPython release that bundles pip 26.3, which the daily rebuild picks up from the base image.",
     "upstream": "https://github.com/pypa/pip/blob/main/src/pip/_vendor/vendor.txt",
-    "expires": "2026-11-25",
+    "expires": "2026-12-13",
     "purls": [
       "pkg:pypi/urllib3@2.7.0"
     ],
@@ -364,9 +364,9 @@
     "id": "CVE-2026-97689",
     "package": "urllib3",
     "installed": "2.7.0",
-    "reason": "urllib3 is vendored inside pip 26.2.2 (pip/_vendor) in the upstream python image, and pip's vendor.txt in 26.2.2, the latest release, still pins urllib3==2.7.0 (checked 2026-11-11); the bump to 2.8.0 exists only on pip main, so only a pip release vendoring urllib3 2.8.0 can carry the fix, and the daily rebuild picks it up from the base image.",
+    "reason": "urllib3 2.7.0 is vendored inside pip 26.2.2 (pip/_vendor) in the upstream python image. pip 26.3 (2026-11-02) vendors urllib3 2.8.0, but python:3.14-slim-trixie (CPython 3.14.10) still ships pip 26.2.2 from ensurepip (checked 2026-11-13), and this image does not pin or upgrade pip, so the fix arrives with a CPython release that bundles pip 26.3, which the daily rebuild picks up from the base image.",
     "upstream": "https://github.com/pypa/pip/blob/main/src/pip/_vendor/vendor.txt",
-    "expires": "2026-11-25",
+    "expires": "2026-12-13",
     "purls": [
       "pkg:pypi/urllib3@2.7.0"
     ],
@@ -390,9 +390,9 @@
     "id": "CVE-2026-114613",
     "package": "msgpack",
     "installed": "1.1.2",
-    "reason": "msgpack is vendored inside pip 26.2.2 (pip/_vendor) in the upstream python image, and no released pip vendors the fixed msgpack 1.2.3 yet: pip 26.2.2, the latest release, still pins msgpack==1.1.2 in vendor.txt, and the bump (msgpack 1.2.4) exists only on pip main (checked 2026-11-11).",
+    "reason": "msgpack 1.1.2 is vendored inside pip 26.2.2 (pip/_vendor) in the upstream python image. pip 26.3 (2026-11-02) vendors msgpack 1.2.4, but python:3.14-slim-trixie (CPython 3.14.10) still ships pip 26.2.2 from ensurepip (checked 2026-11-13), and this image does not pin or upgrade pip, so the fix arrives with a CPython release that bundles pip 26.3, which the daily rebuild picks up from the base image.",
     "upstream": "https://github.com/pypa/pip/blob/main/src/pip/_vendor/vendor.txt",
-    "expires": "2026-11-25",
+    "expires": "2026-12-13",
     "purls": [
       "pkg:pypi/msgpack@1.1.2"
     ],
@@ -415,9 +415,9 @@
     "id": "CVE-2025-61726",
     "package": "stdlib",
     "installed": "v1.24.11",
-    "reason": "Compiled into gitleaks 8.30.1, built with go1.24.11, pinned in ci-security and still the latest upstream release on 2026-10-26 (no newer tag; go.mod at v8.30.1 says go 1.24.11 with golang.org/x/crypto v0.35.0 and golang.org/x/text v0.22.0, and master has moved only x/text, to v0.29.0), so only a new release built with Go 1.24.12 or 1.25.6 or later can carry the fix.",
+    "reason": "Compiled into gitleaks 8.30.1, pinned in ci-security and still the latest upstream release on 2026-11-13 (no newer tag since 2026-03-21; `go version -m` on its linux_x64 binary reports go1.24.11, and go.mod on master still says go 1.24.11), so only a new release built with Go 1.24.12 or 1.25.6 or later can carry the fix.",
     "upstream": "https://github.com/gitleaks/gitleaks/releases",
-    "expires": "2026-11-25",
+    "expires": "2026-12-13",
     "paths": [
       "usr/local/bin/gitleaks"
     ]
@@ -427,9 +427,9 @@
     "id": "CVE-2025-68121",
     "package": "stdlib",
     "installed": "v1.24.11",
-    "reason": "Compiled into gitleaks 8.30.1, built with go1.24.11, pinned in ci-security and still the latest upstream release on 2026-10-26 (no newer tag; go.mod at v8.30.1 says go 1.24.11 with golang.org/x/crypto v0.35.0 and golang.org/x/text v0.22.0, and master has moved only x/text, to v0.29.0), so only a new release built with Go 1.24.13 or 1.25.7 or later can carry the fix.",
+    "reason": "Compiled into gitleaks 8.30.1, pinned in ci-security and still the latest upstream release on 2026-11-13 (no newer tag since 2026-03-21; `go version -m` on its linux_x64 binary reports go1.24.11, and go.mod on master still says go 1.24.11), so only a new release built with Go 1.24.13 or 1.25.7 or later can carry the fix.",
     "upstream": "https://github.com/gitleaks/gitleaks/releases",
-    "expires": "2026-11-25",
+    "expires": "2026-12-13",
     "paths": [
       "usr/local/bin/gitleaks"
     ]
@@ -439,9 +439,9 @@
     "id": "CVE-2026-25679",
     "package": "stdlib",
     "installed": "v1.24.11",
-    "reason": "Compiled into gitleaks 8.30.1, built with go1.24.11, pinned in ci-security and still the latest upstream release on 2026-10-26 (no newer tag; go.mod at v8.30.1 says go 1.24.11 with golang.org/x/crypto v0.35.0 and golang.org/x/text v0.22.0, and master has moved only x/text, to v0.29.0), so only a new release built with Go 1.25.8 or 1.26.1 or later can carry the fix.",
+    "reason": "Compiled into gitleaks 8.30.1, pinned in ci-security and still the latest upstream release on 2026-11-13 (no newer tag since 2026-03-21; `go version -m` on its linux_x64 binary reports go1.24.11, and go.mod on master still says go 1.24.11), so only a new release built with Go 1.25.8 or 1.26.1 or later can carry the fix.",
     "upstream": "https://github.com/gitleaks/gitleaks/releases",
-    "expires": "2026-11-25",
+    "expires": "2026-12-13",
     "paths": [
       "usr/local/bin/gitleaks"
     ]
@@ -451,9 +451,9 @@
     "id": "CVE-2026-27145",
     "package": "stdlib",
     "installed": "v1.24.11",
-    "reason": "Compiled into gitleaks 8.30.1, built with go1.24.11, pinned in ci-security and still the latest upstream release on 2026-10-26 (no newer tag; go.mod at v8.30.1 says go 1.24.11 with golang.org/x/crypto v0.35.0 and golang.org/x/text v0.22.0, and master has moved only x/text, to v0.29.0), so only a new release built with Go 1.25.11 or 1.26.4 or later can carry the fix.",
+    "reason": "Compiled into gitleaks 8.30.1, pinned in ci-security and still the latest upstream release on 2026-11-13 (no newer tag since 2026-03-21; `go version -m` on its linux_x64 binary reports go1.24.11, and go.mod on master still says go 1.24.11), so only a new release built with Go 1.25.11 or 1.26.4 or later can carry the fix.",
     "upstream": "https://github.com/gitleaks/gitleaks/releases",
-    "expires": "2026-11-25",
+    "expires": "2026-12-13",
     "paths": [
       "usr/local/bin/gitleaks"
     ]
@@ -463,9 +463,9 @@
     "id": "CVE-2026-32280",
     "package": "stdlib",
     "installed": "v1.24.11",
-    "reason": "Compiled into gitleaks 8.30.1, built with go1.24.11, pinned in ci-security and still the latest upstream release on 2026-10-26 (no newer tag; go.mod at v8.30.1 says go 1.24.11 with golang.org/x/crypto v0.35.0 and golang.org/x/text v0.22.0, and master has moved only x/text, to v0.29.0), so only a new release built with Go 1.25.9 or 1.26.2 or later can carry the fix.",
+    "reason": "Compiled into gitleaks 8.30.1, pinned in ci-security and still the latest upstream release on 2026-11-13 (no newer tag since 2026-03-21; `go version -m` on its linux_x64 binary reports go1.24.11, and go.mod on master still says go 1.24.11), so only a new release built with Go 1.25.9 or 1.26.2 or later can carry the fix.",
     "upstream": "https://github.com/gitleaks/gitleaks/releases",
-    "expires": "2026-11-25",
+    "expires": "2026-12-13",
     "paths": [
       "usr/local/bin/gitleaks"
     ]
@@ -475,9 +475,9 @@
     "id": "CVE-2026-32281",
     "package": "stdlib",
     "installed": "v1.24.11",
-    "reason": "Compiled into gitleaks 8.30.1, built with go1.24.11, pinned in ci-security and still the latest upstream release on 2026-10-26 (no newer tag; go.mod at v8.30.1 says go 1.24.11 with golang.org/x/crypto v0.35.0 and golang.org/x/text v0.22.0, and master has moved only x/text, to v0.29.0), so only a new release built with Go 1.25.9 or 1.26.2 or later can carry the fix.",
+    "reason": "Compiled into gitleaks 8.30.1, pinned in ci-security and still the latest upstream release on 2026-11-13 (no newer tag since 2026-03-21; `go version -m` on its linux_x64 binary reports go1.24.11, and go.mod on master still says go 1.24.11), so only a new release built with Go 1.25.9 or 1.26.2 or later can carry the fix.",
     "upstream": "https://github.com/gitleaks/gitleaks/releases",
-    "expires": "2026-11-25",
+    "expires": "2026-12-13",
     "paths": [
       "usr/local/bin/gitleaks"
     ]
@@ -487,9 +487,9 @@
     "id": "CVE-2026-32283",
     "package": "stdlib",
     "installed": "v1.24.11",
-    "reason": "Compiled into gitleaks 8.30.1, built with go1.24.11, pinned in ci-security and still the latest upstream release on 2026-10-26 (no newer tag; go.mod at v8.30.1 says go 1.24.11 with golang.org/x/crypto v0.35.0 and golang.org/x/text v0.22.0, and master has moved only x/text, to v0.29.0), so only a new release built with Go 1.25.9 or 1.26.2 or later can carry the fix.",
+    "reason": "Compiled into gitleaks 8.30.1, pinned in ci-security and still the latest upstream release on 2026-11-13 (no newer tag since 2026-03-21; `go version -m` on its linux_x64 binary reports go1.24.11, and go.mod on master still says go 1.24.11), so only a new release built with Go 1.25.9 or 1.26.2 or later can carry the fix.",
     "upstream": "https://github.com/gitleaks/gitleaks/releases",
-    "expires": "2026-11-25",
+    "expires": "2026-12-13",
     "paths": [
       "usr/local/bin/gitleaks"
     ]
@@ -499,9 +499,9 @@
     "id": "CVE-2026-33811",
     "package": "stdlib",
     "installed": "v1.24.11",
-    "reason": "Compiled into gitleaks 8.30.1, built with go1.24.11, pinned in ci-security and still the latest upstream release on 2026-10-26 (no newer tag; go.mod at v8.30.1 says go 1.24.11 with golang.org/x/crypto v0.35.0 and golang.org/x/text v0.22.0, and master has moved only x/text, to v0.29.0), so only a new release built with Go 1.25.10 or 1.26.3 or later can carry the fix.",
+    "reason": "Compiled into gitleaks 8.30.1, pinned in ci-security and still the latest upstream release on 2026-11-13 (no newer tag since 2026-03-21; `go version -m` on its linux_x64 binary reports go1.24.11, and go.mod on master still says go 1.24.11), so only a new release built with Go 1.25.10 or 1.26.3 or later can carry the fix.",
     "upstream": "https://github.com/gitleaks/gitleaks/releases",
-    "expires": "2026-11-25",
+    "expires": "2026-12-13",
     "paths": [
       "usr/local/bin/gitleaks"
     ]
@@ -511,9 +511,9 @@
     "id": "CVE-2026-33814",
     "package": "stdlib",
     "installed": "v1.24.11",
-    "reason": "Compiled into gitleaks 8.30.1, built with go1.24.11, pinned in ci-security and still the latest upstream release on 2026-10-26 (no newer tag; go.mod at v8.30.1 says go 1.24.11 with golang.org/x/crypto v0.35.0 and golang.org/x/text v0.22.0, and master has moved only x/text, to v0.29.0), so only a new release built with Go 1.25.10 or 1.26.3 or later can carry the fix.",
+    "reason": "Compiled into gitleaks 8.30.1, pinned in ci-security and still the latest upstream release on 2026-11-13 (no newer tag since 2026-03-21; `go version -m` on its linux_x64 binary reports go1.24.11, and go.mod on master still says go 1.24.11), so only a new release built with Go 1.25.10 or 1.26.3 or later can carry the fix.",
     "upstream": "https://github.com/gitleaks/gitleaks/releases",
-    "expires": "2026-11-25",
+    "expires": "2026-12-13",
     "paths": [
       "usr/local/bin/gitleaks"
     ]
@@ -523,9 +523,9 @@
     "id": "CVE-2026-33818",
     "package": "stdlib",
     "installed": "v1.24.11",
-    "reason": "Compiled into gitleaks 8.30.1, built with go1.24.11, pinned in ci-security and still the latest upstream release on 2026-10-26 (no newer tag; go.mod at v8.30.1 says go 1.24.11 with golang.org/x/crypto v0.35.0 and golang.org/x/text v0.22.0, and master has moved only x/text, to v0.29.0), so only a new release built with Go 1.25.13 or 1.26.6 or later can carry the fix.",
+    "reason": "Compiled into gitleaks 8.30.1, pinned in ci-security and still the latest upstream release on 2026-11-13 (no newer tag since 2026-03-21; `go version -m` on its linux_x64 binary reports go1.24.11, and go.mod on master still says go 1.24.11), so only a new release built with Go 1.25.13 or 1.26.6 or later can carry the fix.",
     "upstream": "https://github.com/gitleaks/gitleaks/releases",
-    "expires": "2026-11-25",
+    "expires": "2026-12-13",
     "paths": [
       "usr/local/bin/gitleaks"
     ]
@@ -535,9 +535,9 @@
     "id": "CVE-2026-39820",
     "package": "stdlib",
     "installed": "v1.24.11",
-    "reason": "Compiled into gitleaks 8.30.1, built with go1.24.11, pinned in ci-security and still the latest upstream release on 2026-10-26 (no newer tag; go.mod at v8.30.1 says go 1.24.11 with golang.org/x/crypto v0.35.0 and golang.org/x/text v0.22.0, and master has moved only x/text, to v0.29.0), so only a new release built with Go 1.25.10 or 1.26.3 or later can carry the fix.",
+    "reason": "Compiled into gitleaks 8.30.1, pinned in ci-security and still the latest upstream release on 2026-11-13 (no newer tag since 2026-03-21; `go version -m` on its linux_x64 binary reports go1.24.11, and go.mod on master still says go 1.24.11), so only a new release built with Go 1.25.10 or 1.26.3 or later can carry the fix.",
     "upstream": "https://github.com/gitleaks/gitleaks/releases",
-    "expires": "2026-11-25",
+    "expires": "2026-12-13",
     "paths": [
       "usr/local/bin/gitleaks"
     ]
@@ -547,9 +547,9 @@
     "id": "CVE-2026-39821",
     "package": "stdlib",
     "installed": "v1.24.11",
-    "reason": "Compiled into gitleaks 8.30.1, built with go1.24.11, pinned in ci-security and still the latest upstream release on 2026-10-26 (no newer tag; go.mod at v8.30.1 says go 1.24.11 with golang.org/x/crypto v0.35.0 and golang.org/x/text v0.22.0, and master has moved only x/text, to v0.29.0), so only a new release built with Go 1.25.13 or 1.26.6 or later can carry the fix.",
+    "reason": "Compiled into gitleaks 8.30.1, pinned in ci-security and still the latest upstream release on 2026-11-13 (no newer tag since 2026-03-21; `go version -m` on its linux_x64 binary reports go1.24.11, and go.mod on master still says go 1.24.11), so only a new release built with Go 1.25.13 or 1.26.6 or later can carry the fix.",
     "upstream": "https://github.com/gitleaks/gitleaks/releases",
-    "expires": "2026-11-25",
+    "expires": "2026-12-13",
     "paths": [
       "usr/local/bin/gitleaks"
     ]
@@ -559,9 +559,9 @@
     "id": "CVE-2026-39822",
     "package": "stdlib",
     "installed": "v1.24.11",
-    "reason": "Compiled into gitleaks 8.30.1, built with go1.24.11, pinned in ci-security and still the latest upstream release on 2026-10-26 (no newer tag; go.mod at v8.30.1 says go 1.24.11 with golang.org/x/crypto v0.35.0 and golang.org/x/text v0.22.0, and master has moved only x/text, to v0.29.0), so only a new release built with Go 1.25.12 or 1.26.5 or later can carry the fix.",
+    "reason": "Compiled into gitleaks 8.30.1, pinned in ci-security and still the latest upstream release on 2026-11-13 (no newer tag since 2026-03-21; `go version -m` on its linux_x64 binary reports go1.24.11, and go.mod on master still says go 1.24.11), so only a new release built with Go 1.25.12 or 1.26.5 or later can carry the fix.",
     "upstream": "https://github.com/gitleaks/gitleaks/releases",
-    "expires": "2026-11-25",
+    "expires": "2026-12-13",
     "paths": [
       "usr/local/bin/gitleaks"
     ]
@@ -643,9 +643,9 @@
     "id": "CVE-2026-39836",
     "package": "stdlib",
     "installed": "v1.24.11",
-    "reason": "Compiled into gitleaks 8.30.1, built with go1.24.11, pinned in ci-security and still the latest upstream release on 2026-10-26 (no newer tag; go.mod at v8.30.1 says go 1.24.11 with golang.org/x/crypto v0.35.0 and golang.org/x/text v0.22.0, and master has moved only x/text, to v0.29.0), so only a new release built with Go 1.25.10 or 1.26.3 or later can carry the fix.",
+    "reason": "Compiled into gitleaks 8.30.1, pinned in ci-security and still the latest upstream release on 2026-11-13 (no newer tag since 2026-03-21; `go version -m` on its linux_x64 binary reports go1.24.11, and go.mod on master still says go 1.24.11), so only a new release built with Go 1.25.10 or 1.26.3 or later can carry the fix.",
     "upstream": "https://github.com/gitleaks/gitleaks/releases",
-    "expires": "2026-11-25",
+    "expires": "2026-12-13",
     "paths": [
       "usr/local/bin/gitleaks"
     ]
@@ -655,9 +655,9 @@
     "id": "CVE-2026-42499",
     "package": "stdlib",
     "installed": "v1.24.11",
-    "reason": "Compiled into gitleaks 8.30.1, built with go1.24.11, pinned in ci-security and still the latest upstream release on 2026-10-26 (no newer tag; go.mod at v8.30.1 says go 1.24.11 with golang.org/x/crypto v0.35.0 and golang.org/x/text v0.22.0, and master has moved only x/text, to v0.29.0), so only a new release built with Go 1.25.10 or 1.26.3 or later can carry the fix.",
+    "reason": "Compiled into gitleaks 8.30.1, pinned in ci-security and still the latest upstream release on 2026-11-13 (no newer tag since 2026-03-21; `go version -m` on its linux_x64 binary reports go1.24.11, and go.mod on master still says go 1.24.11), so only a new release built with Go 1.25.10 or 1.26.3 or later can carry the fix.",
     "upstream": "https://github.com/gitleaks/gitleaks/releases",
-    "expires": "2026-11-25",
+    "expires": "2026-12-13",
     "paths": [
       "usr/local/bin/gitleaks"
     ]
@@ -667,9 +667,9 @@
     "id": "CVE-2026-42504",
     "package": "stdlib",
     "installed": "v1.24.11",
-    "reason": "Compiled into gitleaks 8.30.1, built with go1.24.11, pinned in ci-security and still the latest upstream release on 2026-10-26 (no newer tag; go.mod at v8.30.1 says go 1.24.11 with golang.org/x/crypto v0.35.0 and golang.org/x/text v0.22.0, and master has moved only x/text, to v0.29.0), so only a new release built with Go 1.25.11 or 1.26.4 or later can carry the fix.",
+    "reason": "Compiled into gitleaks 8.30.1, pinned in ci-security and still the latest upstream release on 2026-11-13 (no newer tag since 2026-03-21; `go version -m` on its linux_x64 binary reports go1.24.11, and go.mod on master still says go 1.24.11), so only a new release built with Go 1.25.11 or 1.26.4 or later can carry the fix.",
     "upstream": "https://github.com/gitleaks/gitleaks/releases",
-    "expires": "2026-11-25",
+    "expires": "2026-12-13",
     "paths": [
       "usr/local/bin/gitleaks"
     ]
@@ -727,9 +727,9 @@
     "id": "CVE-2026-56853",
     "package": "stdlib",
     "installed": "v1.24.11",
-    "reason": "Compiled into gitleaks 8.30.1, built with go1.24.11, pinned in ci-security and still the latest upstream release on 2026-10-26 (no newer tag; go.mod at v8.30.1 says go 1.24.11 with golang.org/x/crypto v0.35.0 and golang.org/x/text v0.22.0, and master has moved only x/text, to v0.29.0), so only a new release built with Go 1.25.13 or 1.26.6 or later can carry the fix.",
+    "reason": "Compiled into gitleaks 8.30.1, pinned in ci-security and still the latest upstream release on 2026-11-13 (no newer tag since 2026-03-21; `go version -m` on its linux_x64 binary reports go1.24.11, and go.mod on master still says go 1.24.11), so only a new release built with Go 1.25.13 or 1.26.6 or later can carry the fix.",
     "upstream": "https://github.com/gitleaks/gitleaks/releases",
-    "expires": "2026-11-25",
+    "expires": "2026-12-13",
     "paths": [
       "usr/local/bin/gitleaks"
     ]
@@ -751,9 +751,9 @@
     "id": "CVE-2026-56858",
     "package": "stdlib",
     "installed": "v1.24.11",
-    "reason": "Compiled into gitleaks 8.30.1, built with go1.24.11, pinned in ci-security and still the latest upstream release on 2026-10-26 (no newer tag; go.mod at v8.30.1 says go 1.24.11 with golang.org/x/crypto v0.35.0 and golang.org/x/text v0.22.0, and master has moved only x/text, to v0.29.0), so only a new release built with Go 1.25.13 or 1.26.6 or later can carry the fix.",
+    "reason": "Compiled into gitleaks 8.30.1, pinned in ci-security and still the latest upstream release on 2026-11-13 (no newer tag since 2026-03-21; `go version -m` on its linux_x64 binary reports go1.24.11, and go.mod on master still says go 1.24.11), so only a new release built with Go 1.25.13 or 1.26.6 or later can carry the fix.",
     "upstream": "https://github.com/gitleaks/gitleaks/releases",
-    "expires": "2026-11-25",
+    "expires": "2026-12-13",
     "paths": [
       "usr/local/bin/gitleaks"
     ]
@@ -763,9 +763,9 @@
     "id": "CVE-2026-56859",
     "package": "stdlib",
     "installed": "v1.24.11",
-    "reason": "Compiled into gitleaks 8.30.1, built with go1.24.11, pinned in ci-security and still the latest upstream release on 2026-10-26 (no newer tag; go.mod at v8.30.1 says go 1.24.11 with golang.org/x/crypto v0.35.0 and golang.org/x/text v0.22.0, and master has moved only x/text, to v0.29.0), so only a new release built with Go 1.25.13 or 1.26.6 or later can carry the fix.",
+    "reason": "Compiled into gitleaks 8.30.1, pinned in ci-security and still the latest upstream release on 2026-11-13 (no newer tag since 2026-03-21; `go version -m` on its linux_x64 binary reports go1.24.11, and go.mod on master still says go 1.24.11), so only a new release built with Go 1.25.13 or 1.26.6 or later can carry the fix.",
     "upstream": "https://github.com/gitleaks/gitleaks/releases",
-    "expires": "2026-11-25",
+    "expires": "2026-12-13",
     "paths": [
       "usr/local/bin/gitleaks"
     ]
@@ -775,9 +775,9 @@
     "id": "CVE-2026-56860",
     "package": "stdlib",
     "installed": "v1.24.11",
-    "reason": "Compiled into gitleaks 8.30.1, built with go1.24.11, pinned in ci-security and still the latest upstream release on 2026-10-26 (no newer tag; go.mod at v8.30.1 says go 1.24.11 with golang.org/x/crypto v0.35.0 and golang.org/x/text v0.22.0, and master has moved only x/text, to v0.29.0), so only a new release built with Go 1.25.13 or 1.26.6 or later can carry the fix.",
+    "reason": "Compiled into gitleaks 8.30.1, pinned in ci-security and still the latest upstream release on 2026-11-13 (no newer tag since 2026-03-21; `go version -m` on its linux_x64 binary reports go1.24.11, and go.mod on master still says go 1.24.11), so only a new release built with Go 1.25.13 or 1.26.6 or later can carry the fix.",
     "upstream": "https://github.com/gitleaks/gitleaks/releases",
-    "expires": "2026-11-25",
+    "expires": "2026-12-13",
     "paths": [
       "usr/local/bin/gitleaks"
     ]
@@ -787,9 +787,9 @@
     "id": "CVE-2026-56862",
     "package": "stdlib",
     "installed": "v1.24.11",
-    "reason": "Compiled into gitleaks 8.30.1, built with go1.24.11, pinned in ci-security and still the latest upstream release on 2026-10-26 (no newer tag; go.mod at v8.30.1 says go 1.24.11 with golang.org/x/crypto v0.35.0 and golang.org/x/text v0.22.0, and master has moved only x/text, to v0.29.0), so only a new release built with Go 1.25.13 or 1.26.6 or later can carry the fix.",
+    "reason": "Compiled into gitleaks 8.30.1, pinned in ci-security and still the latest upstream release on 2026-11-13 (no newer tag since 2026-03-21; `go version -m` on its linux_x64 binary reports go1.24.11, and go.mod on master still says go 1.24.11), so only a new release built with Go 1.25.13 or 1.26.6 or later can carry the fix.",
     "upstream": "https://github.com/gitleaks/gitleaks/releases",
-    "expires": "2026-11-25",
+    "expires": "2026-12-13",
     "paths": [
       "usr/local/bin/gitleaks"
     ]
@@ -799,9 +799,9 @@
     "id": "CVE-2026-78667",
     "package": "stdlib",
     "installed": "v1.24.11 (gitleaks), v1.26.8 (grype), v1.26.8 (syft)",
-    "reason": "Compiled into gitleaks 8.30.1 (latest release, 2026-03-21, built with Go 1.24.11), which no release replaces; only a gitleaks release built with Go 1.26.9 or 1.27.2 can carry the fix. Also in grype and syft: grype 0.121.0 and syft 1.55.0 are behind: grype 0.121.3 and syft 1.57.1 (2026-11-09) are clean in a Trivy scan (checked 2026-11-11), and the pin-bump workflow picks the release up once its seven-day cooldown ends.",
+    "reason": "Compiled into gitleaks 8.30.1, still the latest release on 2026-11-13 (no newer tag since 2026-03-21; `go version -m` reports go1.24.11); only a gitleaks release built with Go 1.26.9 or 1.27.2 can carry the fix. Also in grype 0.121.0 and syft 1.55.0 (go1.26.8): grype 0.121.3 and syft 1.57.1 (2026-11-09, go1.27.3) carry the fix, and the pin-bump workflow takes them once their seven-day cooldown ends on 2026-11-16; their paths come off this entry with that bump.",
     "upstream": "https://github.com/sigstore/cosign/releases",
-    "expires": "2026-11-25",
+    "expires": "2026-12-13",
     "paths": [
       "usr/local/bin/gitleaks",
       "usr/local/bin/grype",
@@ -813,9 +813,9 @@
     "id": "CVE-2026-78669",
     "package": "stdlib",
     "installed": "v1.24.11 (gitleaks), v1.26.8 (grype), v1.26.8 (syft)",
-    "reason": "Compiled into gitleaks 8.30.1 (latest release, 2026-03-21, built with Go 1.24.11), which no release replaces; only a gitleaks release built with Go 1.26.9 or 1.27.2 can carry the fix. Also in grype and syft: grype 0.121.0 and syft 1.55.0 are behind: grype 0.121.3 and syft 1.57.1 (2026-11-09) are clean in a Trivy scan (checked 2026-11-11), and the pin-bump workflow picks the release up once its seven-day cooldown ends.",
+    "reason": "Compiled into gitleaks 8.30.1, still the latest release on 2026-11-13 (no newer tag since 2026-03-21; `go version -m` reports go1.24.11); only a gitleaks release built with Go 1.26.9 or 1.27.2 can carry the fix. Also in grype 0.121.0 and syft 1.55.0 (go1.26.8): grype 0.121.3 and syft 1.57.1 (2026-11-09, go1.27.3) carry the fix, and the pin-bump workflow takes them once their seven-day cooldown ends on 2026-11-16; their paths come off this entry with that bump.",
     "upstream": "https://github.com/sigstore/cosign/releases",
-    "expires": "2026-11-25",
+    "expires": "2026-12-13",
     "paths": [
       "usr/local/bin/gitleaks",
       "usr/local/bin/grype",
@@ -827,9 +827,9 @@
     "id": "CVE-2026-97031",
     "package": "stdlib",
     "installed": "v1.24.11 (gitleaks), v1.26.8 (grype), v1.26.8 (syft)",
-    "reason": "Compiled into gitleaks 8.30.1 (latest release, 2026-03-21, built with Go 1.24.11), which no release replaces; only a gitleaks release built with Go 1.26.9 or 1.27.2 can carry the fix. Also in grype and syft: grype 0.121.0 and syft 1.55.0 are behind: grype 0.121.3 and syft 1.57.1 (2026-11-09) are clean in a Trivy scan (checked 2026-11-11), and the pin-bump workflow picks the release up once its seven-day cooldown ends.",
+    "reason": "Compiled into gitleaks 8.30.1, still the latest release on 2026-11-13 (no newer tag since 2026-03-21; `go version -m` reports go1.24.11); only a gitleaks release built with Go 1.26.9 or 1.27.2 can carry the fix. Also in grype 0.121.0 and syft 1.55.0 (go1.26.8): grype 0.121.3 and syft 1.57.1 (2026-11-09, go1.27.3) carry the fix, and the pin-bump workflow takes them once their seven-day cooldown ends on 2026-11-16; their paths come off this entry with that bump.",
     "upstream": "https://github.com/sigstore/cosign/releases",
-    "expires": "2026-11-25",
+    "expires": "2026-12-13",
     "paths": [
       "usr/local/bin/gitleaks",
       "usr/local/bin/grype",
@@ -853,9 +853,9 @@
     "id": "CVE-2026-111943",
     "package": "stdlib",
     "installed": "v1.24.11 (gitleaks), v1.26.8 (grype), v1.26.8 (syft)",
-    "reason": "Compiled into gitleaks 8.30.1 (latest release, 2026-03-21, built with Go 1.24.11), which no release replaces; only a gitleaks release built with Go 1.26.10 or 1.27.3 can carry the fix. Also in grype and syft: grype 0.121.0 and syft 1.55.0 are behind: grype 0.121.3 and syft 1.57.1 (2026-11-09) are clean in a Trivy scan (checked 2026-11-11), and the pin-bump workflow picks the release up once its seven-day cooldown ends.",
+    "reason": "Compiled into gitleaks 8.30.1, still the latest release on 2026-11-13 (no newer tag since 2026-03-21; `go version -m` reports go1.24.11); only a gitleaks release built with Go 1.26.10 or 1.27.3 can carry the fix. Also in grype 0.121.0 and syft 1.55.0 (go1.26.8): grype 0.121.3 and syft 1.57.1 (2026-11-09, go1.27.3) carry the fix, and the pin-bump workflow takes them once their seven-day cooldown ends on 2026-11-16; their paths come off this entry with that bump.",
     "upstream": "https://github.com/gitleaks/gitleaks/releases",
-    "expires": "2026-11-25",
+    "expires": "2026-12-13",
     "paths": [
       "usr/local/bin/gitleaks",
       "usr/local/bin/grype",
@@ -867,9 +867,9 @@
     "id": "CVE-2026-63209",
     "package": "github.com/klauspost/compress",
     "installed": "v1.17.11 (gitleaks)",
-    "reason": "Compiled into gitleaks 8.30.1 (latest release, 2026-03-21, built with Go 1.24.11), which requires github.com/klauspost/compress v1.17.11; only a gitleaks release built with klauspost/compress 1.18.7 or later can carry the fix.",
+    "reason": "Compiled into gitleaks 8.30.1, still the latest release on 2026-11-13 (no newer tag since 2026-03-21), whose binary requires github.com/klauspost/compress v1.17.11 (`go version -m`); only a gitleaks release built with klauspost/compress 1.18.7 or later can carry the fix.",
     "upstream": "https://github.com/gitleaks/gitleaks/releases",
-    "expires": "2026-11-25",
+    "expires": "2026-12-13",
     "paths": [
       "usr/local/bin/gitleaks"
     ]
@@ -878,29 +878,27 @@
     "image": "ci-security",
     "id": "CVE-2026-116587",
     "package": "github.com/go-jose/go-jose/v4",
-    "installed": "v4.1.5 (grype), v4.1.5 (syft), v4.1.5 (trivy)",
-    "reason": "Compiled into grype 0.121.0, syft 1.55.0 and trivy 0.76.1, each behind a newer release: grype 0.121.3, syft 1.57.1 and trivy 0.76.2 (2026-11-05 to 2026-11-09) are clean in a Trivy scan (checked 2026-11-11), and the pin-bump workflow picks them up once their seven-day cooldown ends (trivy 2026-11-12, grype and syft 2026-11-16).",
+    "installed": "v4.1.5 (grype), v4.1.5 (syft)",
+    "reason": "Compiled into grype 0.121.0 and syft 1.55.0 (go-jose v4.1.5); grype 0.121.3 and syft 1.57.1 (2026-11-09) carry go-jose v4.1.6 (`go version -m`, checked 2026-11-13), and the pin-bump workflow takes them once their seven-day cooldown ends on 2026-11-16, before this entry expires; trivy 0.76.2, now pinned, carries v4.1.6, so its path is gone. Delete this entry with that bump.",
     "upstream": "https://github.com/anchore/grype/releases",
     "expires": "2026-11-25",
     "paths": [
       "usr/local/bin/grype",
-      "usr/local/bin/syft",
-      "usr/local/bin/trivy"
+      "usr/local/bin/syft"
     ]
   },
   {
     "image": "ci-security",
     "id": "CVE-2026-78661",
     "package": "golang.org/x/net",
-    "installed": "v0.61.0 (cosign), v0.61.0 (grype), v0.61.0 (syft), v0.60.0 (trivy)",
-    "reason": "Compiled into cosign 3.1.4, still the latest release (2026-10-20), which requires golang.org/x/net v0.61.0, so only a new cosign release built with golang.org/x/net 0.62.0 can carry the fix. grype 0.121.0, syft 1.55.0 and trivy 0.76.1 are behind newer releases (grype 0.121.3, syft 1.57.1, trivy 0.76.2) that are clean in a Trivy scan (checked 2026-11-11); the pin-bump workflow picks them up once their seven-day cooldown ends (trivy 2026-11-12, grype and syft 2026-11-16).",
+    "installed": "v0.61.0 (cosign), v0.61.0 (grype), v0.61.0 (syft)",
+    "reason": "Compiled into cosign 3.1.4, still the latest release on 2026-11-13 (2026-10-20), which `go version -m` shows requires golang.org/x/net v0.61.0, so only a new cosign release built with golang.org/x/net 0.62.0 can carry the fix. grype 0.121.0 and syft 1.55.0 are behind grype 0.121.3 and syft 1.57.1 (2026-11-09, x/net v0.62.0), which the pin-bump workflow takes once their seven-day cooldown ends on 2026-11-16; trivy 0.76.2, now pinned, carries x/net v0.62.0, so its path is gone.",
     "upstream": "https://github.com/sigstore/cosign/releases",
-    "expires": "2026-11-25",
+    "expires": "2026-12-13",
     "paths": [
       "usr/local/bin/cosign",
       "usr/local/bin/grype",
-      "usr/local/bin/syft",
-      "usr/local/bin/trivy"
+      "usr/local/bin/syft"
     ]
   },
   {
@@ -921,9 +919,9 @@
     "id": "CVE-2026-97687",
     "package": "urllib3",
     "installed": "2.7.0",
-    "reason": "urllib3 is vendored inside pip 26.2.2 (pip/_vendor) in the upstream python image, and pip's vendor.txt in 26.2.2, the latest release, still pins urllib3==2.7.0 (checked 2026-11-11); the bump to 2.8.0 exists only on pip main, so only a pip release vendoring urllib3 2.8.0 can carry the fix, and the daily rebuild picks it up from the base image.",
+    "reason": "urllib3 2.7.0 is vendored inside pip 26.2.2 (pip/_vendor) in the upstream python image. pip 26.3 (2026-11-02) vendors urllib3 2.8.0, but python:3.15-slim-trixie (CPython 3.15.2) still ships pip 26.2.2 from ensurepip (checked 2026-11-13), and this image does not pin or upgrade pip, so the fix arrives with a CPython release that bundles pip 26.3, which the daily rebuild picks up from the base image.",
     "upstream": "https://github.com/pypa/pip/blob/main/src/pip/_vendor/vendor.txt",
-    "expires": "2026-11-25",
+    "expires": "2026-12-13",
     "purls": [
       "pkg:pypi/urllib3@2.7.0"
     ],
@@ -934,9 +932,9 @@
     "id": "CVE-2026-97689",
     "package": "urllib3",
     "installed": "2.7.0",
-    "reason": "urllib3 is vendored inside pip 26.2.2 (pip/_vendor) in the upstream python image, and pip's vendor.txt in 26.2.2, the latest release, still pins urllib3==2.7.0 (checked 2026-11-11); the bump to 2.8.0 exists only on pip main, so only a pip release vendoring urllib3 2.8.0 can carry the fix, and the daily rebuild picks it up from the base image.",
+    "reason": "urllib3 2.7.0 is vendored inside pip 26.2.2 (pip/_vendor) in the upstream python image. pip 26.3 (2026-11-02) vendors urllib3 2.8.0, but python:3.15-slim-trixie (CPython 3.15.2) still ships pip 26.2.2 from ensurepip (checked 2026-11-13), and this image does not pin or upgrade pip, so the fix arrives with a CPython release that bundles pip 26.3, which the daily rebuild picks up from the base image.",
     "upstream": "https://github.com/pypa/pip/blob/main/src/pip/_vendor/vendor.txt",
-    "expires": "2026-11-25",
+    "expires": "2026-12-13",
     "purls": [
       "pkg:pypi/urllib3@2.7.0"
     ],
@@ -960,9 +958,9 @@
     "id": "CVE-2026-114613",
     "package": "msgpack",
     "installed": "1.1.2",
-    "reason": "msgpack is vendored inside pip 26.2.2 (pip/_vendor) in the upstream python image, and no released pip vendors the fixed msgpack 1.2.3 yet: pip 26.2.2, the latest release, still pins msgpack==1.1.2 in vendor.txt, and the bump (msgpack 1.2.4) exists only on pip main (checked 2026-11-11).",
+    "reason": "msgpack 1.1.2 is vendored inside pip 26.2.2 (pip/_vendor) in the upstream python image. pip 26.3 (2026-11-02) vendors msgpack 1.2.4, but python:3.15-slim-trixie (CPython 3.15.2) still ships pip 26.2.2 from ensurepip (checked 2026-11-13), and this image does not pin or upgrade pip, so the fix arrives with a CPython release that bundles pip 26.3, which the daily rebuild picks up from the base image.",
     "upstream": "https://github.com/pypa/pip/blob/main/src/pip/_vendor/vendor.txt",
-    "expires": "2026-11-25",
+    "expires": "2026-12-13",
     "purls": [
       "pkg:pypi/msgpack@1.1.2"
     ],
@@ -973,9 +971,9 @@
     "id": "CVE-2026-78669",
     "package": "golang.org/x/net",
     "installed": "v0.57.0 (kubectl)",
-    "reason": "Compiled into kubectl 1.37.2, still the latest stable release (checked 2026-11-11: dl.k8s.io stable.txt), whose go.mod requires golang.org/x/net v0.57.0; only a kubectl release built with golang.org/x/net 0.60.0 or later can carry the fix.",
+    "reason": "Compiled into kubectl 1.37.2, still the latest stable release (checked 2026-11-13: dl.k8s.io stable.txt and stable-1.37.txt both say v1.37.2; 1.38 is at beta.0), and `go version -m` on its linux/amd64 binary reports golang.org/x/net v0.57.0; only a kubectl release built with golang.org/x/net 0.60.0 or later can carry the fix.",
     "upstream": "https://github.com/kubernetes/kubernetes/releases",
-    "expires": "2026-11-25",
+    "expires": "2026-12-13",
     "paths": [
       "usr/local/bin/kubectl"
     ],
@@ -1000,9 +998,9 @@
     "id": "CVE-2026-78661",
     "package": "golang.org/x/net",
     "installed": "v0.57.0 (kubectl)",
-    "reason": "Compiled into kubectl 1.37.2, still the latest stable release (checked 2026-11-11: dl.k8s.io stable.txt), whose go.mod requires golang.org/x/net v0.57.0; only a kubectl release built with golang.org/x/net 0.62.0 or later can carry the fix.",
+    "reason": "Compiled into kubectl 1.37.2, still the latest stable release (checked 2026-11-13: dl.k8s.io stable.txt and stable-1.37.txt both say v1.37.2; 1.38 is at beta.0), and `go version -m` on its linux/amd64 binary reports golang.org/x/net v0.57.0; only a kubectl release built with golang.org/x/net 0.62.0 or later can carry the fix.",
     "upstream": "https://github.com/kubernetes/kubernetes/releases",
-    "expires": "2026-11-25",
+    "expires": "2026-12-13",
     "paths": [
       "usr/local/bin/kubectl"
     ]
