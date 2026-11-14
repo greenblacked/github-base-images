@@ -180,9 +180,9 @@ RUN /opt/az/bin/python3 -m pip install --no-cache-dir --disable-pip-version-chec
 # needs no exception. A future SDK that bundles new fixtures fails the gate
 # until each one is deleted here or reviewed into that file.
 ARG TARGETARCH
-ARG GCLOUD_VERSION=592.0.0
-ARG GCLOUD_SHA256_AMD64=2d841a23a681ab94486af6841e5f1cd123cd300fb8c4be6ba5b51350fca3d50b
-ARG GCLOUD_SHA256_ARM64=ba588759c4c42122a8c14536009738c0f0030989ca75788235f9956555e44f4d
+ARG GCLOUD_VERSION=593.0.0
+ARG GCLOUD_SHA256_AMD64=42c32b7553c712f71fcf6f124546c0519437f53755f47f9bd0c957998cd6b826
+ARG GCLOUD_SHA256_ARM64=f40acaca49c9774bca035c96dcf7350a13c09007e906cb4832e91dc36ce11497
 RUN case "${TARGETARCH}" in \
         amd64) gcarch=x86_64 sum="${GCLOUD_SHA256_AMD64}" ;; \
         arm64) gcarch=arm sum="${GCLOUD_SHA256_ARM64}" ;; \
