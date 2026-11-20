@@ -110,6 +110,8 @@ What this means for the rolling tag is in [Tags and rebuilds](pipeline.md#tags-a
 
 ### PHP
 
+- **`ci-php86`** — PHP 8.6 CLI plus the same pinned Composer as every PHP image, on Debian
+  Trixie.
 - **`ci-php85`** — PHP 8.5 CLI plus the same pinned Composer as `ci-php84`, on Debian Trixie.
 - **`ci-php84`** — PHP 8.4 CLI plus Composer. Composer is the one package manager not shipped by
   its upstream runtime image, so it is installed here — pinned by version *and* SHA-256, and

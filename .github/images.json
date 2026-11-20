@@ -78,6 +78,12 @@
     "upstream": "php:8.5-cli-trixie"
   },
   {
+    "image": "ci-php86",
+    "version": "trixie-v1",
+    "mirror": "mirror-php:8.6-cli-trixie",
+    "upstream": "php:8.6-cli-trixie"
+  },
+  {
     "image": "ci-python312",
     "version": "trixie-v1",
     "mirror": "mirror-python:3.12-slim-trixie",
