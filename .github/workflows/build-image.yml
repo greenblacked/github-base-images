@@ -959,7 +959,8 @@ jobs:
           name: digest-${{ inputs.image }}-${{ matrix.arch }}
           path: /tmp/digests/*
           if-no-files-found: error
-          retention-days: 1
+          # Keep the original merge inputs for the workflow rerun window.
+          retention-days: 30
 
   # A second vulnerability opinion from a second database: osv-scanner reads
   # the CycloneDX SBOM the build job already produced -- no second image scan
