@@ -1137,14 +1137,11 @@ jobs:
       # intersection of both declarations. The GitHub attestation below signs
       # with the same token.
       id-token: write
-      # For actions/attest-build-provenance to store the attestation with
+      # For build provenance registration to store the attestation with
       # GitHub's attestations API. The caller grants it too, for the same
       # intersection reason. `artifact-metadata: write` -- a real scope, and
-      # in the action's documented example -- is deliberately NOT here: the
-      # action uses it only to create an artifact storage record, which
-      # GitHub supports only for organization-owned repositories. This one is
-      # user-owned, so the step sets create-storage-record: false instead of
-      # holding a scope it cannot use.
+      # in the action's documented example -- is deliberately NOT here: artifact
+      # storage record API supports only organization-owned repositories.
       attestations: write
 
     steps:
@@ -1280,24 +1277,47 @@ jobs:
             exit 1
           fi
 
-      # GitHub-native build provenance, IN ADDITION to cosign and the buildx
-      # attestations, which are untouched. A second, independent verification
-      # path for consumers (`gh attestation verify`, see the README): signed
-      # with this job's OIDC token through Sigstore (public-good, since the
-      # repository is public), stored with GitHub's attestations API, and --
-      # with push-to-registry -- also pushed next to the image in GHCR.
-      #
-      # Fails closed on its own: the action errors if it cannot sign, store
-      # or push. The step after it then checks the result the way a consumer
-      # would.
-      - name: Attest build provenance
-        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+      # Sign inside the original workflow so the predicate and certificate
+      # identify this invocation. Archive the signed bytes and immutable
+      # subject before attempting GitHub registration or attaching to GHCR.
+      - name: Set up Node for build provenance
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
         with:
-          subject-name: ghcr.io/${{ github.repository_owner }}/${{ inputs.image }}
-          subject-digest: ${{ steps.resolve.outputs.digest }}
-          push-to-registry: true
-          # Storage records are organization-only; see the permissions note.
-          create-storage-record: false
+          node-version: '24'
+          package-manager-cache: false
+
+      - name: Install pinned attestation dependencies
+        working-directory: .github/attest
+        run: npm ci --ignore-scripts --no-audit --no-fund
+
+      - name: Sign build provenance
+        id: sign_provenance
+        env:
+          ATTESTATION_DIR: ${{ runner.temp }}/build-provenance
+          REPO: ghcr.io/${{ github.repository_owner }}/${{ inputs.image }}
+          DIGEST: ${{ steps.resolve.outputs.digest }}
+          REPOSITORY_VISIBILITY: ${{ github.event.repository.visibility }}
+          NODE_OPTIONS: --max-http-header-size=32768
+        run: node .github/attest/attestation.mjs sign
+
+      # If signing itself fails, only the subject file is available. The
+      # failure still blocks registration and the verified digest manifest.
+      - name: Archive build provenance evidence
+        if: ${{ !cancelled() && (steps.sign_provenance.outcome == 'success' || steps.sign_provenance.outcome == 'failure') }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: build-provenance-${{ inputs.image }}-attempt-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/build-provenance/
+          if-no-files-found: error
+          retention-days: 90
+
+      - name: Register build provenance
+        env:
+          ATTESTATION_DIR: ${{ runner.temp }}/build-provenance
+          REPO: ghcr.io/${{ github.repository_owner }}/${{ inputs.image }}
+          DIGEST: ${{ steps.resolve.outputs.digest }}
+          GH_TOKEN: ${{ github.token }}
+        run: node .github/attest/attestation.mjs register
 
       # The consumer recipe from the README, run against what was just
       # attested, pinned to the same identity cosign is: this reusable

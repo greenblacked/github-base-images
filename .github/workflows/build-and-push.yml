@@ -9,7 +9,7 @@
 #   - push / pull_request, and a dispatch on any branch but main -> only the
 #     images whose directories changed (against main, for a pull request or a
 #     dispatched branch), unless the pipeline itself (this file,
-#     build-image.yml, images.json, or the six scripts build-image.yml runs)
+#     build-image.yml, images.json, or shared build and attestation scripts)
 #     changed, in which case everything runs. A one-line fix to ci-ruby34
 #     does not rebuild every image and move `latest` on all of them, and a
 #     bump PR whose CI is dispatched (pin-bump.yml, merge-bot-prs.yml) builds
@@ -32,6 +32,7 @@ on:
       - 'ci-*/**'
       - '.github/workflows/build-and-push.yml'
       - '.github/workflows/build-image.yml'
+      - '.github/attest/**'
       - '.github/images.json'
       # Only the images whose entries changed; see the plan job.
       - '.github/vuln-exceptions.json'
@@ -160,10 +161,10 @@ jobs:
           fi
 
           # A change to the pipeline itself invalidates every image. The seven
-          # scripts, the secret gate's two files and the tool pins
+          # scripts, the attestation tools, the secret gate's two files and the tool pins
           # (osv-scanner's, in tool-pins.env) count as pipeline:
           # build-image.yml uses them on every image.
-          if grep -qE '^(\.github/(workflows/(build-and-push|build-image)\.yml|images\.json|trivy-secret(-ignore)?\.yaml|tool-pins\.env)|scripts/(check-published|osv-scan-sbom|vuln-gate|vuln-baseline|verify-ref|check-public|verify-published-layers)\.sh)$' <<<"$changed"; then
+          if grep -qE '^(\.github/(workflows/(build-and-push|build-image)\.yml|attest/.+|images\.json|trivy-secret(-ignore)?\.yaml|tool-pins\.env)|scripts/(check-published|osv-scan-sbom|vuln-gate|vuln-baseline|verify-ref|check-public|verify-published-layers)\.sh)$' <<<"$changed"; then
             select_all "pipeline definition changed"
           fi
 
