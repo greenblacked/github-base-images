@@ -39,6 +39,17 @@ on:
 
 env:
   DOCKERFILE: Dockerfile.ci
+  # Trivy vulnerability DB and Java DB sources, in priority order. Trivy
+  # (>= v0.56) takes a comma-separated list, uses the first entry and moves
+  # to the next one when a registry answers with a temporary error such as
+  # TOOMANYREQUESTS or 5xx. The first entry is Trivy's own default
+  # (mirror.gcr.io, a pull-through cache that rate-limits shared CI IPs); the
+  # others are Aqua's official publishing locations. Setting the variable
+  # replaces Trivy's default list, so the default entries are repeated here.
+  # No spaces around the commas. The checks bundle accepts a single
+  # repository only; if it fails, Trivy falls back to its embedded checks.
+  TRIVY_DB_REPOSITORY: mirror.gcr.io/aquasec/trivy-db:2,ghcr.io/aquasecurity/trivy-db:2,public.ecr.aws/aquasecurity/trivy-db:2
+  TRIVY_JAVA_DB_REPOSITORY: mirror.gcr.io/aquasec/trivy-java-db:1,ghcr.io/aquasecurity/trivy-java-db:1,public.ecr.aws/aquasecurity/trivy-java-db:1
 
 # Default-deny. Every job below sets the permissions it actually needs, and a
 # job-level block overrides this one -- so this changes nothing for the jobs
