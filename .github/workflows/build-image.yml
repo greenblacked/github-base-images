@@ -297,24 +297,30 @@ jobs:
       # Does this image hold any Java archive? The answer decides whether the
       # Java DB (~958 MiB) is downloaded below. Trivy fetches it only when its
       # jar analyzer meets a file ending in .jar, .war, .ear or .par (case
-      # insensitive), so this looks for exactly those names and cannot miss a
-      # case Trivy would act on. It reads the candidate image, the one every
-      # scan reads, so a jar that arrives through the base image counts too,
-      # and it needs no list of images to keep in step with the Dockerfiles.
-      # At worst it finds a jar Trivy would not open, which costs one download.
+      # insensitive), so this looks for exactly those names. It reads the final
+      # filesystem of the candidate image, the one every scan reads, so a jar
+      # that arrives through the base image counts too, and it needs no list
+      # of images to keep in step with the Dockerfiles. At worst it finds a jar
+      # Trivy would not open, which costs one download. What it cannot see is
+      # a jar added in one layer and deleted in a later one, which Trivy still
+      # reads layer by layer; no image does that today, and such an image only
+      # falls back to Trivy's own lazy download, as before this step existed.
       #
       # `--pull never --network none` keep it local: nothing is pulled and the
-      # container cannot reach anything. /proc, /sys and /dev are pruned
-      # because they are not image content. If the probe cannot run at all the
-      # step fails, so an image is never silently treated as jar-free.
+      # container cannot reach anything. `--user 0:0` lets find read every
+      # directory whatever USER the image sets. /proc, /sys and /dev are pruned
+      # because they are not image content. If the container cannot start, or
+      # has no find, the step fails (exit 3 for a missing find), so an image is
+      # never silently treated as jar-free for that reason.
       - name: Check the image for Java archives (${{ matrix.arch }})
         id: jars
         env:
           IMAGE: ${{ inputs.image }}:test
         run: |
           set -Eeuo pipefail
-          found="$(docker run --rm --pull never --network none --entrypoint /bin/sh "$IMAGE" -c \
-            'find / \( -path /proc -o -path /sys -o -path /dev \) -prune -o -type f \( -iname "*.jar" -o -iname "*.war" -o -iname "*.ear" -o -iname "*.par" \) -print | head -n 1')"
+          found="$(docker run --rm --pull never --network none --user 0:0 --entrypoint /bin/sh "$IMAGE" -c \
+            'command -v find >/dev/null 2>&1 || { echo "no find in the image" >&2; exit 3; }
+             find / \( -path /proc -o -path /sys -o -path /dev \) -prune -o -type f \( -iname "*.jar" -o -iname "*.war" -o -iname "*.ear" -o -iname "*.par" \) -print | head -n 1')"
           if [ -n "$found" ]; then
             echo "Java archives found (first: $found); the Java database is needed"
             echo "found=true" >> "$GITHUB_OUTPUT"
