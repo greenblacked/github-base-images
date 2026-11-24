@@ -876,19 +876,6 @@
   },
   {
     "image": "ci-security",
-    "id": "CVE-2026-116587",
-    "package": "github.com/go-jose/go-jose/v4",
-    "installed": "v4.1.5 (grype), v4.1.5 (syft)",
-    "reason": "Compiled into grype 0.121.0 and syft 1.55.0 (go-jose v4.1.5); grype 0.121.3 and syft 1.57.1 (2026-11-09) carry go-jose v4.1.6 (`go version -m`, checked 2026-11-13), and the pin-bump workflow takes them once their seven-day cooldown ends on 2026-11-16, before this entry expires; trivy 0.76.2, now pinned, carries v4.1.6, so its path is gone. Delete this entry with that bump.",
-    "upstream": "https://github.com/anchore/grype/releases",
-    "expires": "2026-11-25",
-    "paths": [
-      "usr/local/bin/grype",
-      "usr/local/bin/syft"
-    ]
-  },
-  {
-    "image": "ci-security",
     "id": "CVE-2026-78661",
     "package": "golang.org/x/net",
     "installed": "v0.61.0 (cosign), v0.61.0 (grype), v0.61.0 (syft)",
