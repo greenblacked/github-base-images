@@ -39,6 +39,28 @@ on:
 
 env:
   DOCKERFILE: Dockerfile.ci
+  # Trivy vulnerability DB and Java DB sources, in priority order. Trivy
+  # (>= v0.56) takes a comma-separated list, uses the first entry and moves
+  # to the next one when a registry answers with a temporary error such as
+  # TOOMANYREQUESTS or 5xx. The first entry is Trivy's own default
+  # (mirror.gcr.io, a pull-through cache that rate-limits shared CI IPs); the
+  # others are Aqua's official publishing locations. Setting the variable
+  # replaces Trivy's default list, so the default entries are repeated here.
+  # No spaces around the commas. The checks bundle accepts a single
+  # repository only; if it fails, Trivy falls back to its embedded checks.
+  #
+  # Trivy's own fallback is not enough: it moves on only for errors it counts
+  # as temporary (a registry error body such as TOOMANYREQUESTS, or a bare
+  # 408/500/502/503/504). A bare `429 Too Many Requests`, which is what
+  # mirror.gcr.io answered on 2026-11-24 for a layer of the database, is not
+  # one, and fails the scan on the first registry. So the job downloads the
+  # vulnerability database itself, in the "Download the vulnerability
+  # database" step, which tries each repository in this list in turn on any
+  # failure. The Java DB is not covered by that step: it is downloaded
+  # lazily, only for images that contain jars, and still relies on Trivy's
+  # own fallback.
+  TRIVY_DB_REPOSITORY: mirror.gcr.io/aquasec/trivy-db:2,ghcr.io/aquasecurity/trivy-db:2,public.ecr.aws/aquasecurity/trivy-db:2
+  TRIVY_JAVA_DB_REPOSITORY: mirror.gcr.io/aquasec/trivy-java-db:1,ghcr.io/aquasecurity/trivy-java-db:1,public.ecr.aws/aquasecurity/trivy-java-db:1
 
 # Default-deny. Every job below sets the permissions it actually needs, and a
 # job-level block overrides this one -- so this changes nothing for the jobs
@@ -198,25 +220,118 @@ jobs:
           IMAGE: ${{ inputs.image }}
         run: ./"$IMAGE"/test.sh "$IMAGE:test"
 
+      # The first Trivy step of the job, on purpose. trivy-action installs
+      # Trivy (setup-trivy puts it on PATH for every later step), and the
+      # database download below needs that binary. This is the one report
+      # that reads no vulnerability database -- it lints ./<image>'s
+      # Dockerfile, not the built image -- so it can run before the download.
+      # It also keeps the action's `cache` input at its default, so this is
+      # the only step whose Actions cache restore and end-of-job save carry
+      # the Trivy cache directory from one run to the next: every later
+      # trivy-action step, the secret gate included, sets `cache: 'false'`
+      # and `skip-setup-trivy: true`.
+      #
+      # Lints the Dockerfile's build instructions (missing USER, ADD vs COPY,
+      # ...). Best-practice guidance rather than exploitable findings, so it is
+      # reported, not gating -- same treatment as unfixed vulnerabilities.
+      - name: Misconfiguration report (table)
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          scan-type: config
+          scan-ref: ./${{ inputs.image }}
+          format: table
+          output: trivy-misconfig-${{ inputs.image }}-${{ matrix.arch }}.txt
+          exit-code: '0'
+
+      # One download of the vulnerability database for the whole job, instead
+      # of the several each Trivy step used to make (136 MiB each, from a
+      # registry that rate-limits shared CI IPs). Every step below that reads
+      # the database sets TRIVY_SKIP_DB_UPDATE and `cache: 'false'`, so this
+      # is the only download and the only database on disk.
+      #
+      # Why a step of our own: Trivy's built-in fallback to the next
+      # repository covers only errors it counts as temporary, and a bare 429
+      # is not one (see TRIVY_DB_REPOSITORY above). Here every failure moves
+      # on to the next repository; when all of them failed, the whole list is
+      # tried again after 15, 30 and 60 seconds. If every attempt fails the
+      # step fails, with the reason in the log, before any scan runs.
+      #
+      # `--cache-dir` is the directory trivy-action uses (its `cache-dir`
+      # default), so the later steps find the database. If the cache restored
+      # by the step above already holds a database that is still current,
+      # Trivy downloads nothing. This step does not set TRIVY_SKIP_DB_UPDATE
+      # and does not touch the Java DB: that stays lazy, because an image with
+      # no jars never needs its ~958 MiB, and TRIVY_SKIP_JAVA_DB_UPDATE would
+      # make Trivy fail when none is on disk.
+      - name: Download the vulnerability database
+        env:
+          CACHE_DIR: ${{ github.workspace }}/.cache/trivy
+        run: |
+          set -Eeuo pipefail
+          IFS=',' read -r -a repos <<< "$TRIVY_DB_REPOSITORY"
+          if [ "${#repos[@]}" -eq 0 ] || [ -z "${repos[0]}" ]; then
+            echo "::error::TRIVY_DB_REPOSITORY is empty -- there is nowhere to download the vulnerability database from"
+            exit 1
+          fi
+          delays=(15 30 60)
+          for round in 1 2 3 4; do
+            for repo in "${repos[@]}"; do
+              [ -n "$repo" ] || continue
+              echo "Downloading the vulnerability database from $repo (round $round of 4)"
+              if trivy image --download-db-only --no-progress \
+                  --cache-dir "$CACHE_DIR" --db-repository "$repo"; then
+                echo "Vulnerability database ready (from $repo)"
+                exit 0
+              fi
+              echo "::warning::Could not download the vulnerability database from $repo (round $round of 4)"
+            done
+            if [ "$round" -lt 4 ]; then
+              delay="${delays[$((round - 1))]}"
+              echo "Every repository failed; retrying the list in ${delay}s"
+              sleep "$delay"
+            fi
+          done
+          echo "::error::Could not download the vulnerability database from any of: $TRIVY_DB_REPOSITORY"
+          exit 1
+
       # Full reports, every severity, never block. Retained as artifacts so
       # there is a record of what shipped in each build, per architecture.
+      #
+      # Every Trivy step from here to the gates sets `cache: 'false'` and
+      # `skip-setup-trivy: true` (reuse the Trivy already on PATH instead of
+      # installing it again), and the ones that read the vulnerability
+      # database also set TRIVY_SKIP_DB_UPDATE. trivy-action restores the
+      # Actions cache before EVERY run when `cache` is on, which would
+      # replace the database the step above just downloaded with an older
+      # snapshot (and trigger a download per step). The secret and license reports read no database;
+      # they only need the restore off. The SBOM step gets both settings
+      # too, in case its default scanners read the database; they change
+      # nothing if they do not.
       - name: Security report (JSON)
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        env:
+          TRIVY_SKIP_DB_UPDATE: 'true'
         with:
           image-ref: ${{ inputs.image }}:test
           scanners: vuln
           format: json
           output: trivy-${{ inputs.image }}-${{ matrix.arch }}.json
           exit-code: '0'
+          skip-setup-trivy: true
+          cache: 'false'
 
       - name: Security report (table)
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        env:
+          TRIVY_SKIP_DB_UPDATE: 'true'
         with:
           image-ref: ${{ inputs.image }}:test
           scanners: vuln
           format: table
           output: trivy-${{ inputs.image }}-${{ matrix.arch }}.txt
           exit-code: '0'
+          skip-setup-trivy: true
+          cache: 'false'
 
       # With the secret gate's scanner configuration (built-in allow rules
       # off; see the "Secret gate" step) but without its fixture exceptions,
@@ -231,18 +346,8 @@ jobs:
           format: table
           output: trivy-secrets-${{ inputs.image }}-${{ matrix.arch }}.txt
           exit-code: '0'
-
-      # Lints the Dockerfile's build instructions (missing USER, ADD vs COPY,
-      # ...). Best-practice guidance rather than exploitable findings, so it is
-      # reported, not gating -- same treatment as unfixed vulnerabilities.
-      - name: Misconfiguration report (table)
-        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
-        with:
-          scan-type: config
-          scan-ref: ./${{ inputs.image }}
-          format: table
-          output: trivy-misconfig-${{ inputs.image }}-${{ matrix.arch }}.txt
-          exit-code: '0'
+          skip-setup-trivy: true
+          cache: 'false'
 
       # License inventory of every OS package and bundled library in the image.
       # Reported, never gating: a copyleft finding in Debian's own packages is
@@ -255,18 +360,24 @@ jobs:
           format: table
           output: trivy-licenses-${{ inputs.image }}-${{ matrix.arch }}.txt
           exit-code: '0'
+          skip-setup-trivy: true
+          cache: 'false'
 
       # A CycloneDX SBOM per image and architecture. This is the artifact a
       # consumer needs to answer "was I affected by X" months later, without
       # rebuilding or re-scanning.
       - name: SBOM (CycloneDX)
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        env:
+          TRIVY_SKIP_DB_UPDATE: 'true'
         with:
           image-ref: ${{ inputs.image }}:test
           scan-type: image
           format: cyclonedx
           output: sbom-${{ inputs.image }}-${{ matrix.arch }}.cdx.json
           exit-code: '0'
+          skip-setup-trivy: true
+          cache: 'false'
 
       # The standing inventory of accepted risk: every HIGH/CRITICAL finding,
       # fixed or not, as SARIF -- for the artifact below ONLY. It used to be
@@ -290,6 +401,8 @@ jobs:
       # severity, UNKNOWN and LOW included.
       - name: Vulnerability inventory (SARIF, artifact only)
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        env:
+          TRIVY_SKIP_DB_UPDATE: 'true'
         with:
           image-ref: ${{ inputs.image }}:test
           scanners: vuln
@@ -298,6 +411,8 @@ jobs:
           exit-code: '0'
           limit-severities-for-sarif: true
           severity: HIGH,CRITICAL
+          skip-setup-trivy: true
+          cache: 'false'
 
       # The full tables go to the log and the artifact below, never to the job
       # summary. A step's summary is capped at 1 MiB, and one over the cap is
@@ -503,6 +618,8 @@ jobs:
       # the gate passes it.
       - name: Vulnerability report for code scanning (SARIF)
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        env:
+          TRIVY_SKIP_DB_UPDATE: 'true'
         with:
           image-ref: ${{ inputs.image }}:test
           scanners: vuln
@@ -513,6 +630,8 @@ jobs:
           severity: HIGH,CRITICAL
           ignore-unfixed: true
           trivyignores: ${{ steps.exceptions.outputs.file }}
+          skip-setup-trivy: true
+          cache: 'false'
 
       # continue-on-error: code scanning upload must never be the reason an
       # image fails to publish. `category` must be unique per image and
@@ -589,9 +708,11 @@ jobs:
       #     binary;
       #   - `cache: 'false'` and TRIVY_SKIP_DB_UPDATE -- no restore from the
       #     Actions cache and no download, so all three scans read the database
-      #     the report steps above left on disk, byte for byte. Restoring the
-      #     cache between them could swap in a different day's database the
-      #     moment another job saved one. If there is no database on disk,
+      #     the "Download the vulnerability database" step left on disk, byte
+      #     for byte. The report steps above use the same two settings, so
+      #     nothing has replaced it since. Restoring the cache between the
+      #     scans could swap in a different day's database the moment another
+      #     job saved one. If there is no database on disk,
       #     Trivy refuses to run with the skip flag, and the step fails
       #     rather than scanning with nothing;
       #   - HIGH,CRITICAL, `ignore-unfixed` (red always means a fix exists),
@@ -864,6 +985,8 @@ jobs:
           format: table
           exit-code: '1'
           trivyignores: .github/trivy-secret-ignore.yaml
+          skip-setup-trivy: true
+          cache: 'false'
 
       # Push each architecture under its own tag. A tagged push is what creates
       # the package on GHCR the first time an image is published; a digest-only
