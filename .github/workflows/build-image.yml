@@ -56,9 +56,10 @@ env:
   # one, and fails the scan on the first registry. So the job downloads the
   # vulnerability database itself, in the "Download the vulnerability
   # database" step, which tries each repository in this list in turn on any
-  # failure. The Java DB is not covered by that step: it is downloaded
-  # lazily, only for images that contain jars, and still relies on Trivy's
-  # own fallback.
+  # failure. The Java DB is covered the same way by the "Download the Java
+  # database" step, but only for an image that contains Java archives (the
+  # "Check the image for Java archives" step decides); any other image never
+  # downloads it, as Trivy only fetches it when it meets a jar.
   TRIVY_DB_REPOSITORY: mirror.gcr.io/aquasec/trivy-db:2,ghcr.io/aquasecurity/trivy-db:2,public.ecr.aws/aquasecurity/trivy-db:2
   TRIVY_JAVA_DB_REPOSITORY: mirror.gcr.io/aquasec/trivy-java-db:1,ghcr.io/aquasecurity/trivy-java-db:1,public.ecr.aws/aquasecurity/trivy-java-db:1
 
@@ -260,9 +261,8 @@ jobs:
       # default), so the later steps find the database. If the cache restored
       # by the step above already holds a database that is still current,
       # Trivy downloads nothing. This step does not set TRIVY_SKIP_DB_UPDATE
-      # and does not touch the Java DB: that stays lazy, because an image with
-      # no jars never needs its ~958 MiB, and TRIVY_SKIP_JAVA_DB_UPDATE would
-      # make Trivy fail when none is on disk.
+      # and does not touch the Java DB: that has its own steps below, because
+      # an image with no jars never needs its ~958 MiB.
       - name: Download the vulnerability database
         env:
           CACHE_DIR: ${{ github.workspace }}/.cache/trivy
@@ -292,6 +292,89 @@ jobs:
             fi
           done
           echo "::error::Could not download the vulnerability database from any of: $TRIVY_DB_REPOSITORY"
+          exit 1
+
+      # Does this image hold any Java archive? The answer decides whether the
+      # Java DB (~958 MiB) is downloaded below. Trivy fetches it only when its
+      # jar analyzer meets a file ending in .jar, .war, .ear or .par (case
+      # insensitive), so this looks for exactly those names. It reads the final
+      # filesystem of the candidate image, the one every scan reads, so a jar
+      # that arrives through the base image counts too, and it needs no list
+      # of images to keep in step with the Dockerfiles. At worst it finds a jar
+      # Trivy would not open, which costs one download. What it cannot see is
+      # a jar added in one layer and deleted in a later one, which Trivy still
+      # reads layer by layer; no image does that today, and such an image only
+      # falls back to Trivy's own lazy download, as before this step existed.
+      #
+      # `--pull never --network none` keep it local: nothing is pulled and the
+      # container cannot reach anything. `--user 0:0` lets find read every
+      # directory whatever USER the image sets. /proc, /sys and /dev are pruned
+      # because they are not image content. If the container cannot start, or
+      # has no find, the step fails (exit 3 for a missing find), so an image is
+      # never silently treated as jar-free for that reason.
+      - name: Check the image for Java archives (${{ matrix.arch }})
+        id: jars
+        env:
+          IMAGE: ${{ inputs.image }}:test
+        run: |
+          set -Eeuo pipefail
+          found="$(docker run --rm --pull never --network none --user 0:0 --entrypoint /bin/sh "$IMAGE" -c \
+            'command -v find >/dev/null 2>&1 || { echo "no find in the image" >&2; exit 3; }
+             find / \( -path /proc -o -path /sys -o -path /dev \) -prune -o -type f \( -iname "*.jar" -o -iname "*.war" -o -iname "*.ear" -o -iname "*.par" \) -print | head -n 1')"
+          if [ -n "$found" ]; then
+            echo "Java archives found (first: $found); the Java database is needed"
+            echo "found=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "No Java archives found; the Java database is not needed"
+            echo "found=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      # The Java DB for an image with jars, downloaded once for the job, the
+      # same way as the vulnerability database above (same cache directory,
+      # same rounds and 15, 30, 60 second pauses, same one-repository-per-
+      # attempt loop), for the same reason: Trivy's own fallback to the next
+      # repository ignores a bare 429 (see TRIVY_DB_REPOSITORY above), and
+      # left to itself Trivy would download it in the middle of the first scan
+      # of the image, with no retry. Runs only when the step above found jars;
+      # every other image downloads nothing here, as before.
+      #
+      # `--download-java-db-only` takes no image and does not touch the
+      # vulnerability database. Nothing here sets TRIVY_USERNAME or
+      # TRIVY_PASSWORD: Trivy sends those to every registry it downloads from,
+      # and these are public repositories, so the download is anonymous.
+      # Once it is on disk Trivy does not download it again within the job (a
+      # database is refreshed only when its next-update time has passed and it
+      # is more than a day old), so the later scans find it.
+      - name: Download the Java database
+        if: steps.jars.outputs.found == 'true'
+        env:
+          CACHE_DIR: ${{ github.workspace }}/.cache/trivy
+        run: |
+          set -Eeuo pipefail
+          IFS=',' read -r -a repos <<< "$TRIVY_JAVA_DB_REPOSITORY"
+          if [ "${#repos[@]}" -eq 0 ] || [ -z "${repos[0]}" ]; then
+            echo "::error::TRIVY_JAVA_DB_REPOSITORY is empty -- there is nowhere to download the Java database from"
+            exit 1
+          fi
+          delays=(15 30 60)
+          for round in 1 2 3 4; do
+            for repo in "${repos[@]}"; do
+              [ -n "$repo" ] || continue
+              echo "Downloading the Java database from $repo (round $round of 4)"
+              if trivy image --download-java-db-only --no-progress \
+                  --cache-dir "$CACHE_DIR" --java-db-repository "$repo"; then
+                echo "Java database ready (from $repo)"
+                exit 0
+              fi
+              echo "::warning::Could not download the Java database from $repo (round $round of 4)"
+            done
+            if [ "$round" -lt 4 ]; then
+              delay="${delays[$((round - 1))]}"
+              echo "Every repository failed; retrying the list in ${delay}s"
+              sleep "$delay"
+            fi
+          done
+          echo "::error::Could not download the Java database from any of: $TRIVY_JAVA_DB_REPOSITORY"
           exit 1
 
       # Full reports, every severity, never block. Retained as artifacts so
@@ -804,6 +887,15 @@ jobs:
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         env:
           TRIVY_SKIP_DB_UPDATE: 'true'
+          # TRIVY_SKIP_DB_UPDATE does not cover the Java DB. This step carries
+          # the job's token, which Trivy would offer to whichever registry it
+          # downloaded the Java DB from. For an image with jars the database
+          # is already on disk ("Download the Java database" above), so this
+          # makes sure this step cannot fetch it: 'true' when the candidate
+          # had jars, and then a missing database fails the step, which the
+          # gate reads as a strict comparison. Otherwise 'false', Trivy's own
+          # default, so an image without jars behaves as it always did.
+          TRIVY_SKIP_JAVA_DB_UPDATE: ${{ steps.jars.outputs.found }}
           TRIVY_IMAGE_SRC: remote
           TRIVY_USERNAME: ${{ github.actor }}
           TRIVY_PASSWORD: ${{ github.token }}
