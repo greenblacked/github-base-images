@@ -226,8 +226,10 @@ jobs:
       # that reads no vulnerability database -- it lints ./<image>'s
       # Dockerfile, not the built image -- so it can run before the download.
       # It also keeps the action's `cache` input at its default, so this is
-      # the step whose Actions cache restore and end-of-job save carry the
-      # Trivy cache directory from one run to the next.
+      # the only step whose Actions cache restore and end-of-job save carry
+      # the Trivy cache directory from one run to the next: every later
+      # trivy-action step, the secret gate included, sets `cache: 'false'`
+      # and `skip-setup-trivy: true`.
       #
       # Lints the Dockerfile's build instructions (missing USER, ADD vs COPY,
       # ...). Best-practice guidance rather than exploitable findings, so it is
@@ -274,6 +276,7 @@ jobs:
           delays=(15 30 60)
           for round in 1 2 3 4; do
             for repo in "${repos[@]}"; do
+              [ -n "$repo" ] || continue
               echo "Downloading the vulnerability database from $repo (round $round of 4)"
               if trivy image --download-db-only --no-progress \
                   --cache-dir "$CACHE_DIR" --db-repository "$repo"; then
@@ -294,9 +297,11 @@ jobs:
       # Full reports, every severity, never block. Retained as artifacts so
       # there is a record of what shipped in each build, per architecture.
       #
-      # Every Trivy step from here to the gates sets `cache: 'false'`, and the
-      # ones that read the vulnerability database also set
-      # TRIVY_SKIP_DB_UPDATE. trivy-action restores the Actions cache before
+      # Every Trivy step from here to the gates sets `cache: 'false'` and
+      # `skip-setup-trivy: true` (reuse the Trivy already on PATH instead of
+      # installing it again), and the ones that read the vulnerability
+      # database also set TRIVY_SKIP_DB_UPDATE. trivy-action restores the
+      # Actions cache before
       # EVERY run when `cache` is on, which would replace the database the
       # step above just downloaded with an older snapshot (and trigger a
       # download per step). The secret and license reports read no database;
@@ -313,6 +318,7 @@ jobs:
           format: json
           output: trivy-${{ inputs.image }}-${{ matrix.arch }}.json
           exit-code: '0'
+          skip-setup-trivy: true
           cache: 'false'
 
       - name: Security report (table)
@@ -325,6 +331,7 @@ jobs:
           format: table
           output: trivy-${{ inputs.image }}-${{ matrix.arch }}.txt
           exit-code: '0'
+          skip-setup-trivy: true
           cache: 'false'
 
       # With the secret gate's scanner configuration (built-in allow rules
@@ -340,6 +347,7 @@ jobs:
           format: table
           output: trivy-secrets-${{ inputs.image }}-${{ matrix.arch }}.txt
           exit-code: '0'
+          skip-setup-trivy: true
           cache: 'false'
 
       # License inventory of every OS package and bundled library in the image.
@@ -353,6 +361,7 @@ jobs:
           format: table
           output: trivy-licenses-${{ inputs.image }}-${{ matrix.arch }}.txt
           exit-code: '0'
+          skip-setup-trivy: true
           cache: 'false'
 
       # A CycloneDX SBOM per image and architecture. This is the artifact a
@@ -368,6 +377,7 @@ jobs:
           format: cyclonedx
           output: sbom-${{ inputs.image }}-${{ matrix.arch }}.cdx.json
           exit-code: '0'
+          skip-setup-trivy: true
           cache: 'false'
 
       # The standing inventory of accepted risk: every HIGH/CRITICAL finding,
@@ -402,6 +412,7 @@ jobs:
           exit-code: '0'
           limit-severities-for-sarif: true
           severity: HIGH,CRITICAL
+          skip-setup-trivy: true
           cache: 'false'
 
       # The full tables go to the log and the artifact below, never to the job
@@ -620,6 +631,7 @@ jobs:
           severity: HIGH,CRITICAL
           ignore-unfixed: true
           trivyignores: ${{ steps.exceptions.outputs.file }}
+          skip-setup-trivy: true
           cache: 'false'
 
       # continue-on-error: code scanning upload must never be the reason an
@@ -974,6 +986,8 @@ jobs:
           format: table
           exit-code: '1'
           trivyignores: .github/trivy-secret-ignore.yaml
+          skip-setup-trivy: true
+          cache: 'false'
 
       # Push each architecture under its own tag. A tagged push is what creates
       # the package on GHCR the first time an image is published; a digest-only
