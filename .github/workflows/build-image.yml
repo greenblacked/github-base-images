@@ -301,10 +301,9 @@ jobs:
       # `skip-setup-trivy: true` (reuse the Trivy already on PATH instead of
       # installing it again), and the ones that read the vulnerability
       # database also set TRIVY_SKIP_DB_UPDATE. trivy-action restores the
-      # Actions cache before
-      # EVERY run when `cache` is on, which would replace the database the
-      # step above just downloaded with an older snapshot (and trigger a
-      # download per step). The secret and license reports read no database;
+      # Actions cache before EVERY run when `cache` is on, which would
+      # replace the database the step above just downloaded with an older
+      # snapshot (and trigger a download per step). The secret and license reports read no database;
       # they only need the restore off. The SBOM step gets both settings
       # too, in case its default scanners read the database; they change
       # nothing if they do not.
