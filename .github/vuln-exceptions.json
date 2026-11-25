@@ -798,42 +798,36 @@
     "image": "ci-security",
     "id": "CVE-2026-78667",
     "package": "stdlib",
-    "installed": "v1.24.11 (gitleaks), v1.26.8 (grype), v1.26.8 (syft)",
-    "reason": "Compiled into gitleaks 8.30.1, still the latest release on 2026-11-13 (no newer tag since 2026-03-21; `go version -m` reports go1.24.11); only a gitleaks release built with Go 1.26.9 or 1.27.2 can carry the fix. Also in grype 0.121.0 and syft 1.55.0 (go1.26.8): grype 0.121.3 and syft 1.57.1 (2026-11-09, go1.27.3) carry the fix, and the pin-bump workflow takes them once their seven-day cooldown ends on 2026-11-16; their paths come off this entry with that bump.",
-    "upstream": "https://github.com/sigstore/cosign/releases",
+    "installed": "v1.24.11 (gitleaks)",
+    "reason": "Compiled into gitleaks 8.30.1, still the latest release on 2026-11-25 (no newer tag since 2026-03-21; `go version -m` reports go1.24.11); only a gitleaks release built with Go 1.26.9 or 1.27.2 can carry the fix. Pinned grype 0.121.3 and syft 1.57.2 are built with go1.27.3 and are not affected (checked 2026-11-25), so their paths are gone.",
+    "upstream": "https://github.com/gitleaks/gitleaks/releases",
     "expires": "2026-12-13",
     "paths": [
-      "usr/local/bin/gitleaks",
-      "usr/local/bin/grype",
-      "usr/local/bin/syft"
+      "usr/local/bin/gitleaks"
     ]
   },
   {
     "image": "ci-security",
     "id": "CVE-2026-78669",
     "package": "stdlib",
-    "installed": "v1.24.11 (gitleaks), v1.26.8 (grype), v1.26.8 (syft)",
-    "reason": "Compiled into gitleaks 8.30.1, still the latest release on 2026-11-13 (no newer tag since 2026-03-21; `go version -m` reports go1.24.11); only a gitleaks release built with Go 1.26.9 or 1.27.2 can carry the fix. Also in grype 0.121.0 and syft 1.55.0 (go1.26.8): grype 0.121.3 and syft 1.57.1 (2026-11-09, go1.27.3) carry the fix, and the pin-bump workflow takes them once their seven-day cooldown ends on 2026-11-16; their paths come off this entry with that bump.",
-    "upstream": "https://github.com/sigstore/cosign/releases",
+    "installed": "v1.24.11 (gitleaks)",
+    "reason": "Compiled into gitleaks 8.30.1, still the latest release on 2026-11-25 (no newer tag since 2026-03-21; `go version -m` reports go1.24.11); only a gitleaks release built with Go 1.26.9 or 1.27.2 can carry the fix. Pinned grype 0.121.3 and syft 1.57.2 are built with go1.27.3 and are not affected (checked 2026-11-25), so their paths are gone.",
+    "upstream": "https://github.com/gitleaks/gitleaks/releases",
     "expires": "2026-12-13",
     "paths": [
-      "usr/local/bin/gitleaks",
-      "usr/local/bin/grype",
-      "usr/local/bin/syft"
+      "usr/local/bin/gitleaks"
     ]
   },
   {
     "image": "ci-security",
     "id": "CVE-2026-97031",
     "package": "stdlib",
-    "installed": "v1.24.11 (gitleaks), v1.26.8 (grype), v1.26.8 (syft)",
-    "reason": "Compiled into gitleaks 8.30.1, still the latest release on 2026-11-13 (no newer tag since 2026-03-21; `go version -m` reports go1.24.11); only a gitleaks release built with Go 1.26.9 or 1.27.2 can carry the fix. Also in grype 0.121.0 and syft 1.55.0 (go1.26.8): grype 0.121.3 and syft 1.57.1 (2026-11-09, go1.27.3) carry the fix, and the pin-bump workflow takes them once their seven-day cooldown ends on 2026-11-16; their paths come off this entry with that bump.",
-    "upstream": "https://github.com/sigstore/cosign/releases",
+    "installed": "v1.24.11 (gitleaks)",
+    "reason": "Compiled into gitleaks 8.30.1, still the latest release on 2026-11-25 (no newer tag since 2026-03-21; `go version -m` reports go1.24.11); only a gitleaks release built with Go 1.26.9 or 1.27.2 can carry the fix. Pinned grype 0.121.3 and syft 1.57.2 are built with go1.27.3 and are not affected (checked 2026-11-25), so their paths are gone.",
+    "upstream": "https://github.com/gitleaks/gitleaks/releases",
     "expires": "2026-12-13",
     "paths": [
-      "usr/local/bin/gitleaks",
-      "usr/local/bin/grype",
-      "usr/local/bin/syft"
+      "usr/local/bin/gitleaks"
     ]
   },
   {
@@ -852,14 +846,12 @@
     "image": "ci-security",
     "id": "CVE-2026-111943",
     "package": "stdlib",
-    "installed": "v1.24.11 (gitleaks), v1.26.8 (grype), v1.26.8 (syft)",
-    "reason": "Compiled into gitleaks 8.30.1, still the latest release on 2026-11-13 (no newer tag since 2026-03-21; `go version -m` reports go1.24.11); only a gitleaks release built with Go 1.26.10 or 1.27.3 can carry the fix. Also in grype 0.121.0 and syft 1.55.0 (go1.26.8): grype 0.121.3 and syft 1.57.1 (2026-11-09, go1.27.3) carry the fix, and the pin-bump workflow takes them once their seven-day cooldown ends on 2026-11-16; their paths come off this entry with that bump.",
+    "installed": "v1.24.11 (gitleaks)",
+    "reason": "Compiled into gitleaks 8.30.1, still the latest release on 2026-11-25 (no newer tag since 2026-03-21; `go version -m` reports go1.24.11); only a gitleaks release built with Go 1.26.10 or 1.27.3 can carry the fix. Pinned grype 0.121.3 and syft 1.57.2 are built with go1.27.3 and are not affected (checked 2026-11-25), so their paths are gone.",
     "upstream": "https://github.com/gitleaks/gitleaks/releases",
     "expires": "2026-12-13",
     "paths": [
-      "usr/local/bin/gitleaks",
-      "usr/local/bin/grype",
-      "usr/local/bin/syft"
+      "usr/local/bin/gitleaks"
     ]
   },
   {
@@ -878,14 +870,12 @@
     "image": "ci-security",
     "id": "CVE-2026-78661",
     "package": "golang.org/x/net",
-    "installed": "v0.61.0 (cosign), v0.61.0 (grype), v0.61.0 (syft)",
-    "reason": "Compiled into cosign 3.1.4, still the latest release on 2026-11-13 (2026-10-20), which `go version -m` shows requires golang.org/x/net v0.61.0, so only a new cosign release built with golang.org/x/net 0.62.0 can carry the fix. grype 0.121.0 and syft 1.55.0 are behind grype 0.121.3 and syft 1.57.1 (2026-11-09, x/net v0.62.0), which the pin-bump workflow takes once their seven-day cooldown ends on 2026-11-16; trivy 0.76.2, now pinned, carries x/net v0.62.0, so its path is gone.",
+    "installed": "v0.61.0 (cosign)",
+    "reason": "Compiled into cosign 3.1.4, still pinned in ci-security; `go version -m` shows it requires golang.org/x/net v0.61.0 (checked 2026-11-25), so only a cosign release built with golang.org/x/net 0.62.0 or later can carry the fix. Pinned grype 0.121.3 and syft 1.57.2 carry x/net v0.62.0, and trivy 0.76.2 does too, so those paths are gone.",
     "upstream": "https://github.com/sigstore/cosign/releases",
     "expires": "2026-12-13",
     "paths": [
-      "usr/local/bin/cosign",
-      "usr/local/bin/grype",
-      "usr/local/bin/syft"
+      "usr/local/bin/cosign"
     ]
   },
   {
