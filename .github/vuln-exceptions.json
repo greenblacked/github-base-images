@@ -800,7 +800,7 @@
     "package": "stdlib",
     "installed": "v1.24.11 (gitleaks)",
     "reason": "Compiled into gitleaks 8.30.1, still the latest release on 2026-11-25 (no newer tag since 2026-03-21; `go version -m` reports go1.24.11); only a gitleaks release built with Go 1.26.9 or 1.27.2 can carry the fix. Pinned grype 0.121.3 and syft 1.57.2 are built with go1.27.3 and are not affected (checked 2026-11-25), so their paths are gone.",
-    "upstream": "https://github.com/sigstore/cosign/releases",
+    "upstream": "https://github.com/gitleaks/gitleaks/releases",
     "expires": "2026-12-13",
     "paths": [
       "usr/local/bin/gitleaks"
@@ -812,7 +812,7 @@
     "package": "stdlib",
     "installed": "v1.24.11 (gitleaks)",
     "reason": "Compiled into gitleaks 8.30.1, still the latest release on 2026-11-25 (no newer tag since 2026-03-21; `go version -m` reports go1.24.11); only a gitleaks release built with Go 1.26.9 or 1.27.2 can carry the fix. Pinned grype 0.121.3 and syft 1.57.2 are built with go1.27.3 and are not affected (checked 2026-11-25), so their paths are gone.",
-    "upstream": "https://github.com/sigstore/cosign/releases",
+    "upstream": "https://github.com/gitleaks/gitleaks/releases",
     "expires": "2026-12-13",
     "paths": [
       "usr/local/bin/gitleaks"
@@ -824,7 +824,7 @@
     "package": "stdlib",
     "installed": "v1.24.11 (gitleaks)",
     "reason": "Compiled into gitleaks 8.30.1, still the latest release on 2026-11-25 (no newer tag since 2026-03-21; `go version -m` reports go1.24.11); only a gitleaks release built with Go 1.26.9 or 1.27.2 can carry the fix. Pinned grype 0.121.3 and syft 1.57.2 are built with go1.27.3 and are not affected (checked 2026-11-25), so their paths are gone.",
-    "upstream": "https://github.com/sigstore/cosign/releases",
+    "upstream": "https://github.com/gitleaks/gitleaks/releases",
     "expires": "2026-12-13",
     "paths": [
       "usr/local/bin/gitleaks"
